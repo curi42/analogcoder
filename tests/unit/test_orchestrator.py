@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.state import RunState
 
@@ -128,3 +129,39 @@ async def test_max_iterations_exhausted_fails_run(tmp_path):
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
+
+
+@pytest.mark.asyncio
+async def test_agent_execution_error_before_loop_returns_fail_with_zero_iterations(tmp_path):
+    async def failing_analyze(netlist_text):
+        raise AgentExecutionError("boom")
+
+    agents = make_agents(analyze=failing_analyze)
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["iterations_used"] == 0
+    assert result["final_criteria"] == []
+    assert result["failure_reason"] == "agent execution error: boom"
+
+
+@pytest.mark.asyncio
+async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(tmp_path):
+    call_count = {"n": 0}
+
+    async def simulate_then_fail(netlist_text, spec):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise AgentExecutionError("simulator backend unreachable")
+        return {"measurements": {"gain_db": 20.0}, "status": "success", "warnings": []}
+
+    agents = make_agents(simulate=simulate_then_fail, judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["iterations_used"] == 0
+    assert result["failure_reason"] == "agent execution error: simulator backend unreachable"
