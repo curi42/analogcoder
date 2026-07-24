@@ -26,3 +26,23 @@ def test_ngspice_backend_reports_error_on_bad_netlist(tmp_path):
     result = backend.run(str(bad_netlist), {"control_block": ".control\nac dec 10 1 1meg\n.endc"})
 
     assert result.status == "error"
+
+
+def test_ngspice_backend_reports_error_on_missing_binary():
+    backend = NgspiceBackend(ngspice_bin="/nonexistent/ngspice-binary-xyz")
+    result = backend.run(
+        os.path.join(BENCHMARK_DIR, "netlist.cir"),
+        {"control_block": ".control\nac dec 10 1 1meg\n.endc"},
+    )
+    assert result.status == "error"
+    assert "not found" in result.raw_log.lower()
+
+
+def test_ngspice_backend_reports_error_on_timeout():
+    backend = NgspiceBackend(timeout=0.001)
+    result = backend.run(
+        os.path.join(BENCHMARK_DIR, "netlist.cir"),
+        {"control_block": ".control\nac dec 10 1 1meg\n.endc"},
+    )
+    assert result.status == "error"
+    assert "timed out" in result.raw_log.lower()

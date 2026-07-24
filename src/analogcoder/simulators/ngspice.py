@@ -9,8 +9,9 @@ _MEASURE_RE = re.compile(r"^(\w+)\s*=\s*([-+0-9.eE]+)\s*$")
 
 
 class NgspiceBackend(SimulatorBackend):
-    def __init__(self, ngspice_bin: str = "ngspice"):
+    def __init__(self, ngspice_bin: str = "ngspice", timeout: float = 60):
         self.ngspice_bin = ngspice_bin
+        self.timeout = timeout
 
     def run(self, netlist_path: str, testbench_config: dict) -> RawSimResult:
         with open(netlist_path) as f:
@@ -25,12 +26,27 @@ class NgspiceBackend(SimulatorBackend):
             with open(deck_path, "w") as f:
                 f.write(deck)
 
-            proc = subprocess.run(
-                [self.ngspice_bin, "-b", deck_path],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+            try:
+                proc = subprocess.run(
+                    [self.ngspice_bin, "-b", deck_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return RawSimResult(
+                    status="error",
+                    measurements={},
+                    raw_log=f"ngspice timed out after {self.timeout}s",
+                    warnings=[],
+                )
+            except FileNotFoundError:
+                return RawSimResult(
+                    status="error",
+                    measurements={},
+                    raw_log=f"ngspice binary not found: {self.ngspice_bin}",
+                    warnings=[],
+                )
             log_text = proc.stdout + proc.stderr
 
         measurements: dict[str, float] = {}
