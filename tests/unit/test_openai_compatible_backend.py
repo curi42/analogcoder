@@ -1,6 +1,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from analogcoder.agents.backend import AgentExecutionError, ToolSpec
@@ -121,3 +122,37 @@ async def test_run_raises_when_tool_loop_exceeds_max_turns(monkeypatch):
             await backend.run("system", "user", SCHEMA, [tool])
 
     assert mock_post.call_count == 6  # MAX_TOOL_LOOP_TURNS
+
+
+def test_default_timeout_is_120_seconds():
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+    assert backend.timeout == 120.0
+
+
+def test_custom_timeout_is_stored():
+    backend = OpenAICompatibleBackend(
+        base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2", timeout=300.0
+    )
+    assert backend.timeout == 300.0
+
+
+@pytest.mark.asyncio
+async def test_run_passes_timeout_to_httpx_client(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(
+        base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2", timeout=7.5
+    )
+
+    captured = {}
+    real_client_cls = httpx.AsyncClient
+
+    class RecordingClient(real_client_cls):
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+            super().__init__(*args, **kwargs)
+
+    mock_post = AsyncMock(return_value=_response({"role": "assistant", "content": json.dumps({"ok": True})}))
+    with patch("httpx.AsyncClient", RecordingClient), patch("httpx.AsyncClient.post", mock_post):
+        await backend.run("system", "user", SCHEMA, [])
+
+    assert captured["timeout"] == 7.5

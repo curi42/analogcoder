@@ -11,10 +11,11 @@ MAX_STRUCTURED_OUTPUT_REPAIRS = 2
 
 
 class OpenAICompatibleBackend(AgentBackend):
-    def __init__(self, base_url: str, api_key_env: str, model: str):
+    def __init__(self, base_url: str, api_key_env: str, model: str, timeout: float = 120.0):
         self.base_url = base_url.rstrip("/")
         self.api_key_env = api_key_env
         self.model = model
+        self.timeout = timeout
 
     def _headers(self) -> dict:
         token = os.environ[self.api_key_env]
@@ -48,7 +49,7 @@ class OpenAICompatibleBackend(AgentBackend):
         ]
         tools_by_name = {t.name: t for t in tools}
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             message = None
             for _ in range(MAX_TOOL_LOOP_TURNS):
                 message = await self._post(client, messages, tools)
