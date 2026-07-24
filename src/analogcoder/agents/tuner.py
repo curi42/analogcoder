@@ -1,4 +1,5 @@
-from analogcoder.agents._sdk_utils import run_agent
+from analogcoder.agents.agent_runtime import run_agent
+from analogcoder.agents.backend import AgentBackend
 from analogcoder.schemas import TUNER_SCHEMA
 
 TUNER_SYSTEM_PROMPT = """You are an analog circuit tuning specialist. Given the
@@ -14,6 +15,7 @@ async def propose_tuning(
     judge_result: dict,
     history: list[dict],
     rejection_feedback: str | None,
+    backend: AgentBackend,
 ) -> dict:
     user_prompt = (
         f"Circuit analysis: {analysis}\n"
@@ -25,4 +27,5 @@ async def propose_tuning(
         system_prompt=TUNER_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         output_schema=TUNER_SCHEMA,
+        backend=backend,
     )

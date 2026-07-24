@@ -1,9 +1,7 @@
-import json
 from dataclasses import asdict
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
-
-from analogcoder.agents._sdk_utils import run_agent
+from analogcoder.agents.agent_runtime import run_agent
+from analogcoder.agents.backend import AgentBackend, ToolSpec
 from analogcoder.schemas import SIMULATION_SCHEMA
 from analogcoder.simulators.base import SimulatorBackend
 
@@ -15,27 +13,32 @@ block (e.g. gmin stepping, method=gear), up to 2 extra attempts, before reportin
 the final result via the structured output schema. Never modify component values."""
 
 
-def _build_simulation_tool(backend: SimulatorBackend, netlist_path: str):
-    @tool(
-        "run_simulation",
-        "Run the netlist through the configured simulator backend",
-        {"control_block": str},
+def _build_simulation_tool(sim_backend: SimulatorBackend, netlist_path: str) -> ToolSpec:
+    async def _run(args: dict) -> dict:
+        result = sim_backend.run(netlist_path, {"control_block": args["control_block"]})
+        return asdict(result)
+
+    return ToolSpec(
+        name="run_simulation",
+        description="Run the netlist through the configured simulator backend",
+        parameters={
+            "type": "object",
+            "properties": {"control_block": {"type": "string"}},
+            "required": ["control_block"],
+        },
+        handler=_run,
     )
-    async def _run(args):
-        result = backend.run(netlist_path, {"control_block": args["control_block"]})
-        return {"content": [{"type": "text", "text": json.dumps(asdict(result))}]}
-
-    return _run
 
 
-async def simulate(netlist_path: str, control_block: str, backend: SimulatorBackend) -> dict:
-    sim_tool = _build_simulation_tool(backend, netlist_path)
-    server = create_sdk_mcp_server("simulation", tools=[sim_tool])
+async def simulate(
+    netlist_path: str, control_block: str, sim_backend: SimulatorBackend, backend: AgentBackend
+) -> dict:
+    sim_tool = _build_simulation_tool(sim_backend, netlist_path)
     user_prompt = f"Netlist path: {netlist_path}\nControl block:\n{control_block}"
     return await run_agent(
         system_prompt=SIMULATION_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         output_schema=SIMULATION_SCHEMA,
-        mcp_servers={"simulation": server},
-        allowed_tools=["mcp__simulation__run_simulation"],
+        backend=backend,
+        tools=[sim_tool],
     )
