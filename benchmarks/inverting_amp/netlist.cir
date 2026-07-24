@@ -1,0 +1,6 @@
+* Inverting amplifier built from an ideal op-amp (VCVS)
+Vin in 0 AC 1
+Rin in vminus 1k
+Rf vminus vout 10k
+Eopamp vout 0 0 vminus 100k
+.end

@@ -1,0 +1,13 @@
+circuit_name: inverting_amplifier
+analyses: ["ac"]
+control_block: |
+  .control
+  ac dec 10 1 1meg
+  meas ac gain_db find vdb(vout) at=1k
+  .endc
+criteria:
+  - name: closed_loop_gain
+    measurement: gain_db
+    operator: ">="
+    threshold: 19.5
+    unit: dB
