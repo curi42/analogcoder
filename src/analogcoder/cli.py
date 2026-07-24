@@ -5,6 +5,9 @@ import sys
 import uuid
 
 from analogcoder.agents.analyzer import analyze_netlist
+from analogcoder.agents.backend import AgentBackend
+from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
+from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_tuning
@@ -21,8 +24,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--netlist", required=True)
     parser.add_argument("--spec", required=True)
     parser.add_argument("--simulator", choices=["ngspice"], default="ngspice")
+    parser.add_argument("--agent-backend", choices=["claude", "openai-compatible"], default="claude")
+    parser.add_argument("--llm-base-url", default=None)
+    parser.add_argument("--llm-model", default=None)
     parser.add_argument("--run-dir", default=None)
     return parser
+
+
+def _build_agent_backend(args) -> AgentBackend:
+    if args.agent_backend == "claude":
+        return ClaudeSDKBackend()
+    if not args.llm_base_url or not args.llm_model:
+        raise ValueError("--llm-base-url and --llm-model are required when --agent-backend=openai-compatible")
+    return OpenAICompatibleBackend(base_url=args.llm_base_url, api_key_env="LOCAL_LLM_API_KEY", model=args.llm_model)
 
 
 async def _run(args) -> dict:
@@ -32,21 +46,34 @@ async def _run(args) -> dict:
 
     run_dir = args.run_dir or os.path.join("runs", uuid.uuid4().hex[:8])
     state = RunState(run_dir=run_dir)
-    backend = NgspiceBackend()
+    sim_backend = NgspiceBackend()
+    agent_backend = _build_agent_backend(args)
 
     async def simulate_fn(current_netlist_text, spec_arg):
-        return await agent_simulate(state.current_netlist_path(), spec_arg.control_block, backend)
+        return await agent_simulate(state.current_netlist_path(), spec_arg.control_block, sim_backend, agent_backend)
 
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.criteria)
+        return await judge_measurements(measurements, spec_arg.criteria, agent_backend)
+
+    async def analyze_fn(netlist_text_arg):
+        return await analyze_netlist(netlist_text_arg, agent_backend)
+
+    async def tune_fn(analysis, judge_result, history, rejection_feedback):
+        return await propose_tuning(analysis, judge_result, history, rejection_feedback, agent_backend)
+
+    async def verify_pre_fn(analysis, judge_result, proposal):
+        return await verify_pre(analysis, judge_result, proposal, agent_backend)
+
+    async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
+        return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backend)
 
     agents = OrchestratorAgents(
-        analyze=analyze_netlist,
+        analyze=analyze_fn,
         simulate=simulate_fn,
         judge=judge_fn,
-        tune=propose_tuning,
-        verify_pre=verify_pre,
-        verify_post=verify_post,
+        tune=tune_fn,
+        verify_pre=verify_pre_fn,
+        verify_post=verify_post_fn,
     )
 
     return await run_orchestration(netlist_text, spec, state, agents)
