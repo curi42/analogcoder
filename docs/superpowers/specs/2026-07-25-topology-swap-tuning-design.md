@@ -79,9 +79,30 @@ nulling-resistor topology is a real fix, not a coincidence of this benchmark.
 threshold) is solvable by `Cc` alone, running it end-to-end won't force a
 capable agent to ever attempt a topology swap. A new spec variant,
 `benchmarks/two_stage_opamp/spec_topology_required.yaml`, raises the phase
-margin threshold to 65.0° — unreachable via `Cc`/`M2` tuning alone (per the
-table above) but reachable via `miller_nulling_resistor` (66.13° at
-`Rz=500`). This becomes the real end-to-end proof that the feature is
+margin threshold to 65.0° — unreachable via `Cc` alone (per the table above)
+and reachable via `miller_nulling_resistor` (66.13° at `Rz=500`). This becomes
+a real end-to-end proof that the feature *works*, but — see the note below —
+it turned out not to be a proof that the feature is *necessary* for every
+capable agent.
+
+**Update after a real end-to-end run (2026-07-25):** a live Claude run against
+`spec_topology_required.yaml` passed in 2 iterations *without ever attempting
+a topology swap*. It found a two-parameter combination the `Cc`-only sweep
+above never explored — `Cc: 2p→4p` together with `M6.W: 40u→100u` (widening
+the output-stage NMOS) — reaching 91.02dB / 23.26MHz / 70.87°, comfortably
+clearing all three thresholds. The `Cc`-only-tuning claim above is still
+correct as stated (no value of `Cc` alone reaches 65° without failing UGBW),
+but the broader claim that this spec is "unsolvable by parameter tuning
+alone" was too strong — it's only unsolvable by `Cc` (or `Cc`+`M2`) tuning
+alone. `M6`'s width is also in `tunable_params` and a capable agent can find
+it. The topology-swap *mechanism* itself is unaffected by this — it's still
+correct at the code level (unit tests, a real-ngspice test, and an
+independent whole-branch review all verified it) — but
+`spec_topology_required.yaml` doesn't reliably force it for a strong model.
+It remains a useful differentiator between weaker and stronger tuning
+strategies (see the Ollama results on the original `spec.yaml`, which never
+found even the single-parameter `Cc` fix), just not a guaranteed trigger for
+the topology-swap path specifically.
 necessary and works, not just that it's wired up.
 
 ## Architecture

@@ -65,6 +65,22 @@ Requires `ngspice` on PATH for the real-simulator tests and any actual run
   exercises the tune → verify → re-simulate loop instead of passing on the
   first iteration. See `docs/superpowers/specs/2026-07-25-two-stage-opamp-benchmark-design.md`
   for the full circuit rationale and verified Cc-sweep data.
+- `benchmarks/two_stage_opamp/spec_topology_required.yaml` — same circuit,
+  `phase_margin` threshold raised to 65° (vs the default spec's 60°). No
+  value of `Cc` alone reaches 65° without `unity_gain_bandwidth` failing
+  (verified in ngspice), which is what motivated **topology-swap tuning**
+  (`analogcoder/topologies.py`): after enough repeated parameter-tuning
+  rollbacks, the orchestrator swaps in a different pre-verified topology
+  (`miller_nulling_resistor`, which adds a nulling resistor `Rz` in series
+  with `Cc`) instead of continuing to tweak values. See
+  `docs/superpowers/specs/2026-07-25-topology-swap-tuning-design.md` for the
+  full design. **Caveat, found via a real run:** this spec doesn't reliably
+  force the topology swap for a strong model — a live Claude run solved it
+  in 2 iterations via `Cc`+`M6.W` together, a parameter combination outside
+  the original Cc-only sweep, without ever attempting a swap. The
+  topology-swap mechanism itself is still verified correct (unit tests, a
+  real-ngspice test, and an independent whole-branch review all passed) —
+  this benchmark just isn't a guaranteed trigger for it.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a

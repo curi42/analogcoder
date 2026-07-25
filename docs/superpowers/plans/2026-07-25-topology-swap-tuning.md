@@ -1112,7 +1112,7 @@ criteria:
     unit: deg
 ```
 
-Identical to `benchmarks/two_stage_opamp/spec.yaml` except `phase_margin`'s threshold (60.0 → 65.0). Per the design spec's verified `Cc`-sweep data, no value of `Cc` reaches 65° phase margin without `unity_gain_bandwidth` dropping below 20MHz — this file is unsolvable by parameter tuning alone and requires `miller_nulling_resistor` (verified at 66.13° phase margin, 42.97MHz UGBW).
+Identical to `benchmarks/two_stage_opamp/spec.yaml` except `phase_margin`'s threshold (60.0 → 65.0). Per the design spec's verified `Cc`-sweep data, no value of `Cc` alone reaches 65° phase margin without `unity_gain_bandwidth` dropping below 20MHz, and `miller_nulling_resistor` does reach it (verified at 66.13° phase margin, 42.97MHz UGBW) — but a later real Claude run found this spec is *also* solvable by combining `Cc` with `M6.W`, a parameter this design's `Cc`-only sweep didn't explore. See the design spec's "Update after a real end-to-end run" note: this file still proves the topology-swap mechanism works when exercised, but doesn't reliably force it for a strong model.
 
 - [ ] **Step 4: Run test to verify it passes**
 
