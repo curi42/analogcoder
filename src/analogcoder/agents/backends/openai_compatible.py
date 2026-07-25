@@ -30,10 +30,21 @@ class OpenAICompatibleBackend(AgentBackend):
             for t in tools
         ]
 
-    async def _post(self, client: httpx.AsyncClient, messages: list[dict], tools: list[ToolSpec]) -> dict:
+    async def _post(
+        self, client: httpx.AsyncClient, messages: list[dict], tools: list[ToolSpec], output_schema: dict
+    ) -> dict:
         payload = {"model": self.model, "messages": messages}
         if tools:
+            # A schema-constrained response_format suppresses tool_calls on some
+            # OpenAI-compatible servers (observed on Ollama: the model fabricates
+            # schema-shaped output instead of calling the tool). Only constrain
+            # output on turns where no tool is being offered.
             payload["tools"] = self._tools_payload(tools)
+        else:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "agent_output", "schema": output_schema},
+            }
         response = await client.post(
             f"{self.base_url}/chat/completions", json=payload, headers=self._headers()
         )
@@ -52,7 +63,7 @@ class OpenAICompatibleBackend(AgentBackend):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             message = None
             for _ in range(MAX_TOOL_LOOP_TURNS):
-                message = await self._post(client, messages, tools)
+                message = await self._post(client, messages, tools, output_schema)
                 tool_calls = message.get("tool_calls")
                 if not tool_calls:
                     break
@@ -93,7 +104,7 @@ class OpenAICompatibleBackend(AgentBackend):
                             ),
                         }
                     )
-                    message = await self._post(client, messages, [])
+                    message = await self._post(client, messages, [], output_schema)
                     content = message.get("content") or ""
 
         raise AgentExecutionError("unreachable")
