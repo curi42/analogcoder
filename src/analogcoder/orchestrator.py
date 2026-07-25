@@ -97,6 +97,10 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
                 tried_topologies.add(topology_id)
                 topology = TOPOLOGY_LIBRARY[topology_id]
                 subckt_name = next(iter(parse_netlist(netlist_text).subckts))
+                # Replaces the whole subckt body with the library's fixed defaults, so any
+                # parameter-tuning changes made earlier in the run (before the rollback streak
+                # that triggered this swap) are silently discarded, not carried forward. This is
+                # intentional: the new topology's own defaults are what was verified to work.
                 new_netlist_text = apply_topology_swap(netlist_text, subckt_name, topology.subckt_body)
                 state.push_netlist_version(new_netlist_text)
 
