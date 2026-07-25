@@ -280,6 +280,37 @@ async def test_run_omits_response_format_while_tools_are_offered_but_applies_it_
     }
 
 
+@pytest.mark.asyncio
+async def test_run_raises_agent_execution_error_on_request_timeout(monkeypatch):
+    # Regression test for a crash found against a real Ollama server: a
+    # larger benchmark (more criteria, longer prompts) made a single call
+    # exceed the configured timeout, and the raw httpx.ReadTimeout propagated
+    # all the way out of run() uncaught, crashing the whole process instead
+    # of producing a clean AgentExecutionError the orchestrator can handle.
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    mock_post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+    with patch("httpx.AsyncClient.post", mock_post):
+        with pytest.raises(AgentExecutionError):
+            await backend.run("system", "user", SCHEMA, [])
+
+
+@pytest.mark.asyncio
+async def test_run_raises_agent_execution_error_on_http_status_error(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    error_response = MagicMock()
+    error_response.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("server error", request=MagicMock(), response=MagicMock())
+    )
+    mock_post = AsyncMock(return_value=error_response)
+    with patch("httpx.AsyncClient.post", mock_post):
+        with pytest.raises(AgentExecutionError):
+            await backend.run("system", "user", SCHEMA, [])
+
+
 def test_default_timeout_is_120_seconds():
     backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
     assert backend.timeout == 120.0

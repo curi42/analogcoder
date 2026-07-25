@@ -45,10 +45,13 @@ class OpenAICompatibleBackend(AgentBackend):
                 "type": "json_schema",
                 "json_schema": {"name": "agent_output", "schema": output_schema},
             }
-        response = await client.post(
-            f"{self.base_url}/chat/completions", json=payload, headers=self._headers()
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                f"{self.base_url}/chat/completions", json=payload, headers=self._headers()
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise AgentExecutionError(f"request to {self.base_url} failed: {exc}") from exc
         return response.json()["choices"][0]["message"]
 
     async def run(
