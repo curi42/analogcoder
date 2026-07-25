@@ -1031,7 +1031,7 @@ Expected: PASS (all tests, including `test_run_wires_orchestration_and_returns_i
 - [ ] **Step 5: Run the full test suite**
 
 Run: `.venv/bin/python -m pytest -q`
-Expected: all tests pass. Baseline (before this plan) was 62 passed, 2 skipped. Tasks 1-5 add 4 + 3 + 6 (1 valid-payload test + 5 parametrized rejection cases) + 2 + 4 = 19 new tests; Task 6 adds none. So at this point expect **81 passed, 2 skipped** — Task 7's test runs later and brings the final total to 82. Confirm the exact count from your terminal output rather than trusting this arithmetic.
+Expected: all tests pass. Confirm the baseline count from your own terminal (run this same command before Task 1 starts, if you haven't already, to know the starting number) and confirm it has grown by the number of new tests added in Tasks 1-5 (4 + 3 + 6 + 2 + 4 = 19; Task 6 itself adds none) plus 2 skipped integration tests unchanged. Do not hardcode an expected absolute number — verify by comparison to your own recorded baseline.
 
 - [ ] **Step 6: Commit**
 
