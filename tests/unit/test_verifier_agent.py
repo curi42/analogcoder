@@ -23,6 +23,7 @@ async def test_verify_pre_calls_run_agent_with_proposal():
     assert kwargs["backend"] is fake_backend
     assert "Rf vminus vout 10k" in kwargs["user_prompt"]
     assert 'param is not exactly "value"' in kwargs["user_prompt"]
+    assert "refdes is not the exact first token" in kwargs["user_prompt"]
 
 
 @pytest.mark.asyncio

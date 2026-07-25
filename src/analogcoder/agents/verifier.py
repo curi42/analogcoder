@@ -17,11 +17,15 @@ async def verify_pre(
         f"Judge result before tuning: {judge_result}\n"
         f"Proposed changes: {proposal}\n"
         "Decide whether to approve this proposal before it is applied. Reject any "
-        'change whose param is not exactly "value" (for a component whose value is '
-        'a plain positional token in the netlist above, e.g. "Rf vminus vout 10k") '
-        'and is not an existing "name=" parameter already present on that '
-        "component's own line in the netlist above - such a param would silently "
-        "fail to update the component when applied."
+        "change whose refdes is not the exact first token of some component line "
+        'in the netlist above (e.g. for "Rf vminus vout 10k" the refdes is exactly '
+        '"Rf", never "Rf.value" or any other variant) - applying a change to a '
+        "refdes that does not literally exist in the netlist silently does nothing "
+        "at all, with no error. Also reject any change whose param is not exactly "
+        '"value" (for a component whose value is a plain positional token in the '
+        'netlist above) and is not an existing "name=" parameter already present '
+        "on that component's own line in the netlist above - such a param would "
+        "silently fail to update the component when applied."
     )
     return await run_agent(
         system_prompt=VERIFIER_SYSTEM_PROMPT,

@@ -60,6 +60,8 @@ def test_tuner_schema_accepts_named_param_and_scientific_notation_value():
 @pytest.mark.parametrize(
     "field,bad_value",
     [
+        ("refdes", "Cc.kappa"),
+        ("refdes", "M1.W"),
         ("param", "resistance value"),
         ("old_value", "unknown"),
         ("new_value", "increase Rf to 15k"),
