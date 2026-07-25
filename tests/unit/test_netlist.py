@@ -1,4 +1,6 @@
-from analogcoder.netlist import parse_netlist, apply_changes
+import pytest
+
+from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist
 
 SIMPLE_NETLIST = """\
 * simple RC
@@ -51,3 +53,37 @@ def test_apply_changes_sets_named_param():
     m1 = parsed.top_components[0]
     assert m1.params["W"] == "2u"
     assert m1.params["L"] == "0.18u"
+
+
+def test_apply_topology_swap_replaces_interior_preserving_header_and_footer():
+    netlist = (
+        "* test netlist\n"
+        ".subckt AMP vinp vinn vout vdd vss\n"
+        "R1 vinp mid 1k\n"
+        "R2 mid vout 2k\n"
+        ".ends AMP\n"
+        "Xamp1 a b c d e AMP\n"
+        ".end\n"
+    )
+    new_body = "R3 vinp mid 5k\nR4 mid vout 6k\n"
+
+    updated = apply_topology_swap(netlist, "AMP", new_body)
+
+    assert ".subckt AMP vinp vinn vout vdd vss" in updated
+    assert ".ends AMP" in updated
+    assert "R1 vinp mid 1k" not in updated
+    assert "R3 vinp mid 5k" in updated
+    assert "R4 mid vout 6k" in updated
+    assert "Xamp1 a b c d e AMP" in updated  # lines outside the block are untouched
+
+
+def test_apply_topology_swap_raises_when_subckt_not_found():
+    netlist = "* test\nR1 a b 1k\n.end\n"
+    with pytest.raises(ValueError):
+        apply_topology_swap(netlist, "AMP", "R1 a b 1k\n")
+
+
+def test_apply_topology_swap_raises_when_subckt_not_closed():
+    netlist = "* test\n.subckt AMP a b\nR1 a b 1k\n.end\n"
+    with pytest.raises(ValueError):
+        apply_topology_swap(netlist, "AMP", "R1 a b 1k\n")

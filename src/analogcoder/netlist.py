@@ -104,3 +104,19 @@ def apply_changes(text: str, changes: list[dict]) -> str:
             lines[i] = " ".join(tokens)
             break
     return "\n".join(lines) + "\n"
+
+
+def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
+    lines = text.splitlines()
+    start = end = None
+    for i, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped.lower().startswith(".subckt") and stripped.split()[1] == subckt_name:
+            start = i
+        elif start is not None and stripped.lower().startswith(".ends"):
+            end = i
+            break
+    if start is None or end is None:
+        raise ValueError(f"subckt {subckt_name!r} not found or not closed")
+    new_lines = lines[: start + 1] + new_body.splitlines() + lines[end:]
+    return "\n".join(new_lines) + "\n"
