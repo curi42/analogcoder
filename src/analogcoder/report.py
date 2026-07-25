@@ -15,7 +15,11 @@ def write_report_md(run_dir: str, result: dict) -> str:
         "",
         f"**Status:** {result['status']}",
         f"**Iterations used:** {result['iterations_used']}",
-        f"**Final netlist:** `{result['final_netlist_path']}`",
+        "**Final netlists:**",
+    ]
+    for name, path in result["final_netlist_paths"].items():
+        lines.append(f"- {name}: `{path}`")
+    lines += [
         "",
         "## Final criteria",
         "",

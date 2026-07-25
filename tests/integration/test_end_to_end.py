@@ -16,20 +16,27 @@ BENCHMARK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "benchmarks"
 @pytest.mark.asyncio
 async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch):
     spec = load_spec(os.path.join(BENCHMARK_DIR, "spec.yaml"))
-    with open(os.path.join(BENCHMARK_DIR, "netlist.cir")) as f:
-        netlist_text = f.read()
+    initial_netlist_texts = {}
+    for tb in spec.testbenches:
+        with open(tb.netlist_path) as f:
+            initial_netlist_texts[tb.name] = f.read()
 
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=[tb.name for tb in spec.testbenches])
     backend = NgspiceBackend()
 
     # The real simulation agent needs a live netlist path on disk, which only
-    # exists once the orchestrator has pushed a version — so route it through
-    # state.current_netlist_path() exactly like the CLI does in Task 16.
-    async def simulate_fn(current_netlist_text, spec_arg):
-        return await agent_simulate(state.current_netlist_path(), spec_arg.control_block, backend)
+    # exists once the orchestrator has pushed a version - so route it through
+    # state.current_netlist_paths() exactly like the CLI does.
+    async def simulate_fn(netlist_texts, spec_arg):
+        merged_measurements = {}
+        paths = state.current_netlist_paths()
+        for tb in spec_arg.testbenches:
+            result = await agent_simulate(paths[tb.name], tb.control_block, backend)
+            merged_measurements.update(result["measurements"])
+        return {"measurements": merged_measurements}
 
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.criteria)
+        return await judge_measurements(measurements, spec_arg.all_criteria)
 
     async def fake_analyze(netlist_text_arg):
         return {"circuit_type": "inverting amplifier", "stages": [], "component_roles": {}, "tunable_params": []}
@@ -56,7 +63,7 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("requires a configured Claude Agent SDK credential to run live agents")
 
-    result = await run_orchestration(netlist_text, spec, state, agents)
+    result = await run_orchestration(initial_netlist_texts, spec, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 1

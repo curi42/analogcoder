@@ -21,7 +21,6 @@ from analogcoder.state import RunState
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="analogcoder")
-    parser.add_argument("--netlist", required=True)
     parser.add_argument("--spec", required=True)
     parser.add_argument("--simulator", choices=["ngspice"], default="ngspice")
     parser.add_argument("--agent-backend", choices=["claude", "openai-compatible"], default="claude")
@@ -40,20 +39,29 @@ def _build_agent_backend(args) -> AgentBackend:
 
 
 async def _run(args) -> dict:
-    with open(args.netlist) as f:
-        netlist_text = f.read()
     spec = load_spec(args.spec)
+    initial_netlist_texts = {}
+    for tb in spec.testbenches:
+        with open(tb.netlist_path) as f:
+            initial_netlist_texts[tb.name] = f.read()
 
     run_dir = args.run_dir or os.path.join("runs", uuid.uuid4().hex[:8])
-    state = RunState(run_dir=run_dir)
+    state = RunState(run_dir=run_dir, testbench_names=[tb.name for tb in spec.testbenches])
     sim_backend = NgspiceBackend()
     agent_backend = _build_agent_backend(args)
 
-    async def simulate_fn(current_netlist_text, spec_arg):
-        return await agent_simulate(state.current_netlist_path(), spec_arg.control_block, sim_backend, agent_backend)
+    async def simulate_fn(netlist_texts, spec_arg):
+        merged_measurements = {}
+        by_testbench = {}
+        paths = state.current_netlist_paths()
+        for tb in spec_arg.testbenches:
+            result = await agent_simulate(paths[tb.name], tb.control_block, sim_backend, agent_backend)
+            merged_measurements.update(result["measurements"])
+            by_testbench[tb.name] = result
+        return {"measurements": merged_measurements, "by_testbench": by_testbench}
 
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.criteria, agent_backend)
+        return await judge_measurements(measurements, spec_arg.all_criteria, agent_backend)
 
     async def analyze_fn(netlist_text_arg):
         return await analyze_netlist(netlist_text_arg, agent_backend)
@@ -84,7 +92,7 @@ async def _run(args) -> dict:
         propose_topology=propose_topology_fn,
     )
 
-    return await run_orchestration(netlist_text, spec, state, agents)
+    return await run_orchestration(initial_netlist_texts, spec, state, agents)
 
 
 def main() -> None:
@@ -92,7 +100,7 @@ def main() -> None:
     args = parser.parse_args()
     result = asyncio.run(_run(args))
 
-    run_dir = os.path.dirname(result["final_netlist_path"])
+    run_dir = result["run_dir"]
     write_result_json(run_dir, result)
     write_report_md(run_dir, result)
 

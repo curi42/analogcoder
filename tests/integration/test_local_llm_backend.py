@@ -27,13 +27,25 @@ async def test_inverting_amp_benchmark_with_local_llm_backend(tmp_path):
         model=os.environ.get("LOCAL_LLM_MODEL", "glm-5.2"),
     )
     sim_backend = NgspiceBackend()
-    state = RunState(run_dir=str(tmp_path))
 
-    async def simulate_fn(netlist_text, spec_arg):
-        return await agent_simulate(state.current_netlist_path(), spec_arg.control_block, sim_backend, agent_backend)
+    spec = load_spec("benchmarks/inverting_amp/spec.yaml")
+    initial_netlist_texts = {}
+    for tb in spec.testbenches:
+        with open(tb.netlist_path) as f:
+            initial_netlist_texts[tb.name] = f.read()
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=[tb.name for tb in spec.testbenches])
+
+    async def simulate_fn(netlist_texts, spec_arg):
+        merged_measurements = {}
+        paths = state.current_netlist_paths()
+        for tb in spec_arg.testbenches:
+            result = await agent_simulate(paths[tb.name], tb.control_block, sim_backend, agent_backend)
+            merged_measurements.update(result["measurements"])
+        return {"measurements": merged_measurements}
 
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.criteria, agent_backend)
+        return await judge_measurements(measurements, spec_arg.all_criteria, agent_backend)
 
     async def analyze_fn(netlist_text):
         return await analyze_netlist(netlist_text, agent_backend)
@@ -56,12 +68,9 @@ async def test_inverting_amp_benchmark_with_local_llm_backend(tmp_path):
         tune=tune_fn,
         verify_pre=verify_pre_fn,
         verify_post=verify_post_fn,
+        propose_topology=None,
     )
 
-    with open("benchmarks/inverting_amp/netlist.cir") as f:
-        netlist_text = f.read()
-    spec = load_spec("benchmarks/inverting_amp/spec.yaml")
-
-    result = await run_orchestration(netlist_text, spec, state, agents)
+    result = await run_orchestration(initial_netlist_texts, spec, state, agents)
 
     assert result["status"] in ("PASS", "FAIL")
