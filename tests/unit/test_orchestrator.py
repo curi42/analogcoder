@@ -22,6 +22,19 @@ SUBCKT_NETLIST = (
     ".end\n"
 )
 FAKE_TOPOLOGY_PROPOSAL = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}
+AREA_TEST_NETLIST = (
+    "* test\n"
+    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    ".end\n"
+)
+AREA_TEST_NETLIST_WITH_SUBCKT = (
+    "* test\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    ".ends AMP\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    ".end\n"
+)
 
 
 def make_agents(**overrides):
@@ -295,3 +308,97 @@ async def test_topology_swap_rollback_restores_analysis_without_reanalyzing(tmp_
     # the saved pre-swap analysis instead of triggering a third analyze call
     assert analyze_calls["count"] == 3
     assert propose_topology_calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
+    verify_pre_calls = {"count": 0}
+
+    async def counting_verify_pre(analysis, judge_result, proposal, netlist_text):
+        verify_pre_calls["count"] += 1
+        return {"approved": True, "concerns": [], "feedback": "ok"}
+
+    async def oversized_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+        return {
+            "proposed_changes": [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        tune=oversized_tune,
+        verify_pre=counting_verify_pre,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration(AREA_TEST_NETLIST, FAKE_SPEC, state, agents)
+
+    assert verify_pre_calls["count"] == 0
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+
+
+@pytest.mark.asyncio
+async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
+    call_count = {"n": 0}
+
+    async def mixed_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+        call_count["n"] += 1
+        if call_count["n"] % 2 == 1:
+            new_value = "100u"  # oversized -> area-rejected, 2.5x
+        else:
+            new_value = "50u"  # right-sized, 1.25x -> passes area, reaches verify_pre
+        return {
+            "proposed_changes": [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": new_value, "reasoning": "x"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    async def always_reject_verify_pre(analysis, judge_result, proposal, netlist_text):
+        return {"approved": False, "concerns": ["not justified"], "feedback": "try again"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        tune=mixed_tune,
+        verify_pre=always_reject_verify_pre,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration(AREA_TEST_NETLIST, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "tuning proposal repeatedly rejected"
+
+
+@pytest.mark.asyncio
+async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
+    async def oversized_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+        return {
+            "proposed_changes": [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_spy(analysis, judge_result, available_topologies, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        tune=oversized_tune,
+        propose_topology=propose_topology_spy,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    await run_orchestration(AREA_TEST_NETLIST_WITH_SUBCKT, FAKE_SPEC, state, agents)
+
+    assert propose_topology_calls["count"] >= 1

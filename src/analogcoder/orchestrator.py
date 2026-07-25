@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
+from analogcoder.area_limits import check_area_growth, index_baseline_components
 from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist
 from analogcoder.state import RunState
 from analogcoder.topologies import TOPOLOGY_LIBRARY
@@ -48,6 +49,7 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
         topology_swap_available = len(parse_netlist(initial_netlist_text).subckts) == 1
         tried_topologies: set[str] = set()
         consecutive_rollbacks = 0
+        baseline_components = index_baseline_components(initial_netlist_text)
 
         tuning_history: list[dict] = []
 
@@ -139,9 +141,19 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
 
             approved_proposal = None
             rejection_feedback = None
+            verify_pre_rejected_any = False
             for retry in range(1, MAX_TUNING_RETRIES + 1):
                 proposal = await agents.tune(analysis, judge_result, tuning_history, rejection_feedback, netlist_text)
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
+
+                area_ok, area_feedback = check_area_growth(baseline_components, proposal["proposed_changes"])
+                state.log_event(
+                    "area_check",
+                    {"outer_iter": outer_iter, "retry": retry, "approved": area_ok, "feedback": area_feedback},
+                )
+                if not area_ok:
+                    rejection_feedback = area_feedback
+                    continue
 
                 review = await agents.verify_pre(analysis, judge_result, proposal, netlist_text)
                 state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
@@ -149,12 +161,17 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
                 if review["approved"]:
                     approved_proposal = proposal
                     break
+                verify_pre_rejected_any = True
                 rejection_feedback = review["feedback"]
 
             if approved_proposal is None:
-                return _final_result(
-                    "FAIL", state, outer_iter, judge_result, failure_reason="tuning proposal repeatedly rejected"
-                )
+                if verify_pre_rejected_any:
+                    return _final_result(
+                        "FAIL", state, outer_iter, judge_result,
+                        failure_reason="tuning proposal repeatedly rejected",
+                    )
+                consecutive_rollbacks += 1
+                continue
 
             new_netlist_text = apply_changes(netlist_text, approved_proposal["proposed_changes"])
             state.push_netlist_version(new_netlist_text)
