@@ -120,3 +120,33 @@ def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
         raise ValueError(f"subckt {subckt_name!r} not found or not closed")
     new_lines = lines[: start + 1] + new_body.splitlines() + lines[end:]
     return "\n".join(new_lines) + "\n"
+
+
+_SPICE_VALUE_RE = re.compile(r"^(-?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)([a-zA-Z]*)$")
+
+# Longest/most-specific suffix first: "meg" must be checked before "m", or
+# "1.5meg" would incorrectly match "m" (milli) since "meg".startswith("m").
+_SPICE_SUFFIXES = [
+    ("meg", 1e6),
+    ("t", 1e12),
+    ("g", 1e9),
+    ("k", 1e3),
+    ("m", 1e-3),
+    ("u", 1e-6),
+    ("n", 1e-9),
+    ("p", 1e-12),
+    ("f", 1e-15),
+]
+
+
+def parse_spice_value(s: str) -> float:
+    match = _SPICE_VALUE_RE.match(s.strip())
+    if not match:
+        raise ValueError(f"not a valid SPICE numeric literal: {s!r}")
+    number_str, suffix = match.groups()
+    number = float(number_str)
+    suffix_lower = suffix.lower()
+    for name, multiplier in _SPICE_SUFFIXES:
+        if suffix_lower.startswith(name):
+            return number * multiplier
+    return number

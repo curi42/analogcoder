@@ -1,6 +1,6 @@
 import pytest
 
-from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist
+from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist, parse_spice_value
 
 SIMPLE_NETLIST = """\
 * simple RC
@@ -87,3 +87,68 @@ def test_apply_topology_swap_raises_when_subckt_not_closed():
     netlist = "* test\n.subckt AMP a b\nR1 a b 1k\n.end\n"
     with pytest.raises(ValueError):
         apply_topology_swap(netlist, "AMP", "R1 a b 1k\n")
+
+
+def test_parse_spice_value_no_suffix():
+    assert parse_spice_value("500") == pytest.approx(500.0)
+
+
+def test_parse_spice_value_pico():
+    assert parse_spice_value("2p") == pytest.approx(2e-12)
+
+
+def test_parse_spice_value_nano():
+    assert parse_spice_value("40n") == pytest.approx(40e-9)
+
+
+def test_parse_spice_value_micro():
+    assert parse_spice_value("40u") == pytest.approx(40e-6)
+
+
+def test_parse_spice_value_milli():
+    assert parse_spice_value("5m") == pytest.approx(5e-3)
+
+
+def test_parse_spice_value_kilo():
+    assert parse_spice_value("10k") == pytest.approx(10e3)
+
+
+def test_parse_spice_value_mega_uses_full_meg_suffix():
+    assert parse_spice_value("1.5meg") == pytest.approx(1.5e6)
+
+
+def test_parse_spice_value_bare_m_is_milli_not_mega():
+    assert parse_spice_value("2MEG") == pytest.approx(2e6)
+    assert parse_spice_value("2m") == pytest.approx(2e-3)
+
+
+def test_parse_spice_value_giga_and_tera():
+    assert parse_spice_value("3g") == pytest.approx(3e9)
+    assert parse_spice_value("1t") == pytest.approx(1e12)
+
+
+def test_parse_spice_value_femto():
+    assert parse_spice_value("100f") == pytest.approx(100e-15)
+
+
+def test_parse_spice_value_negative_number():
+    assert parse_spice_value("-5u") == pytest.approx(-5e-6)
+
+
+def test_parse_spice_value_scientific_notation():
+    assert parse_spice_value("2e-3") == pytest.approx(2e-3)
+
+
+def test_parse_spice_value_ignores_trailing_unit_letters():
+    assert parse_spice_value("5pF") == pytest.approx(5e-12)
+    assert parse_spice_value("40uOHM") == pytest.approx(40e-6)
+
+
+def test_parse_spice_value_case_insensitive():
+    assert parse_spice_value("2P") == pytest.approx(2e-12)
+    assert parse_spice_value("40U") == pytest.approx(40e-6)
+
+
+def test_parse_spice_value_raises_on_invalid_input():
+    with pytest.raises(ValueError):
+        parse_spice_value("not-a-number")
