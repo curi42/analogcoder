@@ -48,6 +48,20 @@ against a fixed schema (`schemas.py`).
   with the topology-swap threshold above — repeated area-blocked tuning can
   escalate into a topology swap instead of just giving up. See
   `docs/superpowers/specs/2026-07-25-area-aware-tuning-design.md`.
+- `spec.py` — `spec.yaml` declares one or more **testbenches** (`TargetSpec.testbenches`),
+  each with its own netlist file, control block, and criteria — not a single
+  implicit testbench. `TargetSpec.canonical` (`testbenches[0]`) is the netlist
+  text handed to the tuner, `verify_pre`, and the area-growth baseline indexer;
+  `TargetSpec.all_criteria` flattens every testbench's criteria for one `judge`
+  call per iteration. `simulate` fans out to one call per testbench (in
+  `cli.py`'s `simulate_fn`, merging measurements) while `judge`/`tune`/
+  `verify_pre`/`verify_post` stay at one LLM call per iteration — every
+  iteration re-simulates and re-judges *all* testbenches together, so a change
+  that fixes one testbench's criterion can't silently regress another's.
+  `RunState` (`state.py`) versions each testbench's netlist independently but
+  always in lockstep (`push_netlist_version`/`rollback` operate on the whole
+  set atomically — never partially applied across testbenches). See
+  `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -66,9 +80,12 @@ Requires `ngspice` on PATH for the real-simulator tests and any actual run
 ## Running
 
 ```bash
-.venv/bin/analogcoder --netlist benchmarks/inverting_amp/netlist.cir \
-  --spec benchmarks/inverting_amp/spec.yaml --run-dir runs/r1
+.venv/bin/analogcoder --spec benchmarks/inverting_amp/spec.yaml --run-dir runs/r1
 ```
+
+`spec.yaml` declares one or more testbenches (`testbenches:` list), each with
+its own netlist file (resolved relative to the spec file), control block,
+and criteria — there's no separate `--netlist` flag.
 
 ## Benchmarks
 
@@ -98,6 +115,19 @@ Requires `ngspice` on PATH for the real-simulator tests and any actual run
   topology-swap mechanism itself is still verified correct (unit tests, a
   real-ngspice test, and an independent whole-branch review all passed) —
   this benchmark just isn't a guaranteed trigger for it.
+- `benchmarks/two_stage_opamp/spec.yaml` also declares two PSR testbenches
+  (`psr_plus`, `psr_minus`) alongside `ac_loop_gain` — same `OPAMP2STAGE`
+  subckt as `netlist.cir`, with the AC stimulus moved from the input to
+  `Vdd`/`Vss` respectively (`netlist_psr_plus.cir` / `netlist_psr_minus.cir`).
+  Verified against real ngspice: baseline `psr_plus_db=-15.12dB` (passes the
+  `<=-10dB` threshold), `psr_minus_db=-3.36dB` (fails the `<=-8dB`
+  threshold — `M6`'s NMOS source sits directly on `vss` with no cascode, so
+  `Vss` ripple couples almost straight through). Increasing `M6.W` improves
+  `psr_minus` but was shown to regress `phase_margin` and, combined with an
+  `M7.W` change, `psr_plus` too — the real motivation for verifying every
+  testbench together every iteration instead of just the one being tuned
+  for. See `docs/superpowers/specs/2026-07-25-psr-verification-design.md`
+  for the full Cc/M6.W/M7.W sweep data and a jointly-passing combination.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -105,7 +135,7 @@ local OpenAI-compatible server instead:
 
 ```bash
 LOCAL_LLM_API_KEY=<token-or-dummy> .venv/bin/analogcoder \
-  --netlist ... --spec ... \
+  --spec ... \
   --agent-backend openai-compatible \
   --llm-base-url http://localhost:11434/v1 \
   --llm-model <model-name>
