@@ -1,0 +1,38 @@
+* Two-stage CMOS op-amp (Miller-compensated), generic level-1 devices.
+* PSR- testbench: AC=1 injected on Vss, no input stimulus, same AC loop-break
+* (Lfb) topology as the main AC testbench. The OPAMP2STAGE subckt body below
+* must stay byte-identical to netlist.cir and netlist_psr_plus.cir - tuning
+* changes are applied to all three files independently and rely on that.
+.model NMOSG NMOS (LEVEL=1 VTO=0.7 KP=120u LAMBDA=0.02)
+.model PMOSG PMOS (LEVEL=1 VTO=-0.7 KP=40u LAMBDA=0.02)
+
+.subckt OPAMP2STAGE vinp vinn vout vdd vss
+Iref nb1 vdd 100u
+M9 nb1 nb1 vdd vdd PMOSG W=20u L=1u
+
+M1 n1   vinn tail vdd PMOSG W=40u L=1u
+M2 outA vinp tail vdd PMOSG W=40u L=1u
+
+M3 n1   n1   vss vss NMOSG W=20u L=1u
+M4 outA n1   vss vss NMOSG W=20u L=1u
+
+M5 tail nb1 vdd vdd PMOSG W=40u L=1u
+
+M6 vout outA vss vss NMOSG W=40u L=1u
+M7 vout nb1  vdd vdd PMOSG W=60u L=1u
+
+Cc outA vout 2p
+Ca outA 0 0.3p
+.ends OPAMP2STAGE
+
+Vdd vdd 0 DC 2.5
+Vss vss 0 DC -2.5 AC 1
+
+Vinp vinp 0 DC 0
+Lfb vout vinn 1e6
+Cin vstim vinn 1
+Vstim vstim 0 DC 0
+
+Xdut vinp vinn vout vdd vss OPAMP2STAGE
+Cload vout 0 2p
+.end

@@ -27,3 +27,33 @@ testbenches:
         operator: ">="
         threshold: 60.0
         unit: deg
+
+  - name: psr_plus
+    netlist: netlist_psr_plus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_plus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_plus
+        measurement: psr_plus_db
+        operator: "<="
+        threshold: -10.0
+        unit: dB
+
+  - name: psr_minus
+    netlist: netlist_psr_minus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_minus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_minus
+        measurement: psr_minus_db
+        operator: "<="
+        threshold: -8.0
+        unit: dB
