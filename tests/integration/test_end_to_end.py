@@ -47,6 +47,7 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
         tune=fail_if_called,
         verify_pre=fail_if_called,
         verify_post=fail_if_called,
+        propose_topology=fail_if_called,
     )
 
     # These two calls hit the real Claude Agent SDK (simulate_fn -> agent_simulate,

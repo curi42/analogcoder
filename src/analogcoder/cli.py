@@ -10,7 +10,7 @@ from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
-from analogcoder.agents.tuner import propose_tuning
+from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.report import write_report_md, write_result_json
@@ -69,6 +69,11 @@ async def _run(args) -> dict:
     async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
         return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backend)
 
+    async def propose_topology_fn(analysis, judge_result, available_topologies, rejection_feedback):
+        return await propose_topology_swap(
+            analysis, judge_result, available_topologies, rejection_feedback, agent_backend
+        )
+
     agents = OrchestratorAgents(
         analyze=analyze_fn,
         simulate=simulate_fn,
@@ -76,6 +81,7 @@ async def _run(args) -> dict:
         tune=tune_fn,
         verify_pre=verify_pre_fn,
         verify_post=verify_post_fn,
+        propose_topology=propose_topology_fn,
     )
 
     return await run_orchestration(netlist_text, spec, state, agents)
