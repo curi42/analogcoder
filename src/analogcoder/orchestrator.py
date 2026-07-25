@@ -49,6 +49,11 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
         topology_swap_available = len(parse_netlist(initial_netlist_text).subckts) == 1
         tried_topologies: set[str] = set()
         consecutive_rollbacks = 0
+        # Intentionally computed once from netlist_v0 and never refreshed after a
+        # topology swap: components introduced by a swapped-in topology (e.g. a
+        # nulling resistor Rz) have nothing in the original netlist to compare
+        # against, so they are simply unconstrained by the area gate for the
+        # rest of the run. This is by-design, not a bug - do not "fix" it.
         baseline_components = index_baseline_components(initial_netlist_text)
 
         tuning_history: list[dict] = []

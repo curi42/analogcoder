@@ -84,10 +84,21 @@ def check_area_growth(
             baseline_str = _baseline_value_for(component, change["param"])
             if baseline_str is None:
                 continue
-            baseline_value = parse_spice_value(baseline_str)
+            try:
+                baseline_value = parse_spice_value(baseline_str)
+            except ValueError:
+                # e.g. param="value" misapplied to a non-numeric positional
+                # token (a transistor's model name, a subckt instance's
+                # subckt name). Not something we can judge area impact on -
+                # treat this change as unconstrained, same as a missing
+                # baseline value.
+                continue
             if baseline_value <= 0:
                 continue
-            new_value = parse_spice_value(change["new_value"])
+            try:
+                new_value = parse_spice_value(change["new_value"])
+            except ValueError:
+                continue
             combined_ratio *= new_value / baseline_value
 
         if combined_ratio <= 1.0:

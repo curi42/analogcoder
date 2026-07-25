@@ -100,3 +100,34 @@ def test_check_area_growth_skips_unknown_refdes():
     approved, feedback = check_area_growth(baseline, changes)
     assert approved is True
     assert feedback is None
+
+
+def test_check_area_growth_skips_unparseable_baseline_value_on_transistor():
+    # A weak model can incorrectly use param="value" on a transistor line,
+    # where the "value" position is actually the model name (e.g. "NMOSG"),
+    # not a numeric literal. check_area_growth must not crash on this - it
+    # should simply treat the change as unconstrained, same as a missing
+    # baseline value.
+    baseline = index_baseline_components(NETLIST_WITH_SUBCKT)
+    changes = [{"refdes": "M6", "param": "value", "old_value": "NMOSG", "new_value": "50u"}]
+    approved, feedback = check_area_growth(baseline, changes)
+    assert approved is True
+    assert feedback is None
+
+
+def test_check_area_growth_skips_unparseable_baseline_value_on_subckt_instance():
+    # A proposal can target a subckt instantiation line (e.g. "Xdut ... OPAMP2STAGE"),
+    # whose .value is the subckt name, not a numeric literal.
+    netlist = (
+        "* test\n"
+        ".subckt OPAMP2STAGE vinp vinn vout vdd vss\n"
+        "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+        ".ends OPAMP2STAGE\n"
+        "Xdut vinp vinn vout vdd vss OPAMP2STAGE\n"
+        ".end\n"
+    )
+    baseline = index_baseline_components(netlist)
+    changes = [{"refdes": "Xdut", "param": "value", "old_value": "OPAMP2STAGE", "new_value": "OTHERAMP"}]
+    approved, feedback = check_area_growth(baseline, changes)
+    assert approved is True
+    assert feedback is None
