@@ -34,3 +34,18 @@ def test_load_spec(tmp_path):
     assert c.operator == ">="
     assert c.threshold == 19.5
     assert c.unit == "dB"
+
+
+def test_topology_required_spec_has_stricter_phase_margin_threshold():
+    spec = load_spec("benchmarks/two_stage_opamp/spec_topology_required.yaml")
+    baseline = load_spec("benchmarks/two_stage_opamp/spec.yaml")
+
+    phase_margin = next(c for c in spec.criteria if c.name == "phase_margin")
+    baseline_phase_margin = next(c for c in baseline.criteria if c.name == "phase_margin")
+
+    assert phase_margin.threshold == 65.0
+    assert phase_margin.threshold > baseline_phase_margin.threshold
+    # gain and UGBW thresholds are unchanged from the baseline spec
+    assert {c.name: c.threshold for c in spec.criteria if c.name != "phase_margin"} == {
+        c.name: c.threshold for c in baseline.criteria if c.name != "phase_margin"
+    }
