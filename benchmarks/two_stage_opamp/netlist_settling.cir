@@ -1,0 +1,38 @@
+* Two-stage CMOS op-amp (Miller-compensated), generic level-1 devices.
+* Settling-time testbench: closed-loop unity-gain buffer (vout wired
+* directly to vinn via the Xdut instantiation below), fed a 1V step at
+* vinp. Unlike the AC loop-gain testbench (which breaks feedback at AC via
+* Lfb), this is a genuine closed loop - feedback factor 1, the same
+* unity-loop-gain condition the AC testbench's phase_margin criterion
+* targets. The OPAMP2STAGE subckt body below must stay byte-identical to
+* netlist.cir, netlist_psr_plus.cir, and netlist_psr_minus.cir - tuning
+* changes are applied to all four files independently and rely on that.
+.model NMOSG NMOS (LEVEL=1 VTO=0.7 KP=120u LAMBDA=0.02)
+.model PMOSG PMOS (LEVEL=1 VTO=-0.7 KP=40u LAMBDA=0.02)
+
+.subckt OPAMP2STAGE vinp vinn vout vdd vss
+Iref nb1 vdd 100u
+M9 nb1 nb1 vdd vdd PMOSG W=20u L=1u
+
+M1 n1   vinn tail vdd PMOSG W=40u L=1u
+M2 outA vinp tail vdd PMOSG W=40u L=1u
+
+M3 n1   n1   vss vss NMOSG W=20u L=1u
+M4 outA n1   vss vss NMOSG W=20u L=1u
+
+M5 tail nb1 vdd vdd PMOSG W=40u L=1u
+
+M6 vout outA vss vss NMOSG W=40u L=1u
+M7 vout nb1  vdd vdd PMOSG W=60u L=1u
+
+Cc outA vout 2p
+Ca outA 0 0.3p
+.ends OPAMP2STAGE
+
+Vdd vdd 0 DC 2.5
+Vss vss 0 DC -2.5
+
+Vinp vinp 0 PULSE(0 1 1u 1n 1n 10u 20u)
+Xdut vinp vout vout vdd vss OPAMP2STAGE
+Cload vout 0 2p
+.end

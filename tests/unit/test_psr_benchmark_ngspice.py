@@ -13,7 +13,9 @@ def _load_two_stage_opamp_spec():
 def test_spec_declares_three_testbenches_with_expected_criteria():
     spec = _load_two_stage_opamp_spec()
 
-    assert [tb.name for tb in spec.testbenches] == ["ac_loop_gain", "psr_plus", "psr_minus"]
+    assert [tb.name for tb in spec.testbenches] == [
+        "ac_loop_gain", "psr_plus", "psr_minus", "settling_time",
+    ]
 
     psr_plus = next(tb for tb in spec.testbenches if tb.name == "psr_plus")
     assert psr_plus.criteria[0].measurement == "psr_plus_db"
