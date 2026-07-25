@@ -28,7 +28,8 @@ def _final_result(
 ) -> dict:
     result = {
         "status": status,
-        "final_netlist_path": state.current_netlist_path(),
+        "final_netlist_paths": state.current_netlist_paths(),
+        "run_dir": state.run_dir,
         "iterations_used": iterations_used,
         "final_criteria": judge_result["criteria"] if judge_result else [],
     }
@@ -37,16 +38,23 @@ def _final_result(
     return result
 
 
-async def run_orchestration(initial_netlist_text: str, spec, state: RunState, agents: OrchestratorAgents) -> dict:
-    state.push_netlist_version(initial_netlist_text)
+def _apply_to_all(netlist_texts: dict[str, str], changes: list[dict]) -> dict[str, str]:
+    return {name: apply_changes(text, changes) for name, text in netlist_texts.items()}
+
+
+async def run_orchestration(
+    initial_netlist_texts: dict[str, str], spec, state: RunState, agents: OrchestratorAgents
+) -> dict:
+    canonical_name = spec.canonical.name
+    state.push_netlist_version(initial_netlist_texts)
     outer_iter = 0
     judge_result: dict = {}
 
     try:
-        analysis = await agents.analyze(initial_netlist_text)
+        analysis = await agents.analyze(initial_netlist_texts[canonical_name])
         state.log_event("analysis", analysis)
 
-        topology_swap_available = len(parse_netlist(initial_netlist_text).subckts) == 1
+        topology_swap_available = len(parse_netlist(initial_netlist_texts[canonical_name]).subckts) == 1
         tried_topologies: set[str] = set()
         consecutive_rollbacks = 0
         # Intentionally computed once from netlist_v0 and never refreshed after a
@@ -54,15 +62,14 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
         # nulling resistor Rz) have nothing in the original netlist to compare
         # against, so they are simply unconstrained by the area gate for the
         # rest of the run. This is by-design, not a bug - do not "fix" it.
-        baseline_components = index_baseline_components(initial_netlist_text)
+        baseline_components = index_baseline_components(initial_netlist_texts[canonical_name])
 
         tuning_history: list[dict] = []
 
         for outer_iter in range(1, MAX_OUTER_ITERATIONS + 1):
-            with open(state.current_netlist_path()) as f:
-                netlist_text = f.read()
+            netlist_texts = state.current_netlist_texts()
 
-            sim_result = await agents.simulate(netlist_text, spec)
+            sim_result = await agents.simulate(netlist_texts, spec)
             state.log_event("simulation", {"outer_iter": outer_iter, **sim_result})
 
             judge_result = await agents.judge(sim_result["measurements"], spec)
@@ -103,19 +110,22 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
 
                 tried_topologies.add(topology_id)
                 topology = TOPOLOGY_LIBRARY[topology_id]
-                subckt_name = next(iter(parse_netlist(netlist_text).subckts))
+                subckt_name = next(iter(parse_netlist(netlist_texts[canonical_name]).subckts))
                 # Replaces the whole subckt body with the library's fixed defaults, so any
                 # parameter-tuning changes made earlier in the run (before the rollback streak
                 # that triggered this swap) are silently discarded, not carried forward. This is
                 # intentional: the new topology's own defaults are what was verified to work.
-                new_netlist_text = apply_topology_swap(netlist_text, subckt_name, topology.subckt_body)
-                state.push_netlist_version(new_netlist_text)
+                new_netlist_texts = {
+                    name: apply_topology_swap(text, subckt_name, topology.subckt_body)
+                    for name, text in netlist_texts.items()
+                }
+                state.push_netlist_version(new_netlist_texts)
 
                 pre_swap_analysis = analysis
-                analysis = await agents.analyze(new_netlist_text)
+                analysis = await agents.analyze(new_netlist_texts[canonical_name])
                 state.log_event("analysis", {"outer_iter": outer_iter, "topology_id": topology_id, **analysis})
 
-                new_sim_result = await agents.simulate(new_netlist_text, spec)
+                new_sim_result = await agents.simulate(new_netlist_texts, spec)
                 state.log_event(
                     "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
                 )
@@ -148,7 +158,9 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
             rejection_feedback = None
             verify_pre_rejected_any = False
             for retry in range(1, MAX_TUNING_RETRIES + 1):
-                proposal = await agents.tune(analysis, judge_result, tuning_history, rejection_feedback, netlist_text)
+                proposal = await agents.tune(
+                    analysis, judge_result, tuning_history, rejection_feedback, netlist_texts[canonical_name]
+                )
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
 
                 area_ok, area_feedback = check_area_growth(baseline_components, proposal["proposed_changes"])
@@ -160,7 +172,7 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
                     rejection_feedback = area_feedback
                     continue
 
-                review = await agents.verify_pre(analysis, judge_result, proposal, netlist_text)
+                review = await agents.verify_pre(analysis, judge_result, proposal, netlist_texts[canonical_name])
                 state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
 
                 if review["approved"]:
@@ -178,10 +190,10 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
                 consecutive_rollbacks += 1
                 continue
 
-            new_netlist_text = apply_changes(netlist_text, approved_proposal["proposed_changes"])
-            state.push_netlist_version(new_netlist_text)
+            new_netlist_texts = _apply_to_all(netlist_texts, approved_proposal["proposed_changes"])
+            state.push_netlist_version(new_netlist_texts)
 
-            new_sim_result = await agents.simulate(new_netlist_text, spec)
+            new_sim_result = await agents.simulate(new_netlist_texts, spec)
             state.log_event("simulation", {"outer_iter": outer_iter, "post_tuning": True, **new_sim_result})
 
             new_judge_result = await agents.judge(new_sim_result["measurements"], spec)

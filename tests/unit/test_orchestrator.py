@@ -10,7 +10,14 @@ from analogcoder.state import RunState
 PASS_JUDGE = {"overall_pass": True, "criteria": [{"name": "gain", "target": ">=19.5", "actual": 20.0, "pass": True, "margin": 0.5}]}
 FAIL_JUDGE = {"overall_pass": False, "criteria": [{"name": "gain", "target": ">=19.5", "actual": 18.0, "pass": False, "margin": -1.5}]}
 
-FAKE_SPEC = SimpleNamespace(criteria=[])
+
+def make_spec(*testbench_names):
+    testbenches = [SimpleNamespace(name=n, criteria=[]) for n in testbench_names]
+    return SimpleNamespace(testbenches=testbenches, canonical=testbenches[0])
+
+
+FAKE_SPEC = make_spec("ac_loop_gain")
+MULTI_SPEC = make_spec("ac_loop_gain", "psr_plus")
 FAKE_PROPOSAL = {"proposed_changes": [{"refdes": "Rf", "param": "value", "old_value": "10k", "new_value": "11k"}]}
 SUBCKT_NETLIST = (
     "* test\n"
@@ -41,7 +48,7 @@ def make_agents(**overrides):
     async def default_analyze(netlist_text):
         return {"circuit_type": "inverting amplifier"}
 
-    async def default_simulate(netlist_text, spec):
+    async def default_simulate(netlist_texts, spec):
         return {"measurements": {"gain_db": 20.0}, "status": "success", "warnings": []}
 
     async def default_judge(measurements, spec):
@@ -72,15 +79,21 @@ def make_agents(**overrides):
     return OrchestratorAgents(**defaults)
 
 
+async def _async(value):
+    return value
+
+
 @pytest.mark.asyncio
 async def test_immediate_pass_returns_pass_on_first_iteration(tmp_path):
     agents = make_agents()
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 1
+    assert result["final_netlist_paths"] == state.current_netlist_paths()
+    assert result["run_dir"] == str(tmp_path)
 
 
 @pytest.mark.asyncio
@@ -92,13 +105,13 @@ async def test_fail_then_pass_after_tuning(tmp_path):
         return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
 
     agents = make_agents(judge=judge_fails_then_passes)
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 1
-    assert len(state.netlist_versions) == 2  # v0 initial + v1 after applied tuning
+    assert len(state.netlist_versions["ac_loop_gain"]) == 2  # v0 initial + v1 after applied tuning
 
 
 @pytest.mark.asyncio
@@ -107,16 +120,12 @@ async def test_prereview_always_rejected_fails_run(tmp_path):
         return {"approved": False, "concerns": ["not justified"], "feedback": "try again"}
 
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_pre=always_reject)
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "tuning proposal repeatedly rejected"
-
-
-async def _async(value):
-    return value
 
 
 @pytest.mark.asyncio
@@ -137,9 +146,9 @@ async def test_postreview_rollback_consumes_an_iteration_then_succeeds(tmp_path)
         return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "better"}
 
     agents = make_agents(judge=judge_sequence, verify_post=verify_post_first_rollback)
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 2
@@ -150,9 +159,9 @@ async def test_max_iterations_exhausted_fails_run(tmp_path):
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_post=lambda p, n, c: _async(
         {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no progress"}
     ))
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -164,9 +173,9 @@ async def test_agent_execution_error_before_loop_returns_fail_with_zero_iteratio
         raise AgentExecutionError("boom")
 
     agents = make_agents(analyze=failing_analyze)
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["iterations_used"] == 0
@@ -178,16 +187,16 @@ async def test_agent_execution_error_before_loop_returns_fail_with_zero_iteratio
 async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(tmp_path):
     call_count = {"n": 0}
 
-    async def simulate_then_fail(netlist_text, spec):
+    async def simulate_then_fail(netlist_texts, spec):
         call_count["n"] += 1
         if call_count["n"] == 2:
             raise AgentExecutionError("simulator backend unreachable")
         return {"measurements": {"gain_db": 20.0}, "status": "success", "warnings": []}
 
     agents = make_agents(simulate=simulate_then_fail, judge=lambda m, s: _async(FAIL_JUDGE))
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["iterations_used"] == 0
@@ -210,9 +219,9 @@ async def test_topology_swap_never_offered_without_exactly_one_subckt(tmp_path):
         verify_post=verify_post_always_rollback,
         propose_topology=propose_topology_spy,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -242,15 +251,15 @@ async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_
         return {"topology_id": available_topologies[0].id, "reasoning": "matches phase margin gap", "confidence": 90}
 
     agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 4
     assert len(propose_topology_calls) == 1
     assert set(propose_topology_calls[0]) == {"miller_basic", "miller_nulling_resistor"}
-    assert len(state.netlist_versions) == 2  # v0 initial + v1 after the kept topology swap
+    assert len(state.netlist_versions["ac_loop_gain"]) == 2  # v0 initial + v1 after the kept topology swap
 
 
 @pytest.mark.asyncio
@@ -266,9 +275,9 @@ async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
         verify_post=verify_post_always_rollback,
         propose_topology=always_bad_topology,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "topology proposal repeatedly rejected"
@@ -297,15 +306,12 @@ async def test_topology_swap_rollback_restores_analysis_without_reanalyzing(tmp_
         verify_post=verify_post_always_rollback,
         propose_topology=propose_topology_once,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
-    # initial analyze + one re-analyze per topology attempt (library has 2 entries,
-    # each gets exactly one attempt across the 10-iteration budget); rollback restores
-    # the saved pre-swap analysis instead of triggering a third analyze call
     assert analyze_calls["count"] == 3
     assert propose_topology_calls["count"] == 2
 
@@ -332,9 +338,9 @@ async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
         tune=oversized_tune,
         verify_pre=counting_verify_pre,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration(AREA_TEST_NETLIST, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
 
     assert verify_pre_calls["count"] == 0
     assert result["status"] == "FAIL"
@@ -367,9 +373,9 @@ async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
         tune=mixed_tune,
         verify_pre=always_reject_verify_pre,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration(AREA_TEST_NETLIST, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "tuning proposal repeatedly rejected"
@@ -397,8 +403,80 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
         tune=oversized_tune,
         propose_topology=propose_topology_spy,
     )
-    state = RunState(run_dir=str(tmp_path))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    await run_orchestration(AREA_TEST_NETLIST_WITH_SUBCKT, FAKE_SPEC, state, agents)
+    await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST_WITH_SUBCKT}, FAKE_SPEC, state, agents)
 
     assert propose_topology_calls["count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_multi_testbench_tuning_change_applied_to_every_testbench(tmp_path):
+    judge_calls = {"count": 0}
+
+    async def judge_fails_then_passes(measurements, spec):
+        judge_calls["count"] += 1
+        return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
+
+    agents = make_agents(judge=judge_fails_then_passes)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    initial = {
+        "ac_loop_gain": "* ac\nRf vminus vout 10k\n.end\n",
+        "psr_plus": "* psr\nRf vminus vout 10k\n.end\n",
+    }
+    result = await run_orchestration(initial, MULTI_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    final_texts = state.current_netlist_texts()
+    assert "11k" in final_texts["ac_loop_gain"]
+    assert "11k" in final_texts["psr_plus"]
+
+
+@pytest.mark.asyncio
+async def test_multi_testbench_tune_and_verify_pre_receive_only_canonical_text(tmp_path):
+    seen_texts = {"tune": None, "verify_pre": None}
+
+    async def spying_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+        seen_texts["tune"] = netlist_text
+        return FAKE_PROPOSAL
+
+    async def spying_verify_pre(analysis, judge_result, proposal, netlist_text):
+        seen_texts["verify_pre"] = netlist_text
+        return {"approved": True, "concerns": [], "feedback": "ok"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE) if seen_texts["tune"] is None else _async(PASS_JUDGE),
+        tune=spying_tune,
+        verify_pre=spying_verify_pre,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    initial = {"ac_loop_gain": "* canonical text\n.end\n", "psr_plus": "* other testbench text\n.end\n"}
+    await run_orchestration(initial, MULTI_SPEC, state, agents)
+
+    assert seen_texts["tune"] == "* canonical text\n.end\n"
+    assert seen_texts["verify_pre"] == "* canonical text\n.end\n"
+
+
+@pytest.mark.asyncio
+async def test_multi_testbench_rollback_restores_every_testbench(tmp_path):
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_post=verify_post_always_rollback)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    initial = {
+        "ac_loop_gain": "* ac original\nRf vminus vout 10k\n.end\n",
+        "psr_plus": "* psr original\nRf vminus vout 10k\n.end\n",
+    }
+    await run_orchestration(initial, MULTI_SPEC, state, agents)
+
+    assert verify_post_calls["count"] >= 1
+    final_texts = state.current_netlist_texts()
+    assert final_texts["ac_loop_gain"] == "* ac original\nRf vminus vout 10k\n.end\n"
+    assert final_texts["psr_plus"] == "* psr original\nRf vminus vout 10k\n.end\n"
