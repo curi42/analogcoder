@@ -27,7 +27,7 @@ def make_agents(**overrides):
     async def default_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
         return FAKE_PROPOSAL
 
-    async def default_verify_pre(analysis, judge_result, proposal):
+    async def default_verify_pre(analysis, judge_result, proposal, netlist_text):
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
     async def default_verify_post(prev_judge, new_judge, applied_changes):
@@ -76,7 +76,7 @@ async def test_fail_then_pass_after_tuning(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prereview_always_rejected_fails_run(tmp_path):
-    async def always_reject(analysis, judge_result, proposal):
+    async def always_reject(analysis, judge_result, proposal, netlist_text):
         return {"approved": False, "concerns": ["not justified"], "feedback": "try again"}
 
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_pre=always_reject)

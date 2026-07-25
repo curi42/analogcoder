@@ -63,7 +63,7 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
                 proposal = await agents.tune(analysis, judge_result, tuning_history, rejection_feedback, netlist_text)
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
 
-                review = await agents.verify_pre(analysis, judge_result, proposal)
+                review = await agents.verify_pre(analysis, judge_result, proposal, netlist_text)
                 state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
 
                 if review["approved"]:

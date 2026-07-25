@@ -63,8 +63,8 @@ async def _run(args) -> dict:
             analysis, judge_result, history, rejection_feedback, netlist_text_arg, agent_backend
         )
 
-    async def verify_pre_fn(analysis, judge_result, proposal):
-        return await verify_pre(analysis, judge_result, proposal, agent_backend)
+    async def verify_pre_fn(analysis, judge_result, proposal, netlist_text_arg):
+        return await verify_pre(analysis, judge_result, proposal, netlist_text_arg, agent_backend)
 
     async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
         return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backend)

@@ -8,12 +8,20 @@ the circuit analysis and simulation results, and whether it could cause unintend
 side effects on other criteria."""
 
 
-async def verify_pre(analysis: dict, judge_result: dict, proposal: dict, backend: AgentBackend) -> dict:
+async def verify_pre(
+    analysis: dict, judge_result: dict, proposal: dict, netlist_text: str, backend: AgentBackend
+) -> dict:
     user_prompt = (
+        f"Current netlist:\n{netlist_text}\n"
         f"Circuit analysis: {analysis}\n"
         f"Judge result before tuning: {judge_result}\n"
         f"Proposed changes: {proposal}\n"
-        "Decide whether to approve this proposal before it is applied."
+        "Decide whether to approve this proposal before it is applied. Reject any "
+        'change whose param is not exactly "value" (for a component whose value is '
+        'a plain positional token in the netlist above, e.g. "Rf vminus vout 10k") '
+        'and is not an existing "name=" parameter already present on that '
+        "component's own line in the netlist above - such a param would silently "
+        "fail to update the component when applied."
     )
     return await run_agent(
         system_prompt=VERIFIER_SYSTEM_PROMPT,

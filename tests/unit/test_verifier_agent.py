@@ -14,12 +14,15 @@ async def test_verify_pre_calls_run_agent_with_proposal():
             analysis={"circuit_type": "inverting amplifier"},
             judge_result={"overall_pass": False},
             proposal={"proposed_changes": [{"refdes": "Rf", "param": "value", "new_value": "11k"}]},
+            netlist_text="Rin in vminus 1k\nRf vminus vout 10k\n.end\n",
             backend=fake_backend,
         )
     assert result == fake_result
     _, kwargs = mock_run.call_args
     assert kwargs["output_schema"]["required"] == ["approved", "concerns", "feedback"]
     assert kwargs["backend"] is fake_backend
+    assert "Rf vminus vout 10k" in kwargs["user_prompt"]
+    assert 'param is not exactly "value"' in kwargs["user_prompt"]
 
 
 @pytest.mark.asyncio
