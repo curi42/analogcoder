@@ -31,6 +31,23 @@ against a fixed schema (`schemas.py`).
   per agent: system prompt + schema + tool declarations (`ToolSpec`, not
   provider-specific). Every public function takes a required `backend:
   AgentBackend` as its last positional arg.
+- `topologies.py` — a small curated library of pre-verified amplifier
+  topologies the orchestrator can swap in as a last resort after repeated
+  parameter-tuning rollbacks (`TOPOLOGY_SWITCH_THRESHOLD`), instead of only
+  ever changing existing component values. See "Benchmarks" below.
+- `area_limits.py` — a deterministic gate the orchestrator runs before every
+  parameter-tuning proposal is applied: rejects (with retryable feedback)
+  proposals that grow a component's size beyond a size-tiered limit relative
+  to where it started the run (`netlist_v0`), since there's no PDK in this
+  project to derive a real physical area model. Motivated by a real run
+  where Claude fixed a phase-margin failure by widening a transistor 2.5x
+  instead of finding a smaller fix. Runs before the LLM-based `verify_pre`
+  call, so an obviously oversized proposal never spends an LLM call.
+  Exhausting all retries on area rejection alone is treated like a
+  parameter-tuning rollback (not an immediate run failure), so it composes
+  with the topology-swap threshold above — repeated area-blocked tuning can
+  escalate into a topology swap instead of just giving up. See
+  `docs/superpowers/specs/2026-07-25-area-aware-tuning-design.md`.
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -139,6 +156,15 @@ worth reading before assuming a weak-model failure is a code bug:
 - **`netlist.py`'s `apply_changes`/`parse_netlist`** don't track subckt scope
   (a refdes collision between a subckt-local and top-level component could
   misfire) — known, deliberately deferred limitation, not fixed.
+- **`param="value"` misapplied to a non-numeric positional token** (a
+  transistor's model name, a subckt instance's subckt name) used to crash
+  the whole run with an uncaught `ValueError` from `area_limits.py`'s
+  `check_area_growth`, found by a final-branch review before it ever shipped
+  to a real weak-model run. Fixed by treating an unparseable baseline value
+  as "can't judge area impact, don't block on it" (skip that specific
+  change), matching the existing philosophy for a missing baseline value —
+  not by rejecting it, which would have been a different, larger behavior
+  change. If you touch `check_area_growth`, keep this guard.
 - Local models are noticeably more reliable at agents with **no tool calls**
   (analyzer, tuner, verifier) than at tool-calling agents (simulator, judge).
   If a weak-model run fails, check which agent failed before assuming the
