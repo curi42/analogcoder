@@ -1,34 +1,43 @@
 import textwrap
+
 from analogcoder.spec import load_spec
 
 SPEC_YAML = textwrap.dedent("""\
     circuit_name: inverting_amplifier
-    analyses: ["ac"]
-    control_block: |
-      .control
-      ac dec 10 1 1meg
-      meas ac gain_db find vdb(vout) at=1k
-      .endc
-    criteria:
-      - name: closed_loop_gain
-        measurement: gain_db
-        operator: ">="
-        threshold: 19.5
-        unit: dB
+    testbenches:
+      - name: ac_loop_gain
+        netlist: netlist.cir
+        analyses: ["ac"]
+        control_block: |
+          .control
+          ac dec 10 1 1meg
+          meas ac gain_db find vdb(vout) at=1k
+          .endc
+        criteria:
+          - name: closed_loop_gain
+            measurement: gain_db
+            operator: ">="
+            threshold: 19.5
+            unit: dB
     """)
 
 
 def test_load_spec(tmp_path):
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(SPEC_YAML)
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
 
     spec = load_spec(str(spec_path))
 
     assert spec.circuit_name == "inverting_amplifier"
-    assert spec.analyses == ["ac"]
-    assert "meas ac gain_db" in spec.control_block
-    assert len(spec.criteria) == 1
-    c = spec.criteria[0]
+    assert len(spec.testbenches) == 1
+    tb = spec.testbenches[0]
+    assert tb.name == "ac_loop_gain"
+    assert tb.netlist_path == str(tmp_path / "netlist.cir")
+    assert tb.analyses == ["ac"]
+    assert "meas ac gain_db" in tb.control_block
+    assert len(tb.criteria) == 1
+    c = tb.criteria[0]
     assert c.name == "closed_loop_gain"
     assert c.measurement == "gain_db"
     assert c.operator == ">="
@@ -36,16 +45,71 @@ def test_load_spec(tmp_path):
     assert c.unit == "dB"
 
 
+def test_canonical_returns_first_testbench(tmp_path):
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+
+    spec = load_spec(str(spec_path))
+
+    assert spec.canonical is spec.testbenches[0]
+    assert spec.canonical.name == "ac_loop_gain"
+
+
+def test_all_criteria_flattens_across_testbenches(tmp_path):
+    multi_yaml = textwrap.dedent("""\
+        circuit_name: two_stage_opamp
+        testbenches:
+          - name: ac_loop_gain
+            netlist: a.cir
+            analyses: ["ac"]
+            control_block: ".control\\n.endc\\n"
+            criteria:
+              - name: dc_gain
+                measurement: gain_db
+                operator: ">="
+                threshold: 70.0
+                unit: dB
+          - name: psr_plus
+            netlist: b.cir
+            analyses: ["ac"]
+            control_block: ".control\\n.endc\\n"
+            criteria:
+              - name: psr_plus
+                measurement: psr_plus_db
+                operator: "<="
+                threshold: -10.0
+                unit: dB
+        """)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(multi_yaml)
+
+    spec = load_spec(str(spec_path))
+
+    assert [c.name for c in spec.all_criteria] == ["dc_gain", "psr_plus"]
+
+
+def test_netlist_path_resolved_relative_to_spec_directory(tmp_path):
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    spec_path = nested / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+
+    spec = load_spec(str(spec_path))
+
+    assert spec.testbenches[0].netlist_path == str(nested / "netlist.cir")
+
+
 def test_topology_required_spec_has_stricter_phase_margin_threshold():
     spec = load_spec("benchmarks/two_stage_opamp/spec_topology_required.yaml")
     baseline = load_spec("benchmarks/two_stage_opamp/spec.yaml")
 
-    phase_margin = next(c for c in spec.criteria if c.name == "phase_margin")
-    baseline_phase_margin = next(c for c in baseline.criteria if c.name == "phase_margin")
+    phase_margin = next(c for c in spec.canonical.criteria if c.name == "phase_margin")
+    baseline_phase_margin = next(c for c in baseline.canonical.criteria if c.name == "phase_margin")
 
     assert phase_margin.threshold == 65.0
     assert phase_margin.threshold > baseline_phase_margin.threshold
     # gain and UGBW thresholds are unchanged from the baseline spec
-    assert {c.name: c.threshold for c in spec.criteria if c.name != "phase_margin"} == {
-        c.name: c.threshold for c in baseline.criteria if c.name != "phase_margin"
+    assert {c.name: c.threshold for c in spec.canonical.criteria if c.name != "phase_margin"} == {
+        c.name: c.threshold for c in baseline.canonical.criteria if c.name != "phase_margin"
     }

@@ -11,7 +11,7 @@ def test_ngspice_backend_runs_inverting_amp_benchmark():
     spec = load_spec(os.path.join(BENCHMARK_DIR, "spec.yaml"))
 
     backend = NgspiceBackend()
-    result = backend.run(netlist_path, {"control_block": spec.control_block})
+    result = backend.run(netlist_path, {"control_block": spec.canonical.control_block})
 
     assert result.status == "success"
     assert "gain_db" in result.measurements

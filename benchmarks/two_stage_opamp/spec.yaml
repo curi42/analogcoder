@@ -1,26 +1,29 @@
 circuit_name: two_stage_opamp
-analyses: ["ac"]
-control_block: |
-  .control
-  set units=degrees
-  ac dec 20 1 100meg
-  meas ac gain_db find vdb(vout) at=1
-  meas ac ugbw_hz when vdb(vout)=0
-  meas ac phase_margin_deg find vp(vout) when vdb(vout)=0
-  .endc
-criteria:
-  - name: dc_gain
-    measurement: gain_db
-    operator: ">="
-    threshold: 70.0
-    unit: dB
-  - name: unity_gain_bandwidth
-    measurement: ugbw_hz
-    operator: ">="
-    threshold: 20000000.0
-    unit: Hz
-  - name: phase_margin
-    measurement: phase_margin_deg
-    operator: ">="
-    threshold: 60.0
-    unit: deg
+testbenches:
+  - name: ac_loop_gain
+    netlist: netlist.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      set units=degrees
+      ac dec 20 1 100meg
+      meas ac gain_db find vdb(vout) at=1
+      meas ac ugbw_hz when vdb(vout)=0
+      meas ac phase_margin_deg find vp(vout) when vdb(vout)=0
+      .endc
+    criteria:
+      - name: dc_gain
+        measurement: gain_db
+        operator: ">="
+        threshold: 70.0
+        unit: dB
+      - name: unity_gain_bandwidth
+        measurement: ugbw_hz
+        operator: ">="
+        threshold: 20000000.0
+        unit: Hz
+      - name: phase_margin
+        measurement: phase_margin_deg
+        operator: ">="
+        threshold: 60.0
+        unit: deg

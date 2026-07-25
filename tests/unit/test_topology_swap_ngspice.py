@@ -23,7 +23,7 @@ def _run_topology(topology_id: str, tmp_path):
     swapped_path.write_text(swapped_text)
 
     backend = NgspiceBackend()
-    return backend.run(str(swapped_path), {"control_block": spec.control_block})
+    return backend.run(str(swapped_path), {"control_block": spec.canonical.control_block})
 
 
 def test_miller_basic_topology_cannot_meet_phase_margin_spec(tmp_path):
