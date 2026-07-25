@@ -5,6 +5,7 @@ from analogcoder.schemas import (
     ANALYZER_SCHEMA,
     JUDGE_SCHEMA,
     SIMULATION_SCHEMA,
+    TOPOLOGY_SCHEMA,
     TUNER_SCHEMA,
     VERIFIER_POST_SCHEMA,
     VERIFIER_PRE_SCHEMA,
@@ -88,3 +89,25 @@ def test_verifier_post_schema_accepts_valid_payload():
         {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "gain now passes"},
         VERIFIER_POST_SCHEMA,
     )
+
+
+def test_topology_schema_accepts_valid_payload():
+    payload = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}
+    jsonschema.validate(payload, TOPOLOGY_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("topology_id", "Miller.Nulling"),
+        ("topology_id", "miller nulling resistor"),
+        ("topology_id", "123_starts_with_digit"),
+        ("confidence", -1),
+        ("confidence", 101),
+    ],
+)
+def test_topology_schema_rejects_invalid_values(field, bad_value):
+    payload = {"topology_id": "miller_nulling_resistor", "reasoning": "x", "confidence": 90}
+    payload[field] = bad_value
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, TOPOLOGY_SCHEMA)

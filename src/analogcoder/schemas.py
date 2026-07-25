@@ -107,3 +107,13 @@ VERIFIER_POST_SCHEMA = {
     },
     "required": ["improved", "regressed_criteria", "recommendation", "feedback"],
 }
+
+TOPOLOGY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topology_id": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        "reasoning": {"type": "string"},
+        "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+    },
+    "required": ["topology_id", "reasoning", "confidence"],
+}
