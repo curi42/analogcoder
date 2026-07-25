@@ -1,4 +1,5 @@
 import jsonschema
+import pytest
 
 from analogcoder.schemas import (
     ANALYZER_SCHEMA,
@@ -43,6 +44,37 @@ def test_tuner_schema_accepts_valid_payload():
         "confidence": 0.8,
     }
     jsonschema.validate(payload, TUNER_SCHEMA)
+
+
+def test_tuner_schema_accepts_named_param_and_scientific_notation_value():
+    payload = {
+        "proposed_changes": [
+            {"refdes": "M1", "param": "W", "old_value": "10u", "new_value": "1.5e-5", "reasoning": "widen device"}
+        ],
+        "overall_reasoning": "gain was slightly under target",
+        "confidence": 0.8,
+    }
+    jsonschema.validate(payload, TUNER_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("param", "resistance value"),
+        ("old_value", "unknown"),
+        ("new_value", "increase Rf to 15k"),
+    ],
+)
+def test_tuner_schema_rejects_non_literal_values(field, bad_value):
+    change = {"refdes": "Rf", "param": "value", "old_value": "10k", "new_value": "11k", "reasoning": "x"}
+    change[field] = bad_value
+    payload = {
+        "proposed_changes": [change],
+        "overall_reasoning": "gain was slightly under target",
+        "confidence": 0.8,
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, TUNER_SCHEMA)
 
 
 def test_verifier_pre_schema_accepts_valid_payload():

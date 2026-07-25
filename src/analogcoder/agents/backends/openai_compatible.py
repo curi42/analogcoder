@@ -74,8 +74,16 @@ class OpenAICompatibleBackend(AgentBackend):
                         raise AgentExecutionError(
                             f"model requested unknown tool: {call['function']['name']}"
                         )
-                    args = json.loads(call["function"]["arguments"])
-                    result = await tool_spec.handler(args)
+                    try:
+                        args = json.loads(call["function"]["arguments"])
+                        result = await tool_spec.handler(args)
+                    except Exception as exc:
+                        # A weak model can call a tool with malformed or
+                        # missing arguments. Report the failure back as a
+                        # tool result so the model can retry, instead of
+                        # crashing the whole run - MAX_TOOL_LOOP_TURNS
+                        # already bounds how many retries this gets.
+                        result = {"error": f"tool call failed: {exc}"}
                     messages.append(
                         {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)}
                     )

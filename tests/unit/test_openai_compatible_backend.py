@@ -68,6 +68,83 @@ async def test_run_executes_tool_call_then_returns_final_output(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_reports_tool_handler_exception_back_to_model_instead_of_crashing(monkeypatch):
+    # Regression test for a crash found against a real Ollama server: a weak
+    # model called run_simulation without the required "control_block" key,
+    # and the handler's raw KeyError propagated all the way up and crashed
+    # the whole CLI process. Tool handler failures must be reported back to
+    # the model as a tool result so it can retry, not raised as bare
+    # exceptions - the existing MAX_TOOL_LOOP_TURNS budget already caps how
+    # many retries this gets before AgentExecutionError is raised.
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    handler = AsyncMock(side_effect=KeyError("control_block"))
+    tool = ToolSpec(
+        name="run_simulation",
+        description="runs a simulation",
+        parameters={"type": "object", "properties": {"control_block": {"type": "string"}}, "required": ["control_block"]},
+        handler=handler,
+    )
+
+    bad_call_response = _response(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "run_simulation", "arguments": "{}"}}
+            ],
+        }
+    )
+    final_response = _response({"role": "assistant", "content": json.dumps({"ok": True})})
+
+    mock_post = AsyncMock(side_effect=[bad_call_response, final_response])
+    with patch("httpx.AsyncClient.post", mock_post):
+        result = await backend.run("system", "user", SCHEMA, [tool])
+
+    assert result == {"ok": True}
+    handler.assert_awaited_once()
+
+    second_call_messages = mock_post.call_args_list[1].kwargs["json"]["messages"]
+    tool_result_message = next(m for m in second_call_messages if m.get("role") == "tool")
+    tool_result = json.loads(tool_result_message["content"])
+    assert "error" in tool_result
+    assert "control_block" in tool_result["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_reports_malformed_tool_arguments_back_to_model_instead_of_crashing(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    handler = AsyncMock(return_value={"computed": 42})
+    tool = ToolSpec(
+        name="compute",
+        description="computes a thing",
+        parameters={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
+        handler=handler,
+    )
+
+    malformed_args_response = _response(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "compute", "arguments": "not json"}}
+            ],
+        }
+    )
+    final_response = _response({"role": "assistant", "content": json.dumps({"ok": True})})
+
+    mock_post = AsyncMock(side_effect=[malformed_args_response, final_response])
+    with patch("httpx.AsyncClient.post", mock_post):
+        result = await backend.run("system", "user", SCHEMA, [tool])
+
+    assert result == {"ok": True}
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_repairs_invalid_schema_output_then_succeeds(monkeypatch):
     monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
     backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")

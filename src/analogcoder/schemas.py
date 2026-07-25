@@ -73,9 +73,9 @@ TUNER_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "refdes": {"type": "string"},
-                    "param": {"type": "string"},
-                    "old_value": {"type": "string"},
-                    "new_value": {"type": "string"},
+                    "param": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "old_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
+                    "new_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
                     "reasoning": {"type": "string"},
                 },
                 "required": ["refdes", "param", "old_value", "new_value", "reasoning"],
