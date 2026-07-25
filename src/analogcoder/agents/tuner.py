@@ -3,11 +3,29 @@ from analogcoder.agents.backend import AgentBackend
 from analogcoder.schemas import TUNER_SCHEMA
 
 TUNER_SYSTEM_PROMPT = """You are an analog circuit tuning specialist. Given the
-circuit's structural analysis, the judge's pass/fail verdict, the history of past
-tuning attempts in this run, and (if present) feedback on why your last proposal
-was rejected, propose specific component parameter changes to fix the failing
-criteria. Only propose changes to parameters listed in tunable_params. Respond via
-the structured output schema."""
+current netlist, the circuit's structural analysis, the judge's pass/fail verdict,
+the history of past tuning attempts in this run, and (if present) feedback on why
+your last proposal was rejected, propose specific component parameter changes to
+fix the failing criteria. Only propose changes to parameters listed in
+tunable_params.
+
+old_value and new_value MUST be concrete, literal SPICE values taken from and
+written in the same form as the current netlist (e.g. "10k", "4.7u", "100n") -
+never a description, formula, percentage, or placeholder like "unknown" or "N/A".
+Read the actual current value for the component you are changing directly from
+the netlist below before proposing new_value. For example, if the netlist has
+"Rf vminus vout 10k" and you are changing Rf, old_value is "10k" and new_value
+must be a specific replacement value such as "15k", not "increase Rf".
+
+param MUST be exactly the string "value" when the component's value is a plain
+positional token, which is the common case (e.g. "Rf vminus vout 10k" - the
+value 10k is the last token with no "name=" prefix, so param is "value", not
+"resistance" or "resistance value"). Only use a different param string when the
+netlist itself writes that parameter as "name=value" (e.g. "M1 d g s b W=10u
+L=1u" - to change the width you would use param="W"), and in that case param
+must be exactly that name as it appears in the netlist, nothing else.
+
+Respond via the structured output schema."""
 
 
 async def propose_tuning(
@@ -15,9 +33,11 @@ async def propose_tuning(
     judge_result: dict,
     history: list[dict],
     rejection_feedback: str | None,
+    netlist_text: str,
     backend: AgentBackend,
 ) -> dict:
     user_prompt = (
+        f"Current netlist:\n{netlist_text}\n"
         f"Circuit analysis: {analysis}\n"
         f"Judge result: {judge_result}\n"
         f"Past attempts this run: {history}\n"

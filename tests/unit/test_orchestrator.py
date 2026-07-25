@@ -24,7 +24,7 @@ def make_agents(**overrides):
     async def default_judge(measurements, spec):
         return PASS_JUDGE
 
-    async def default_tune(analysis, judge_result, history, rejection_feedback):
+    async def default_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
         return FAKE_PROPOSAL
 
     async def default_verify_pre(analysis, judge_result, proposal):

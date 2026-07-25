@@ -38,8 +38,10 @@ async def test_inverting_amp_benchmark_with_local_llm_backend(tmp_path):
     async def analyze_fn(netlist_text):
         return await analyze_netlist(netlist_text, agent_backend)
 
-    async def tune_fn(analysis, judge_result, history, rejection_feedback):
-        return await propose_tuning(analysis, judge_result, history, rejection_feedback, agent_backend)
+    async def tune_fn(analysis, judge_result, history, rejection_feedback, netlist_text_arg):
+        return await propose_tuning(
+            analysis, judge_result, history, rejection_feedback, netlist_text_arg, agent_backend
+        )
 
     async def verify_pre_fn(analysis, judge_result, proposal):
         return await verify_pre(analysis, judge_result, proposal, agent_backend)
