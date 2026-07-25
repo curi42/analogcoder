@@ -53,6 +53,19 @@ Requires `ngspice` on PATH for the real-simulator tests and any actual run
   --spec benchmarks/inverting_amp/spec.yaml --run-dir runs/r1
 ```
 
+## Benchmarks
+
+- `benchmarks/inverting_amp/` — ideal op-amp (VCVS), single criterion (gain),
+  passes immediately with no tuning needed. The "golden path" smoke test.
+- `benchmarks/two_stage_opamp/` — real transistor-level 2-stage CMOS op-amp
+  (generic ngspice level-1 devices, no PDK needed), three criteria (DC gain,
+  unity-gain bandwidth, phase margin) with a genuine trade-off: increasing the
+  Miller compensation cap (`Cc`) improves phase margin but reduces UGBW. Starts
+  with phase margin failing by design, so running this benchmark actually
+  exercises the tune → verify → re-simulate loop instead of passing on the
+  first iteration. See `docs/superpowers/specs/2026-07-25-two-stage-opamp-benchmark-design.md`
+  for the full circuit rationale and verified Cc-sweep data.
+
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
 local OpenAI-compatible server instead:
