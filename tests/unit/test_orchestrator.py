@@ -12,6 +12,16 @@ FAIL_JUDGE = {"overall_pass": False, "criteria": [{"name": "gain", "target": ">=
 
 FAKE_SPEC = SimpleNamespace(criteria=[])
 FAKE_PROPOSAL = {"proposed_changes": [{"refdes": "Rf", "param": "value", "old_value": "10k", "new_value": "11k"}]}
+SUBCKT_NETLIST = (
+    "* test\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "R1 vinp mid 1k\n"
+    "R2 mid vout 2k\n"
+    ".ends AMP\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    ".end\n"
+)
+FAKE_TOPOLOGY_PROPOSAL = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}
 
 
 def make_agents(**overrides):
@@ -33,6 +43,9 @@ def make_agents(**overrides):
     async def default_verify_post(prev_judge, new_judge, applied_changes):
         return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "ok"}
 
+    async def default_propose_topology(analysis, judge_result, available_topologies, rejection_feedback):
+        return FAKE_TOPOLOGY_PROPOSAL
+
     defaults = dict(
         analyze=default_analyze,
         simulate=default_simulate,
@@ -40,6 +53,7 @@ def make_agents(**overrides):
         tune=default_tune,
         verify_pre=default_verify_pre,
         verify_post=default_verify_post,
+        propose_topology=default_propose_topology,
     )
     defaults.update(overrides)
     return OrchestratorAgents(**defaults)
@@ -165,3 +179,119 @@ async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(t
     assert result["status"] == "FAIL"
     assert result["iterations_used"] == 0
     assert result["failure_reason"] == "agent execution error: simulator backend unreachable"
+
+
+@pytest.mark.asyncio
+async def test_topology_swap_never_offered_without_exactly_one_subckt(tmp_path):
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_spy(analysis, judge_result, available_topologies, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return FAKE_TOPOLOGY_PROPOSAL
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_spy,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration("* netlist\n.end\n", FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    assert propose_topology_calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_path):
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    propose_topology_calls = []
+
+    async def propose_topology(analysis, judge_result, available_topologies, rejection_feedback):
+        propose_topology_calls.append([t.id for t in available_topologies])
+        return {"topology_id": available_topologies[0].id, "reasoning": "matches phase margin gap", "confidence": 90}
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    assert result["iterations_used"] == 4
+    assert len(propose_topology_calls) == 1
+    assert set(propose_topology_calls[0]) == {"miller_basic", "miller_nulling_resistor"}
+    assert len(state.netlist_versions) == 2  # v0 initial + v1 after the kept topology swap
+
+
+@pytest.mark.asyncio
+async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
+    async def always_bad_topology(analysis, judge_result, available_topologies, rejection_feedback):
+        return {"topology_id": "not_a_real_topology", "reasoning": "x", "confidence": 50}
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=always_bad_topology,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "topology proposal repeatedly rejected"
+
+
+@pytest.mark.asyncio
+async def test_topology_swap_rollback_restores_analysis_without_reanalyzing(tmp_path):
+    analyze_calls = {"count": 0}
+
+    async def counting_analyze(netlist_text):
+        analyze_calls["count"] += 1
+        return {"circuit_type": "amp", "call": analyze_calls["count"]}
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_once(analysis, judge_result, available_topologies, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+
+    agents = make_agents(
+        analyze=counting_analyze,
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_once,
+    )
+    state = RunState(run_dir=str(tmp_path))
+
+    result = await run_orchestration(SUBCKT_NETLIST, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    # initial analyze + one re-analyze per topology attempt (library has 2 entries,
+    # each gets exactly one attempt across the 10-iteration budget); rollback restores
+    # the saved pre-swap analysis instead of triggering a third analyze call
+    assert analyze_calls["count"] == 3
+    assert propose_topology_calls["count"] == 2

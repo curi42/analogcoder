@@ -2,11 +2,13 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
-from analogcoder.netlist import apply_changes
+from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist
 from analogcoder.state import RunState
+from analogcoder.topologies import TOPOLOGY_LIBRARY
 
 MAX_OUTER_ITERATIONS = 10
 MAX_TUNING_RETRIES = 3
+TOPOLOGY_SWITCH_THRESHOLD = 3
 
 
 @dataclass
@@ -17,6 +19,7 @@ class OrchestratorAgents:
     tune: Callable
     verify_pre: Callable
     verify_post: Callable
+    propose_topology: Callable
 
 
 def _final_result(
@@ -42,6 +45,10 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
         analysis = await agents.analyze(initial_netlist_text)
         state.log_event("analysis", analysis)
 
+        topology_swap_available = len(parse_netlist(initial_netlist_text).subckts) == 1
+        tried_topologies: set[str] = set()
+        consecutive_rollbacks = 0
+
         tuning_history: list[dict] = []
 
         for outer_iter in range(1, MAX_OUTER_ITERATIONS + 1):
@@ -56,6 +63,75 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
 
             if judge_result["overall_pass"]:
                 return _final_result("PASS", state, outer_iter, judge_result)
+
+            untried_topologies = (
+                [t for t in TOPOLOGY_LIBRARY.values() if t.id not in tried_topologies]
+                if topology_swap_available and consecutive_rollbacks >= TOPOLOGY_SWITCH_THRESHOLD
+                else []
+            )
+
+            if untried_topologies:
+                topology_id = None
+                rejection_feedback = None
+                for retry in range(1, MAX_TUNING_RETRIES + 1):
+                    proposal = await agents.propose_topology(
+                        analysis, judge_result, untried_topologies, rejection_feedback
+                    )
+                    state.log_event("topology_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
+
+                    candidate = proposal["topology_id"]
+                    if candidate in TOPOLOGY_LIBRARY and candidate not in tried_topologies:
+                        topology_id = candidate
+                        break
+                    rejection_feedback = (
+                        f"'{candidate}' is not an available untried topology. "
+                        f"Choose one of: {[t.id for t in untried_topologies]}"
+                    )
+
+                if topology_id is None:
+                    return _final_result(
+                        "FAIL", state, outer_iter, judge_result,
+                        failure_reason="topology proposal repeatedly rejected",
+                    )
+
+                tried_topologies.add(topology_id)
+                topology = TOPOLOGY_LIBRARY[topology_id]
+                subckt_name = next(iter(parse_netlist(netlist_text).subckts))
+                new_netlist_text = apply_topology_swap(netlist_text, subckt_name, topology.subckt_body)
+                state.push_netlist_version(new_netlist_text)
+
+                pre_swap_analysis = analysis
+                analysis = await agents.analyze(new_netlist_text)
+                state.log_event("analysis", {"outer_iter": outer_iter, "topology_id": topology_id, **analysis})
+
+                new_sim_result = await agents.simulate(new_netlist_text, spec)
+                state.log_event(
+                    "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
+                )
+
+                new_judge_result = await agents.judge(new_sim_result["measurements"], spec)
+                state.log_event(
+                    "judge", {"outer_iter": outer_iter, "post_topology_swap": True, **new_judge_result}
+                )
+
+                post_review = await agents.verify_post(
+                    judge_result, new_judge_result, [{"topology_id": topology_id}]
+                )
+                state.log_event("verify_post", {"outer_iter": outer_iter, "topology_swap": True, **post_review})
+
+                consecutive_rollbacks = 0
+
+                if post_review["recommendation"] == "rollback":
+                    state.rollback()
+                    analysis = pre_swap_analysis
+                    judge_result = new_judge_result
+                    continue
+
+                if new_judge_result["overall_pass"]:
+                    return _final_result("PASS", state, outer_iter, new_judge_result)
+
+                judge_result = new_judge_result
+                continue
 
             approved_proposal = None
             rejection_feedback = None
@@ -98,8 +174,11 @@ async def run_orchestration(initial_netlist_text: str, spec, state: RunState, ag
 
             if post_review["recommendation"] == "rollback":
                 state.rollback()
+                consecutive_rollbacks += 1
                 judge_result = new_judge_result
                 continue
+
+            consecutive_rollbacks = 0
 
             if new_judge_result["overall_pass"]:
                 return _final_result("PASS", state, outer_iter, new_judge_result)
