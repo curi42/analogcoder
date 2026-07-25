@@ -59,3 +59,20 @@ def test_log_event_appends_jsonl(tmp_path):
 
     assert lines[0] == {"step": "judge", "overall_pass": False}
     assert lines[1] == {"step": "judge", "overall_pass": True}
+
+
+def test_push_netlist_version_is_atomic_on_missing_key(tmp_path):
+    """Verify that push_netlist_version raises ValueError and does not mutate state when texts is missing a key."""
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    # First, push a version successfully.
+    state.push_netlist_version({"ac_loop_gain": "* v0\n.end\n", "psr_plus": "* v0\n.end\n"})
+    initial_versions = {"ac_loop_gain": list(state.netlist_versions["ac_loop_gain"]),
+                       "psr_plus": list(state.netlist_versions["psr_plus"])}
+
+    # Now attempt to push with a missing key.
+    with pytest.raises(ValueError, match="texts keys.*do not match testbench_names"):
+        state.push_netlist_version({"ac_loop_gain": "* v1\n.end\n"})
+
+    # Verify state is unchanged: no partial mutation occurred.
+    assert state.netlist_versions == initial_versions

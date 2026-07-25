@@ -15,14 +15,34 @@ class RunState:
         self.history_path = os.path.join(self.run_dir, "history.jsonl")
 
     def push_netlist_version(self, texts: dict[str, str]) -> dict[str, str]:
+        # Validate: ensure all testbenches are present in texts dict.
+        # This must happen before any file writes or state mutations.
+        text_keys = set(texts.keys())
+        expected_keys = set(self.testbench_names)
+        if text_keys != expected_keys:
+            missing = sorted(expected_keys - text_keys)
+            extra = sorted(text_keys - expected_keys)
+            raise ValueError(
+                f"texts keys {sorted(text_keys)} do not match testbench_names "
+                f"{sorted(self.testbench_names)}; missing: {missing}, extra: {extra}"
+            )
+
+        # Compute the version number before any writes.
         version = len(self.netlist_versions.get(self.testbench_names[0], []))
+
+        # Write phase: write all files and collect paths.
+        # File writes are the only mutation in this phase; self.netlist_versions is untouched.
         paths = {}
         for name in self.testbench_names:
             path = os.path.join(self.run_dir, f"netlist_v{version}_{name}.cir")
             with open(path, "w") as f:
                 f.write(texts[name])
-            self.netlist_versions.setdefault(name, []).append(path)
             paths[name] = path
+
+        # Update phase: only after all writes succeed, update self.netlist_versions.
+        for name in self.testbench_names:
+            self.netlist_versions.setdefault(name, []).append(paths[name])
+
         return paths
 
     def current_netlist_paths(self) -> dict[str, str]:
