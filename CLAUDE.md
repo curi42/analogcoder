@@ -82,6 +82,18 @@ Verified working against a real local Ollama server (`qwen2.5:7b-instruct`) —
 full pipeline (analyze → simulate → judge → tune → verify → re-simulate → pass)
 including real tool calls, not just the no-tuning-needed happy path.
 
+On the harder `two_stage_opamp` benchmark, Claude converges to PASS in 3
+iterations (correctly identifies that increasing `Cc` improves phase margin).
+Ollama (`qwen2.5:7b-instruct`) ran the full 10-iteration budget and ended in a
+clean `FAIL` (`max iterations reached`), not a crash — the pipeline mechanics
+(schema validation, refdes/param checks, rollback on regression) all worked
+correctly throughout. It failed because the model's own reasoning had the
+trade-off backwards: it repeatedly *decreased* `Cc` believing that would help
+phase margin, when this topology needs the opposite. Every bad proposal was
+correctly rolled back by `verify_post`, so the run ends back at the safe
+baseline netlist rather than a degraded one — this is a genuine model
+reasoning/capability gap, not a pipeline defect.
+
 `tests/integration/test_local_llm_backend.py` is skip-gated on `LOCAL_LLM_BASE_URL`
 being set — it's the fastest way to re-verify the OpenAICompatibleBackend path
 against a real server.
