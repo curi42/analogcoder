@@ -201,6 +201,11 @@ def check_area_growth(
             baseline_value = _baseline_value_for(component, change["param"])
             if baseline_value is None or baseline_value <= 0:
                 continue
+            # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사
+            # 붙은 숫자 리터럴로만 제한하기 때문이다 (식별자·연산자 불가).
+            # 그 패턴이 느슨해져 파라미터 참조를 허용하게 되면 여기서 None이
+            # 나와 조용히 증가율 계산에서 빠지므로, 패턴을 건드릴 때 이 줄도
+            # 함께 재검토해야 한다.
             new_value = resolve_value(change["new_value"], {})
             if new_value is None:
                 continue

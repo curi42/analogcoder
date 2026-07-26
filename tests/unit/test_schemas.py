@@ -1,3 +1,5 @@
+import re
+
 import jsonschema
 import pytest
 
@@ -10,6 +12,10 @@ from analogcoder.schemas import (
     VERIFIER_POST_SCHEMA,
     VERIFIER_PRE_SCHEMA,
 )
+
+REFDES_PATTERN = TUNER_SCHEMA["properties"]["proposed_changes"]["items"]["properties"][
+    "refdes"
+]["pattern"]
 
 
 def test_analyzer_schema_accepts_valid_payload():
@@ -124,6 +130,26 @@ def test_tuner_schema_rejects_a_malformed_scoped_refdes():
 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(proposal, TUNER_SCHEMA)
+
+
+def test_the_refdes_pattern_accepts_any_nesting_depth():
+    regex = re.compile(REFDES_PATTERN)
+
+    assert regex.match("Rf")
+    assert regex.match("BUF_P.X6")
+    assert regex.match("OUTER.INNER.M1")
+    assert regex.match("A.B.C.D.M1")
+
+
+def test_the_refdes_pattern_still_rejects_malformed_names():
+    regex = re.compile(REFDES_PATTERN)
+
+    assert not regex.match("")
+    assert not regex.match(".M1")
+    assert not regex.match("M1.")
+    assert not regex.match("A..M1")
+    assert not regex.match("1M.X")
+    assert not regex.match("A B")
 
 
 def test_verifier_pre_schema_accepts_valid_payload():
