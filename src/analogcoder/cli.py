@@ -13,6 +13,7 @@ from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
+from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
@@ -92,7 +93,22 @@ async def _run(args) -> dict:
         propose_topology=propose_topology_fn,
     )
 
-    return await run_orchestration(initial_netlist_texts, spec, state, agents)
+    if spec.pvt_corners is not None:
+        baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+        state.log_event("pvt_baseline_sweep", baseline_sweep)
+
+    result = await run_orchestration(initial_netlist_texts, spec, state, agents)
+
+    if spec.pvt_corners is not None:
+        final_netlist_texts = state.current_netlist_texts()
+        final_sweep = run_full_pvt_sweep(final_netlist_texts, spec, sim_backend)
+        state.log_event("pvt_final_sweep", final_sweep)
+        result["pvt_sweep"] = final_sweep
+        if not final_sweep["overall_pass"]:
+            result["status"] = "FAIL"
+            result["failure_reason"] = f"final PVT sweep failed: {final_sweep['summary']}"
+
+    return result
 
 
 def main() -> None:

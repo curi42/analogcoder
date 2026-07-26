@@ -123,3 +123,123 @@ async def test_run_passes_one_netlist_text_per_testbench_to_run_orchestration(tm
         await _run(args)
 
     assert captured["texts"] == {"ac_loop_gain": "* ac netlist\n.end\n", "psr_plus": "* psr netlist\n.end\n"}
+
+
+@pytest.mark.asyncio
+async def test_run_skips_pvt_sweep_when_spec_has_no_pvt_corners(tmp_path):
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", str(tmp_path / "runs" / "r3")])
+
+    fake_result = {
+        "status": "PASS", "final_netlist_paths": {}, "run_dir": str(tmp_path / "runs" / "r3"),
+        "iterations_used": 1, "final_criteria": [],
+    }
+
+    with (
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_full_pvt_sweep") as mock_sweep,
+    ):
+        result = await _run(args)
+
+    mock_sweep.assert_not_called()
+    assert result["status"] == "PASS"
+    assert "pvt_sweep" not in result
+
+
+@pytest.mark.asyncio
+async def test_run_overrides_pass_to_fail_when_final_pvt_sweep_fails(tmp_path):
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+    spec_path = tmp_path / "spec_pvt.yaml"
+    spec_path.write_text(
+        "circuit_name: test\n"
+        "pvt_corners:\n"
+        "  process: [tt]\n"
+        "  voltage: [1.8]\n"
+        "  temperature: [27]\n"
+        "testbenches:\n"
+        "  - name: ac_loop_gain\n"
+        "    netlist: netlist.cir\n"
+        '    analyses: ["ac"]\n'
+        '    control_block: ".control\\n.endc\\n"\n'
+        "    criteria:\n"
+        "      - name: gain\n"
+        "        measurement: gain_db\n"
+        '        operator: ">="\n'
+        "        threshold: 10.0\n"
+    )
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", str(tmp_path / "runs" / "r4")])
+
+    fake_result = {
+        "status": "PASS", "final_netlist_paths": {"ac_loop_gain": str(tmp_path / "netlist.cir")},
+        "run_dir": str(tmp_path / "runs" / "r4"), "iterations_used": 1, "final_criteria": [],
+    }
+    fake_final_sweep = {
+        "overall_pass": False, "criteria": [], "summary": "one or more criteria failed",
+        "worst_case_corners": {"gain": {"process": "tt", "voltage": 1.8, "temperature": 27, "value": 5.0}},
+    }
+
+    # run_orchestration is mocked out entirely, so it never calls
+    # state.push_netlist_version - RunState.current_netlist_texts() then
+    # naturally returns {} (no versions tracked), which is fine here since
+    # run_full_pvt_sweep is also mocked and ignores its netlist_texts arg.
+    with (
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=fake_final_sweep) as mock_sweep,
+    ):
+        result = await _run(args)
+
+    assert mock_sweep.call_count == 2  # baseline sweep + final sweep
+    assert result["status"] == "FAIL"
+    assert "pvt_sweep" in result
+    assert result["pvt_sweep"]["worst_case_corners"]["gain"]["process"] == "tt"
+
+
+@pytest.mark.asyncio
+async def test_run_keeps_pass_when_final_pvt_sweep_also_passes(tmp_path):
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+    spec_path = tmp_path / "spec_pvt.yaml"
+    spec_path.write_text(
+        "circuit_name: test\n"
+        "pvt_corners:\n"
+        "  process: [tt]\n"
+        "  voltage: [1.8]\n"
+        "  temperature: [27]\n"
+        "testbenches:\n"
+        "  - name: ac_loop_gain\n"
+        "    netlist: netlist.cir\n"
+        '    analyses: ["ac"]\n'
+        '    control_block: ".control\\n.endc\\n"\n'
+        "    criteria:\n"
+        "      - name: gain\n"
+        "        measurement: gain_db\n"
+        '        operator: ">="\n'
+        "        threshold: 10.0\n"
+    )
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", str(tmp_path / "runs" / "r5")])
+
+    fake_result = {
+        "status": "PASS", "final_netlist_paths": {"ac_loop_gain": str(tmp_path / "netlist.cir")},
+        "run_dir": str(tmp_path / "runs" / "r5"), "iterations_used": 1, "final_criteria": [],
+    }
+    fake_passing_sweep = {
+        "overall_pass": True, "criteria": [], "summary": "all criteria passed",
+        "worst_case_corners": {},
+    }
+
+    with (
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=fake_passing_sweep) as mock_sweep,
+    ):
+        result = await _run(args)
+
+    assert mock_sweep.call_count == 2
+    assert result["status"] == "PASS"
+    assert result["pvt_sweep"]["overall_pass"] is True
