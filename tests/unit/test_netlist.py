@@ -170,3 +170,43 @@ def test_parse_netlist_records_each_component_subckt_scope():
     assert parsed.subckts["BUF_P"].components[0].scope == "BUF_P"
     assert parsed.subckts["BUF_N"].components[0].scope == "BUF_N"
     assert parsed.top_components[0].scope is None
+
+
+TWO_BUFFERS = (
+    ".subckt BUF_P vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10\n"
+    ".ends BUF_P\n"
+    ".subckt BUF_N vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=20\n"
+    ".ends BUF_N\n"
+    "Cload vout 0 2p\n"
+)
+
+
+def test_apply_changes_scoped_refdes_edits_only_the_named_subckt():
+    out = apply_changes(TWO_BUFFERS, [{"refdes": "BUF_N.Xcc", "param": "W", "new_value": "99"}])
+
+    xcc_lines = [ln for ln in out.splitlines() if ln.startswith("Xcc")]
+    assert xcc_lines == [
+        "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10",
+        "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=99",
+    ]
+
+
+def test_apply_changes_raises_on_an_ambiguous_unqualified_refdes():
+    # Silently editing the first match is how a tuner's change to one block
+    # lands in a different block with no error at all.
+    with pytest.raises(ValueError, match="ambiguous"):
+        apply_changes(TWO_BUFFERS, [{"refdes": "Xcc", "param": "W", "new_value": "99"}])
+
+
+def test_apply_changes_still_accepts_an_unqualified_refdes_that_is_unique():
+    out = apply_changes(TWO_BUFFERS, [{"refdes": "Cload", "param": "value", "new_value": "5p"}])
+
+    assert "Cload vout 0 5p" in out
+
+
+def test_apply_changes_scoped_refdes_that_matches_nothing_is_a_no_op():
+    out = apply_changes(TWO_BUFFERS, [{"refdes": "BUF_P.Xnope", "param": "W", "new_value": "99"}])
+
+    assert out == TWO_BUFFERS
