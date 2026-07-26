@@ -12,54 +12,59 @@ class Topology:
 TOPOLOGY_LIBRARY: dict[str, Topology] = {
     "miller_basic": Topology(
         id="miller_basic",
-        description="Standard two-stage Miller-compensated CMOS op-amp, no nulling resistor.",
+        description="Standard two-stage Miller-compensated CMOS op-amp (sky130), no nulling resistor.",
         addresses=[],
         subckt_body="""\
-Iref nb1 vdd 100u
-M9 nb1 nb1 vdd vdd PMOSG W=20u L=1u
+Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
+Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rdeg degn vss 20k
+Rstart vdd nbias 3Meg
 
-M1 n1   vinn tail vdd PMOSG W=40u L=1u
-M2 outA vinp tail vdd PMOSG W=40u L=1u
+X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X3   n1   n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X4   outA n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X5   tail pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=15
 
-M3 n1   n1   vss vss NMOSG W=20u L=1u
-M4 outA n1   vss vss NMOSG W=20u L=1u
+X6   vout outA vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+X7   vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=30
 
-M5 tail nb1 vdd vdd PMOSG W=40u L=1u
-
-M6 vout outA vss vss NMOSG W=40u L=1u
-M7 vout nb1  vdd vdd PMOSG W=60u L=1u
-
-Cc outA vout 2p
-Ca outA 0 0.3p
+Xcc outA vout sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1
+Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
 """,
     ),
     "miller_nulling_resistor": Topology(
         id="miller_nulling_resistor",
         description=(
-            "Two-stage Miller-compensated CMOS op-amp with a nulling resistor Rz "
-            "in series with Cc, cancelling the right-half-plane zero. Improves "
-            "phase margin substantially without the unity-gain-bandwidth loss "
-            "that increasing Cc alone causes."
+            "Two-stage Miller-compensated CMOS op-amp (sky130) with a nulling resistor Rz "
+            "(220kOhm, empirically validated - see the design spec's Rz sweep) in series "
+            "with Cc, cancelling the right-half-plane zero. On this sizing, improves phase "
+            "margin AND unity-gain bandwidth simultaneously relative to no-Rz, rather than "
+            "the usual bandwidth-for-phase-margin trade-off."
         ),
         addresses=["phase_margin"],
         subckt_body="""\
-Iref nb1 vdd 100u
-M9 nb1 nb1 vdd vdd PMOSG W=20u L=1u
+Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
+Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rdeg degn vss 20k
+Rstart vdd nbias 3Meg
 
-M1 n1   vinn tail vdd PMOSG W=40u L=1u
-M2 outA vinp tail vdd PMOSG W=40u L=1u
+X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X3   n1   n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X4   outA n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X5   tail pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=15
 
-M3 n1   n1   vss vss NMOSG W=20u L=1u
-M4 outA n1   vss vss NMOSG W=20u L=1u
+X6   vout outA vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+X7   vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=30
 
-M5 tail nb1 vdd vdd PMOSG W=40u L=1u
-
-M6 vout outA vss vss NMOSG W=40u L=1u
-M7 vout nb1  vdd vdd PMOSG W=60u L=1u
-
-Cc outA vnull 2p
-Rz vnull vout 500
-Ca outA 0 0.3p
+Xcc outA cczz sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1
+Rz   cczz vout 220000
+Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
 """,
     ),
 }
