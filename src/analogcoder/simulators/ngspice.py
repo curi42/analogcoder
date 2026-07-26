@@ -17,6 +17,8 @@ class NgspiceBackend(SimulatorBackend):
         with open(netlist_path) as f:
             lines = f.readlines()
 
+        netlist_dir = os.path.dirname(os.path.abspath(netlist_path))
+
         body = [ln for ln in lines if ln.strip().lower() != ".end"]
         control_block = testbench_config["control_block"]
         deck = "".join(body) + "\n" + control_block + "\n.end\n"
@@ -32,6 +34,7 @@ class NgspiceBackend(SimulatorBackend):
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
+                    cwd=netlist_dir,
                 )
             except subprocess.TimeoutExpired:
                 return RawSimResult(
