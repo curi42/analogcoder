@@ -1,4 +1,5 @@
-from analogcoder.pvt import render_corner_netlist
+from analogcoder.pvt import CornerPoint, all_corners, render_corner_netlist, worst_case_measurements
+from analogcoder.spec import Criterion, PVTCorners
 
 NETLIST = """\
 * Two-stage CMOS op-amp
@@ -60,3 +61,53 @@ def test_render_corner_netlist_preserves_trailing_ac_clause_on_vdd():
 
     vdd_lines = [line for line in rendered.splitlines() if line.startswith("Vdd")]
     assert vdd_lines == ["Vdd vdd 0 DC 1.98 AC 1"]
+
+
+def test_all_corners_produces_full_cross_product():
+    pvt = PVTCorners(process=["tt", "ss"], voltage=[1.62, 1.98], temperature=[-40, 125])
+
+    corners = all_corners(pvt)
+
+    assert len(corners) == 8  # 2 * 2 * 2
+    assert CornerPoint(process="tt", voltage=1.62, temperature=-40) in corners
+    assert CornerPoint(process="ss", voltage=1.98, temperature=125) in corners
+
+
+def test_worst_case_measurements_picks_minimum_for_gte_criterion():
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ss", voltage=1.62, temperature=-40),
+    ]
+    per_corner_measurements = [{"phase_margin_deg": 62.88}, {"phase_margin_deg": 37.12}]
+    criteria = [Criterion(name="phase_margin", measurement="phase_margin_deg", operator=">=", threshold=60.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements == {"phase_margin_deg": 37.12}
+    assert worst_corners["phase_margin"]["process"] == "ss"
+    assert worst_corners["phase_margin"]["value"] == 37.12
+
+
+def test_worst_case_measurements_picks_maximum_for_lte_criterion():
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=125),
+    ]
+    per_corner_measurements = [{"psr_minus_db": -1.43}, {"psr_minus_db": 0.5}]
+    criteria = [Criterion(name="psr_minus", measurement="psr_minus_db", operator="<=", threshold=0.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements == {"psr_minus_db": 0.5}
+    assert worst_corners["psr_minus"]["process"] == "ff"
+
+
+def test_worst_case_measurements_skips_criterion_missing_from_all_corners():
+    corners = [CornerPoint(process="tt", voltage=1.8, temperature=27)]
+    per_corner_measurements = [{"gain_db": 71.09}]
+    criteria = [Criterion(name="phase_margin", measurement="phase_margin_deg", operator=">=", threshold=60.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements == {}
+    assert worst_corners == {}
