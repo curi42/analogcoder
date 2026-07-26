@@ -152,3 +152,21 @@ def test_parse_spice_value_case_insensitive():
 def test_parse_spice_value_raises_on_invalid_input():
     with pytest.raises(ValueError):
         parse_spice_value("not-a-number")
+
+
+def test_parse_netlist_records_each_component_subckt_scope():
+    text = (
+        ".subckt BUF_P vinp vinn vout vdd vss\n"
+        "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10\n"
+        ".ends BUF_P\n"
+        ".subckt BUF_N vinp vinn vout vdd vss\n"
+        "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=20\n"
+        ".ends BUF_N\n"
+        "Cload vout 0 2p\n"
+    )
+
+    parsed = parse_netlist(text)
+
+    assert parsed.subckts["BUF_P"].components[0].scope == "BUF_P"
+    assert parsed.subckts["BUF_N"].components[0].scope == "BUF_N"
+    assert parsed.top_components[0].scope is None

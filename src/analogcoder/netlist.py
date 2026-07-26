@@ -39,6 +39,7 @@ class Component:
     value: str | None
     params: dict[str, str] = field(default_factory=dict)
     raw_line: str = ""
+    scope: str | None = None
 
 
 @dataclass
@@ -98,6 +99,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
             continue
         component = _parse_component_line(line)
         if current_subckt is not None:
+            component.scope = current_subckt.name
             current_subckt.components.append(component)
         else:
             top_components.append(component)
