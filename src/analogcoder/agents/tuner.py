@@ -26,6 +26,13 @@ netlist itself writes that parameter as "name=value" (e.g. "M1 d g s b W=10u
 L=1u" - to change the width you would use param="W"), and in that case param
 must be exactly that name as it appears in the netlist, nothing else.
 
+refdes MUST identify exactly one component. When the component sits inside a
+.subckt and its refdes also appears in another .subckt, qualify it with the
+subckt's name as "<SUBCKT>.<refdes>" (e.g. "BUF_N.Xcc" for the Xcc inside
+".subckt BUF_N ..."). An unqualified refdes that appears in more than one
+subckt is ambiguous and will be rejected. Note the scope is the subckt
+definition: changing it changes every instance of that subckt.
+
 Respond via the structured output schema."""
 
 

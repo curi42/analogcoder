@@ -19,6 +19,11 @@ def make_spec(*testbench_names):
 FAKE_SPEC = make_spec("ac_loop_gain")
 MULTI_SPEC = make_spec("ac_loop_gain", "psr_plus")
 FAKE_PROPOSAL = {"proposed_changes": [{"refdes": "Rf", "param": "value", "old_value": "10k", "new_value": "11k"}]}
+# FAKE_PROPOSAL targets refdes "Rf" - every netlist fixture used with the
+# default tune stub (or any other stub returning FAKE_PROPOSAL) must actually
+# contain an "Rf" component, or check_refdes_resolution correctly rejects the
+# proposal as matching nothing before verify_pre is ever called.
+BASE_NETLIST = "* netlist\nRf vminus vout 10k\n.end\n"
 SUBCKT_NETLIST = (
     "* test\n"
     ".subckt AMP vinp vinn vout vdd vss\n"
@@ -26,6 +31,7 @@ SUBCKT_NETLIST = (
     "R2 mid vout 2k\n"
     ".ends AMP\n"
     "Xamp1 vinp vinn vout vdd vss AMP\n"
+    "Rf vminus vout 10k\n"
     ".end\n"
 )
 FAKE_TOPOLOGY_PROPOSAL = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}
@@ -88,7 +94,7 @@ async def test_immediate_pass_returns_pass_on_first_iteration(tmp_path):
     agents = make_agents()
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 1
@@ -107,7 +113,7 @@ async def test_fail_then_pass_after_tuning(tmp_path):
     agents = make_agents(judge=judge_fails_then_passes)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 1
@@ -122,7 +128,7 @@ async def test_prereview_always_rejected_fails_run(tmp_path):
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_pre=always_reject)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "tuning proposal repeatedly rejected"
@@ -148,7 +154,7 @@ async def test_postreview_rollback_consumes_an_iteration_then_succeeds(tmp_path)
     agents = make_agents(judge=judge_sequence, verify_post=verify_post_first_rollback)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 2
@@ -161,7 +167,7 @@ async def test_max_iterations_exhausted_fails_run(tmp_path):
     ))
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -175,7 +181,7 @@ async def test_agent_execution_error_before_loop_returns_fail_with_zero_iteratio
     agents = make_agents(analyze=failing_analyze)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["iterations_used"] == 0
@@ -196,7 +202,7 @@ async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(t
     agents = make_agents(simulate=simulate_then_fail, judge=lambda m, s: _async(FAIL_JUDGE))
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["iterations_used"] == 0
@@ -221,7 +227,7 @@ async def test_topology_swap_never_offered_without_exactly_one_subckt(tmp_path):
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": "* netlist\n.end\n"}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -410,6 +416,78 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
     assert propose_topology_calls["count"] >= 1
 
 
+TWO_SUBCKT_COLLIDING_REFDES_NETLIST = (
+    "* two subckts whose compensation caps share a refdes\n"
+    ".subckt BUF_P vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10\n"
+    ".ends BUF_P\n"
+    ".subckt BUF_N vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=20\n"
+    ".ends BUF_N\n"
+    "Xb0 a b c vdd vss BUF_P\n"
+    "Xb1 d e f vdd vss BUF_N\n"
+    ".end\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_refdes_proposal_is_rejected_without_crashing_or_calling_verify_pre(tmp_path):
+    # Reproduces the C1 crash from the final-branch review: a tuner proposal
+    # against an unqualified refdes that exists in more than one subckt used
+    # to raise an uncaught ValueError from _apply_to_all. The deterministic
+    # refdes-resolution gate must reject this before verify_pre is ever
+    # called, and the run must terminate cleanly (not crash) via the normal
+    # tuning-retry-exhausted path.
+    verify_pre_calls = {"count": 0}
+
+    async def counting_verify_pre(analysis, judge_result, proposal, netlist_text):
+        verify_pre_calls["count"] += 1
+        return {"approved": True, "concerns": [], "feedback": "ok"}
+
+    async def ambiguous_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+        return {
+            "proposed_changes": [{"refdes": "Xcc", "param": "W", "old_value": "10", "new_value": "15", "reasoning": "x"}],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        tune=ambiguous_tune,
+        verify_pre=counting_verify_pre,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": TWO_SUBCKT_COLLIDING_REFDES_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert verify_pre_calls["count"] == 0
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+
+
+@pytest.mark.asyncio
+async def test_value_error_from_apply_changes_is_caught_and_returns_clean_fail(tmp_path, monkeypatch):
+    # Belt-and-braces: even if a ValueError somehow reaches _apply_to_all
+    # (bypassing the deterministic refdes-resolution gate tested above),
+    # run_orchestration must not let it escape as an uncaught exception.
+    def raising_apply_changes(text, changes):
+        raise ValueError(
+            "refdes 'Xcc' is ambiguous - it matches components in BUF_N, BUF_P; qualify it as <subckt>.Xcc"
+        )
+
+    monkeypatch.setattr("analogcoder.orchestrator.apply_changes", raising_apply_changes)
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert "ambiguous" in result["failure_reason"]
+
+
 @pytest.mark.asyncio
 async def test_multi_testbench_tuning_change_applied_to_every_testbench(tmp_path):
     judge_calls = {"count": 0}
@@ -452,11 +530,12 @@ async def test_multi_testbench_tune_and_verify_pre_receive_only_canonical_text(t
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
 
-    initial = {"ac_loop_gain": "* canonical text\n.end\n", "psr_plus": "* other testbench text\n.end\n"}
+    canonical_text = "* canonical text\nRf vminus vout 10k\n.end\n"
+    initial = {"ac_loop_gain": canonical_text, "psr_plus": "* other testbench text\n.end\n"}
     await run_orchestration(initial, MULTI_SPEC, state, agents)
 
-    assert seen_texts["tune"] == "* canonical text\n.end\n"
-    assert seen_texts["verify_pre"] == "* canonical text\n.end\n"
+    assert seen_texts["tune"] == canonical_text
+    assert seen_texts["verify_pre"] == canonical_text
 
 
 @pytest.mark.asyncio

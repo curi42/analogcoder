@@ -39,6 +39,7 @@ class Component:
     value: str | None
     params: dict[str, str] = field(default_factory=dict)
     raw_line: str = ""
+    scope: str | None = None
 
 
 @dataclass
@@ -98,6 +99,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
             continue
         component = _parse_component_line(line)
         if current_subckt is not None:
+            component.scope = current_subckt.name
             current_subckt.components.append(component)
         else:
             top_components.append(component)
@@ -105,33 +107,131 @@ def parse_netlist(text: str) -> ParsedNetlist:
     return ParsedNetlist(top_components=top_components, subckts=subckts)
 
 
+def split_scoped_refdes(scoped: str) -> tuple[str | None, str]:
+    """Splits "BUF_N.Xcc" into ("BUF_N", "Xcc") and a bare "Xcc" into
+    (None, "Xcc"). One level only: the scope is a subckt DEFINITION name,
+    which is unique within a netlist, so nesting never needs more."""
+    scope, sep, refdes = scoped.rpartition(".")
+    if not sep:
+        return None, scoped
+    return scope, refdes
+
+
+def _line_scopes(lines: list[str]) -> list[str | None]:
+    """For each line, the name of the .subckt it sits inside, or None at
+    top level. Directive lines themselves are reported as None; they are
+    skipped by every caller anyway."""
+    scopes: list[str | None] = []
+    current: str | None = None
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        lower = stripped.lower()
+        if lower.startswith(".subckt"):
+            scopes.append(None)
+            current = stripped.split()[1]
+            continue
+        if lower.startswith(".ends"):
+            scopes.append(None)
+            current = None
+            continue
+        scopes.append(current)
+    return scopes
+
+
+def _find_matches(
+    lines: list[str], scopes: list[str | None], scope: str | None, refdes: str
+) -> list[tuple[int, list[str]]]:
+    """Every non-directive line whose first token is refdes, restricted to
+    scope when scope is not None. Shared by apply_changes (which acts on the
+    match) and check_refdes_resolution (which only classifies it) so the two
+    can never disagree about what a given <refdes> or <scope>.<refdes> means."""
+    matches: list[tuple[int, list[str]]] = []
+    for i, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("*") or stripped.startswith("."):
+            continue
+        tokens = stripped.split()
+        if tokens[0] != refdes:
+            continue
+        if scope is not None and scopes[i] != scope:
+            continue
+        matches.append((i, tokens))
+    return matches
+
+
+def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """Deterministic pre-apply gate: classifies each proposed change's refdes
+    against text as resolving to exactly one component, matching nothing (including
+    a scope that names no subckt, e.g. "M1.W"), or - unqualified - matching more
+    than one scope. Run in the orchestrator's tuning retry loop immediately after
+    check_area_growth and before verify_pre, same position/philosophy as the area
+    gate, so an unresolvable or ambiguous proposal never spends an LLM call and
+    never reaches apply_changes (which raises ValueError on the ambiguous case)."""
+    parsed = parse_netlist(text)
+    lines = text.splitlines()
+    scopes = _line_scopes(lines)
+
+    violations: list[str] = []
+    for change in changes:
+        scoped_refdes = change["refdes"]
+        scope, refdes = split_scoped_refdes(scoped_refdes)
+
+        if scope is not None and scope not in parsed.subckts:
+            violations.append(f"{scoped_refdes!r} matches no component: no subckt named {scope!r} exists")
+            continue
+
+        matches = _find_matches(lines, scopes, scope, refdes)
+
+        if not matches:
+            violations.append(f"{scoped_refdes!r} matches no component in this netlist")
+            continue
+
+        if len(matches) > 1:
+            where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            qualified = ", ".join(f"{s}.{refdes}" for s in where)
+            violations.append(
+                f"{scoped_refdes!r} is ambiguous - it matches components in {', '.join(where)}; "
+                f"qualify it as one of: {qualified}"
+            )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
 def apply_changes(text: str, changes: list[dict]) -> str:
     lines = text.splitlines()
+    scopes = _line_scopes(lines)
     for change in changes:
-        refdes = change["refdes"]
+        scope, refdes = split_scoped_refdes(change["refdes"])
         param = change["param"]
         new_value = change["new_value"]
-        for i, raw_line in enumerate(lines):
-            stripped = raw_line.strip()
-            if not stripped or stripped.startswith("*") or stripped.startswith("."):
-                continue
-            tokens = stripped.split()
-            if tokens[0] != refdes:
-                continue
-            if param == "value":
-                positional_idx = [j for j, t in enumerate(tokens) if "=" not in t]
-                tokens[positional_idx[-1]] = new_value
-            else:
-                replaced = False
-                for j, tok in enumerate(tokens):
-                    if tok.startswith(f"{param}="):
-                        tokens[j] = f"{param}={new_value}"
-                        replaced = True
-                        break
-                if not replaced:
-                    tokens.append(f"{param}={new_value}")
-            lines[i] = " ".join(tokens)
-            break
+
+        matches = _find_matches(lines, scopes, scope, refdes)
+
+        if not matches:
+            continue
+        if len(matches) > 1:
+            where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            raise ValueError(
+                f"refdes {change['refdes']!r} is ambiguous - it matches components in {', '.join(where)}; "
+                f"qualify it as <subckt>.{refdes}"
+            )
+
+        i, tokens = matches[0]
+        if param == "value":
+            positional_idx = [j for j, t in enumerate(tokens) if "=" not in t]
+            tokens[positional_idx[-1]] = new_value
+        else:
+            replaced = False
+            for j, tok in enumerate(tokens):
+                if tok.startswith(f"{param}="):
+                    tokens[j] = f"{param}={new_value}"
+                    replaced = True
+                    break
+            if not replaced:
+                tokens.append(f"{param}={new_value}")
+        lines[i] = " ".join(tokens)
     return "\n".join(lines) + "\n"
 
 

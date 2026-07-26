@@ -58,11 +58,20 @@ def test_tuner_schema_accepts_named_param_and_scientific_notation_value():
     jsonschema.validate(payload, TUNER_SCHEMA)
 
 
+# Note: "M1.W" and "Cc.kappa" are deliberately NOT in this list. They are
+# syntactically valid <scope>.<refdes> forms per TUNER_SCHEMA's pattern (a
+# weak model writing "M1.W" probably meant to set M1's W param but put it in
+# the refdes field instead) - schema validation can't tell that from a
+# legitimate "BUF_N.Xcc" scoped refdes. Rejecting them is
+# netlist.check_refdes_resolution's job (a scope that names no subckt is
+# treated as "matches nothing"), exercised in tests/unit/test_netlist.py's
+# test_check_refdes_resolution_rejects_a_dotted_refdes_whose_scope_names_no_subckt
+# and test_check_refdes_resolution_rejects_cc_dot_kappa_shaped_refdes.
 @pytest.mark.parametrize(
     "field,bad_value",
     [
-        ("refdes", "Cc.kappa"),
-        ("refdes", "M1.W"),
+        ("refdes", "1Cc"),
+        ("refdes", "Cc kappa"),
         ("param", "resistance value"),
         ("old_value", "unknown"),
         ("new_value", "increase Rf to 15k"),
@@ -78,6 +87,43 @@ def test_tuner_schema_rejects_non_literal_values(field, bad_value):
     }
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(payload, TUNER_SCHEMA)
+
+
+def test_tuner_schema_accepts_a_subckt_scoped_refdes():
+    proposal = {
+        "proposed_changes": [
+            {
+                "refdes": "BUF_N.Xcc",
+                "param": "W",
+                "old_value": "20",
+                "new_value": "30",
+                "reasoning": "widen the vbg1 buffer's compensation cap",
+            }
+        ],
+        "overall_reasoning": "improve vbg1 settling",
+        "confidence": 0.8,
+    }
+
+    jsonschema.validate(proposal, TUNER_SCHEMA)
+
+
+def test_tuner_schema_rejects_a_malformed_scoped_refdes():
+    proposal = {
+        "proposed_changes": [
+            {
+                "refdes": "BUF_N.",
+                "param": "W",
+                "old_value": "20",
+                "new_value": "30",
+                "reasoning": "trailing dot is not a refdes",
+            }
+        ],
+        "overall_reasoning": "x",
+        "confidence": 0.8,
+    }
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(proposal, TUNER_SCHEMA)
 
 
 def test_verifier_pre_schema_accepts_valid_payload():

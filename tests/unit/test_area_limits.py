@@ -18,10 +18,35 @@ NETLIST_WITH_SUBCKT = (
 
 def test_index_baseline_components_finds_top_level_and_subckt_components():
     baseline = index_baseline_components(NETLIST_WITH_SUBCKT)
-    assert set(baseline.keys()) == {"M6", "Cc", "Iref", "Rz"}
+    # Scoped keys for subckt components, plain aliases for uniquely-named ones,
+    # and plain keys for top-level components.
+    assert set(baseline.keys()) == {"AMP.M6", "AMP.Cc", "M6", "Cc", "Iref", "Rz"}
+    # Both plain and scoped keys should resolve to the same component.
+    assert baseline["M6"] is baseline["AMP.M6"]
+    assert baseline["Cc"] is baseline["AMP.Cc"]
     assert baseline["M6"].params["W"] == "40u"
     assert baseline["Cc"].value == "2p"
     assert baseline["Rz"].value == "500"
+
+
+NETLIST_WITH_TOP_LEVEL_SUBCKT_COLLISION = (
+    "* test\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    ".ends AMP\n"
+    "M6 a b c d NMOSG W=10u L=1u\n"
+    ".end\n"
+)
+
+
+def test_index_baseline_components_gives_no_plain_key_when_top_level_collides_with_subckt():
+    # A refdes present both top-level and inside a subckt must get no plain
+    # key from either side, matching apply_changes' ambiguity rule - so the
+    # area gate and the editor agree on what an unqualified "M6" means (both
+    # "don't know", not "silently pick the top-level one").
+    baseline = index_baseline_components(NETLIST_WITH_TOP_LEVEL_SUBCKT_COLLISION)
+    assert "AMP.M6" in baseline
+    assert "M6" not in baseline
 
 
 def test_allowed_multiplier_for_transistor_tiers():
@@ -186,3 +211,62 @@ def test_check_area_growth_still_treats_subckt_instantiation_as_unconstrained():
     approved, feedback = check_area_growth(baseline, changes)
     assert approved is True
     assert feedback is None
+
+
+TWO_BUFFERS_NETLIST = (
+    ".subckt BUF_P vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10\n"
+    "Xonly n2 vss sky130_fd_pr__nfet_01v8 L=1 W=4\n"
+    ".ends BUF_P\n"
+    ".subckt BUF_N vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=20\n"
+    ".ends BUF_N\n"
+    "Cload vout 0 2p\n"
+)
+
+
+def test_index_baseline_components_keys_colliding_refdes_by_subckt():
+    indexed = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    assert indexed["BUF_P.Xcc"].params["W"] == "10"
+    assert indexed["BUF_N.Xcc"].params["W"] == "20"
+    # Ambiguous plain name gets no alias - it must not silently resolve to one of them.
+    assert "Xcc" not in indexed
+
+
+def test_index_baseline_components_aliases_a_unique_refdes_unqualified():
+    # Back-compat: existing single-subckt benchmarks propose unqualified
+    # refdes, and without this alias check_area_growth would find no
+    # baseline and silently wave the change through.
+    indexed = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    assert indexed["Xonly"] is indexed["BUF_P.Xonly"]
+    assert indexed["Cload"].value == "2p"
+
+
+def test_area_gate_uses_the_scoped_baseline_not_a_colliding_one():
+    baseline = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    # Prove that colliding refdes has no plain alias (would be present pre-change)
+    assert "Xcc" not in baseline
+
+    # Prove that scoped keys exist (would not exist pre-change)
+    assert "BUF_P.Xcc" in baseline
+    assert "BUF_N.Xcc" in baseline
+
+    # 20 -> 30 is 1.5x against BUF_N's own baseline, at the tier limit.
+    # Against BUF_P's 10 it would look like 3.0x and be rejected.
+    approved, feedback = check_area_growth(
+        baseline, [{"refdes": "BUF_N.Xcc", "param": "W", "new_value": "30"}]
+    )
+    assert approved, feedback
+
+    # Verify that using the WRONG scoped key's baseline would fail,
+    # because 20 -> 30 is 3.0x against BUF_P's W=10 baseline, exceeding
+    # the 1.5x tier limit. Pre-change would have approved=True for the wrong
+    # reason (scoped key not found, so check silently skipped).
+    approved_wrong, feedback_wrong = check_area_growth(
+        baseline, [{"refdes": "BUF_P.Xcc", "param": "W", "new_value": "30"}]
+    )
+    assert not approved_wrong, "Should reject 3.0x growth against BUF_P's baseline"
+    assert "BUF_P.Xcc" in feedback_wrong
