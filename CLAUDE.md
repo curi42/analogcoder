@@ -305,8 +305,10 @@ worth reading before assuming a weak-model failure is a code bug:
   passed the corrupted deck (`check_refdes_resolution` resolved fine,
   `check_area_growth` saw an unresolvable baseline and did not block), so it
   reached ngspice and the failure looked like a bad tuning proposal rather
-  than a parser bug. All five tokenisation sites in `netlist.py` route through
-  the helper; adding a sixth that uses `.split()` reopens this.
+  than a parser bug. Every tokenisation site in `netlist.py` routes through the
+  helper, and `params.py` imports it rather than splitting its own — adding one
+  that uses `.split()` reopens this. `{...}` nests (`W={wn * {m + 1} }`);
+  `'...'` does not.
 - **Fold `+` continuations with `netlist.logical_lines` before reading a deck
   line-by-line.** It returns `(code, [physical line indices])`, so parsing sees
   the joined statement while `apply_changes` still edits the physical line the

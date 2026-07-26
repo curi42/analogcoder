@@ -245,6 +245,10 @@ def build_param_envs(text: str) -> dict[str | None, dict[str, float]]:
             agreed, disagreeing = result
             raw.update(agreed)
             shadowed |= disagreeing
+            # 인스턴스가 하나의 값으로 합의한 이름은 더 이상 경합이 아니다.
+            # 본문 .param과 .subckt 줄 기본값이 충돌해도, 명시적 오버라이드가
+            # 가장 높은 우선순위라는 규칙이 그대로 적용된다.
+            shadowed -= set(agreed)
         for name in shadowed:
             raw.pop(name, None)
         envs[path] = _resolve_environment(raw, global_env, frozenset(shadowed))

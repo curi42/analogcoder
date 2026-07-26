@@ -130,21 +130,32 @@ def split_tokens(code: str) -> list[str]:
     떼어 넘겨야 한다."""
     tokens: list[str] = []
     current: list[str] = []
-    closer: str | None = None
+    depth = 0  # 중괄호 중첩 깊이. 첫 '}'에서 닫으면 W={wn * {m + 1} } 가
+    # 두 토큰으로 쪼개져 모델명이 노드로 밀려난다.
+    quoted = False  # '...' 는 중첩하지 않으므로 깊이가 아니라 상태다.
 
     for char in code:
-        if closer is not None:
+        if quoted:
             current.append(char)
-            if char == closer:
-                closer = None
+            if char == "'":
+                quoted = False
+            continue
+        if depth:
+            current.append(char)
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
             continue
         if char.isspace():
             if current:
                 tokens.append("".join(current))
                 current = []
             continue
-        if char in _QUOTE_PAIRS:
-            closer = _QUOTE_PAIRS[char]
+        if char == "'":
+            quoted = True
+        elif char == "{":
+            depth = 1
         current.append(char)
 
     if current:
@@ -375,9 +386,14 @@ def _replace_positional(new_value: str):
 
 
 def _replace_param(param: str, new_value: str):
+    """마지막 출현을 고친다. `_parse_component_line`이 접힌 줄을 last-wins로
+    읽으므로(뒤에 나온 `W=`가 앞의 것을 덮는다) 편집도 같은 것을 골라야
+    한다. 첫 출현을 고치면 게이트와 튜너가 믿는 값과 ngspice가 실제로 쓰는
+    값이 갈린다 - 하필 이 파일이 방금 없앤 `W` 중복 덱에서 재발한다."""
+
     def mutate(tokens: list[str]) -> bool:
-        for j, token in enumerate(tokens):
-            if token.startswith(f"{param}="):
+        for j in range(len(tokens) - 1, -1, -1):
+            if tokens[j].startswith(f"{param}="):
                 tokens[j] = f"{param}={new_value}"
                 return True
         return False
@@ -420,7 +436,9 @@ def apply_changes(text: str, changes: list[dict]) -> str:
             for index in reversed(indices):
                 if _rewrite_line(lines, index, _replace_positional(new_value)):
                     break
-        elif not any(_rewrite_line(lines, i, _replace_param(param, new_value)) for i in indices):
+        elif not any(
+            _rewrite_line(lines, i, _replace_param(param, new_value)) for i in reversed(indices)
+        ):
             # 어느 물리 줄에도 없는 param은 마지막 줄에 덧붙인다. 첫 줄에
             # 붙이면 연속 줄에 같은 이름이 있을 때 덱에 두 번 나오게 된다.
             _rewrite_line(lines, indices[-1], _append_param(param, new_value))

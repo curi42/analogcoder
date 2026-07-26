@@ -110,3 +110,53 @@ def test_a_name_declared_both_as_interface_and_body_param_is_unresolvable():
     envs = build_param_envs(deck)
 
     assert "W" not in envs["SUB"]
+
+
+def test_split_tokens_handles_nested_braces():
+    from analogcoder.netlist import split_tokens
+
+    # 회귀: 첫 '}'에서 인용이 닫힌 것으로 보아 바깥 중괄호가 별도 토큰이 됐고,
+    # 그러면 모델명이 노드로 밀려나 value가 '}'가 된다 - 이 커밋이 없애려던
+    # 실패 모드와 정확히 같다.
+    assert split_tokens("M1 d g nch W={wn * {m + 1} } L=1") == [
+        "M1", "d", "g", "nch", "W={wn * {m + 1} }", "L=1",
+    ]
+
+
+def test_a_nested_brace_expression_does_not_disable_the_area_gate():
+    deck = (
+        "* t\n.option scale=1.0u\n"
+        "Xm1 d g 0 0 sky130_fd_pr__nfet_01v8 W={wn * {m + 1} } L=1\n.end\n"
+    )
+
+    component = parse_netlist(deck).top_components[0]
+
+    assert component.value == "sky130_fd_pr__nfet_01v8"
+    assert component.nodes == ["d", "g", "0", "0"]
+
+
+def test_a_change_edits_the_occurrence_the_parser_resolves():
+    # 파서는 접힌 줄을 last-wins로 읽어 W=20을 본다. 편집이 첫 번째 W를 고치면
+    # 게이트와 튜너는 99를 믿고 ngspice는 20을 쓴다 - 이 커밋이 고친 W 중복
+    # 버그가 만들어 내던 바로 그 덱에서 재발한다.
+    deck = "* t\nM1 d g 0 0 nch W=10\n+ L=1 W=20\n.end\n"
+    assert parse_netlist(deck).top_components[0].params["W"] == "20"
+
+    out = apply_changes(deck, [{"refdes": "M1", "param": "W", "new_value": "99"}])
+
+    assert "+ L=1 W=99" in out
+    assert parse_netlist(out).top_components[0].params["W"] == "99"
+
+
+def test_an_unambiguous_instance_override_survives_a_contested_local_name():
+    # 본문 .param과 .subckt 줄 기본값이 충돌해도, 인스턴스가 명시적으로 하나의
+    # 값을 주면 그것이 가장 높은 우선순위다 - 충돌 때문에 그것까지 버릴 이유는
+    # 없다.
+    deck = (
+        "* t\n.subckt SUB a b W=10\n.param W=7\nM1 a b 0 0 nch W=W\n.ends\n"
+        "X1 p q SUB W=20\n.end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs["SUB"]["W"] == 20.0
