@@ -138,6 +138,67 @@ def _line_scopes(lines: list[str]) -> list[str | None]:
     return scopes
 
 
+def _find_matches(
+    lines: list[str], scopes: list[str | None], scope: str | None, refdes: str
+) -> list[tuple[int, list[str]]]:
+    """Every non-directive line whose first token is refdes, restricted to
+    scope when scope is not None. Shared by apply_changes (which acts on the
+    match) and check_refdes_resolution (which only classifies it) so the two
+    can never disagree about what a given <refdes> or <scope>.<refdes> means."""
+    matches: list[tuple[int, list[str]]] = []
+    for i, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("*") or stripped.startswith("."):
+            continue
+        tokens = stripped.split()
+        if tokens[0] != refdes:
+            continue
+        if scope is not None and scopes[i] != scope:
+            continue
+        matches.append((i, tokens))
+    return matches
+
+
+def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """Deterministic pre-apply gate: classifies each proposed change's refdes
+    against text as resolving to exactly one component, matching nothing (including
+    a scope that names no subckt, e.g. "M1.W"), or - unqualified - matching more
+    than one scope. Run in the orchestrator's tuning retry loop immediately after
+    check_area_growth and before verify_pre, same position/philosophy as the area
+    gate, so an unresolvable or ambiguous proposal never spends an LLM call and
+    never reaches apply_changes (which raises ValueError on the ambiguous case)."""
+    parsed = parse_netlist(text)
+    lines = text.splitlines()
+    scopes = _line_scopes(lines)
+
+    violations: list[str] = []
+    for change in changes:
+        scoped_refdes = change["refdes"]
+        scope, refdes = split_scoped_refdes(scoped_refdes)
+
+        if scope is not None and scope not in parsed.subckts:
+            violations.append(f"{scoped_refdes!r} matches no component: no subckt named {scope!r} exists")
+            continue
+
+        matches = _find_matches(lines, scopes, scope, refdes)
+
+        if not matches:
+            violations.append(f"{scoped_refdes!r} matches no component in this netlist")
+            continue
+
+        if len(matches) > 1:
+            where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            qualified = ", ".join(f"{s}.{refdes}" for s in where)
+            violations.append(
+                f"{scoped_refdes!r} is ambiguous - it matches components in {', '.join(where)}; "
+                f"qualify it as one of: {qualified}"
+            )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
 def apply_changes(text: str, changes: list[dict]) -> str:
     lines = text.splitlines()
     scopes = _line_scopes(lines)
@@ -146,24 +207,14 @@ def apply_changes(text: str, changes: list[dict]) -> str:
         param = change["param"]
         new_value = change["new_value"]
 
-        matches: list[tuple[int, list[str]]] = []
-        for i, raw_line in enumerate(lines):
-            stripped = raw_line.strip()
-            if not stripped or stripped.startswith("*") or stripped.startswith("."):
-                continue
-            tokens = stripped.split()
-            if tokens[0] != refdes:
-                continue
-            if scope is not None and scopes[i] != scope:
-                continue
-            matches.append((i, tokens))
+        matches = _find_matches(lines, scopes, scope, refdes)
 
         if not matches:
             continue
         if len(matches) > 1:
             where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
             raise ValueError(
-                f"refdes {change['refdes']!r} is ambiguous - it matches components in {where}; "
+                f"refdes {change['refdes']!r} is ambiguous - it matches components in {', '.join(where)}; "
                 f"qualify it as <subckt>.{refdes}"
             )
 

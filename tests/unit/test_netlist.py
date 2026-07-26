@@ -1,6 +1,12 @@
 import pytest
 
-from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist, parse_spice_value
+from analogcoder.netlist import (
+    apply_changes,
+    apply_topology_swap,
+    check_refdes_resolution,
+    parse_netlist,
+    parse_spice_value,
+)
 
 SIMPLE_NETLIST = """\
 * simple RC
@@ -210,3 +216,66 @@ def test_apply_changes_scoped_refdes_that_matches_nothing_is_a_no_op():
     out = apply_changes(TWO_BUFFERS, [{"refdes": "BUF_P.Xnope", "param": "W", "new_value": "99"}])
 
     assert out == TWO_BUFFERS
+
+
+# --- check_refdes_resolution: the deterministic pre-apply gate that subsumes
+# C1/I1/I2 from the final-branch review. It must classify every proposed
+# change's refdes before apply_changes ever sees it, so an unresolvable or
+# ambiguous refdes is rejected with retryable feedback instead of either a
+# silent no-op or an uncaught ValueError.
+
+MULTI_REFDES_NETLIST = (
+    "M1 d g s b nmos W=1u L=0.18u\n"
+    "Cc n1 n2 2p\n"
+    ".end\n"
+)
+
+
+def test_check_refdes_resolution_approves_a_uniquely_resolving_refdes():
+    ok, feedback = check_refdes_resolution(TWO_BUFFERS, [{"refdes": "Cload", "param": "value", "new_value": "5p"}])
+    assert ok is True
+    assert feedback is None
+
+
+def test_check_refdes_resolution_approves_a_correctly_scoped_refdes():
+    ok, feedback = check_refdes_resolution(
+        TWO_BUFFERS, [{"refdes": "BUF_N.Xcc", "param": "W", "new_value": "30"}]
+    )
+    assert ok is True
+    assert feedback is None
+
+
+def test_check_refdes_resolution_rejects_an_ambiguous_unqualified_refdes():
+    ok, feedback = check_refdes_resolution(TWO_BUFFERS, [{"refdes": "Xcc", "param": "W", "new_value": "30"}])
+    assert ok is False
+    assert "ambiguous" in feedback
+    assert "BUF_N.Xcc" in feedback
+    assert "BUF_P.Xcc" in feedback
+
+
+def test_check_refdes_resolution_rejects_a_refdes_that_matches_nothing():
+    ok, feedback = check_refdes_resolution(
+        TWO_BUFFERS, [{"refdes": "BUF_P.Xnope", "param": "W", "new_value": "99"}]
+    )
+    assert ok is False
+    assert "Xnope" in feedback or "BUF_P.Xnope" in feedback
+
+
+def test_check_refdes_resolution_rejects_a_dotted_refdes_whose_scope_names_no_subckt():
+    # "M1.W" is syntactically valid per TUNER_SCHEMA (the tuner meant to set
+    # M1's W param, but wrote it in the refdes field) - split_scoped_refdes
+    # parses this as scope="M1", refdes="W". Since no subckt named "M1"
+    # exists, this must be rejected here rather than silently no-op'd.
+    ok, feedback = check_refdes_resolution(
+        MULTI_REFDES_NETLIST, [{"refdes": "M1.W", "param": "value", "new_value": "2u"}]
+    )
+    assert ok is False
+    assert "M1" in feedback
+
+
+def test_check_refdes_resolution_rejects_cc_dot_kappa_shaped_refdes():
+    ok, feedback = check_refdes_resolution(
+        MULTI_REFDES_NETLIST, [{"refdes": "Cc.kappa", "param": "value", "new_value": "2p"}]
+    )
+    assert ok is False
+    assert "Cc" in feedback

@@ -188,7 +188,25 @@ worth reading before assuming a weak-model failure is a code bug:
   it matches exactly one component netlist-wide, and raises `ValueError` when
   it is ambiguous rather than silently editing the first match. The scope is
   the subckt *definition*, so a change applies to every instance of it —
-  two differently-tuned instances require two subckts.
+  two differently-tuned instances require two subckts. Nested subckts are
+  still not scope-tracked (`Component.scope`/`_line_scopes` are single-level)
+  — a refdes inside a subckt nested within another subckt is not
+  distinguishable from one at the outer subckt's level.
+- **An unresolvable or ambiguous refdes is rejected deterministically before
+  it ever reaches the tuner's proposal being applied.** `netlist.py`'s
+  `check_refdes_resolution` runs in the orchestrator's tuning retry loop
+  immediately after `check_area_growth` and before `agents.verify_pre` (same
+  position/philosophy as the area gate — an unresolvable proposal never
+  spends an LLM call). It rejects a proposed change's refdes when it matches
+  no component (including a scope that names no subckt, e.g. `M1.W` meant to
+  set `M1`'s `W` param but written in the refdes field instead) or, when
+  unqualified, matches more than one scope — logged as a `refdes_check` event
+  (distinct from `area_check`) in `history.jsonl`, with the rejection fed
+  back to the tuner as retryable feedback like the area gate's. `apply_changes`
+  itself still raises `ValueError` for the ambiguous case as a second line of
+  defense; `run_orchestration`'s `except AgentExecutionError` (see below) also
+  catches `ValueError` so that a `ValueError` reaching the apply step some
+  other way still ends the run as a clean `FAIL` instead of an uncaught crash.
 - **`param="value"` misapplied to a non-numeric positional token** (a
   transistor's model name, a subckt instance's subckt name) used to crash
   the whole run with an uncaught `ValueError` from `area_limits.py`'s
@@ -205,7 +223,10 @@ worth reading before assuming a weak-model failure is a code bug:
 - If an agent's structured output still doesn't validate after retries,
   `orchestrator.py` catches `AgentExecutionError` and returns a clean
   `{"status": "FAIL", ...}` result instead of crashing — this is intentional
-  (see `run_orchestration`'s try/except). Don't remove it.
+  (see `run_orchestration`'s try/except). Don't remove it. The same try also
+  catches `ValueError` for the same reason (belt-and-braces against a
+  `ValueError` from the netlist-apply path, e.g. an ambiguous refdes that
+  somehow bypassed `check_refdes_resolution`) — don't remove that either.
 
 ## Testing conventions
 

@@ -39,8 +39,8 @@ def test_a_scoped_proposal_is_gated_and_applied_against_the_right_block():
     # BUF_P.Xcc: W=10 -> W=31 is 3.1x, exceeding the tier limit (rejected).
     # This asserts the area gate uses the RIGHT scope's baseline and refuses
     # oversized changes, not the wrong scope's.
-    change_wrong_scope = {"refdes": "BUF_P.Xcc", "param": "W", "new_value": "31"}
-    approved_wrong, feedback_wrong = check_area_growth(baseline, [change_wrong_scope])
+    oversized_change = {"refdes": "BUF_P.Xcc", "param": "W", "new_value": "31"}
+    approved_wrong, feedback_wrong = check_area_growth(baseline, [oversized_change])
     assert not approved_wrong, "BUF_P.Xcc: 10->31 is 3.1x and should exceed the tier limit"
     assert "exceeding" in feedback_wrong
 

@@ -3,7 +3,7 @@ from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area_limits import check_area_growth, index_baseline_components
-from analogcoder.netlist import apply_changes, apply_topology_swap, parse_netlist
+from analogcoder.netlist import apply_changes, apply_topology_swap, check_refdes_resolution, parse_netlist
 from analogcoder.state import RunState
 from analogcoder.topologies import TOPOLOGY_LIBRARY
 
@@ -172,6 +172,17 @@ async def run_orchestration(
                     rejection_feedback = area_feedback
                     continue
 
+                refdes_ok, refdes_feedback = check_refdes_resolution(
+                    netlist_texts[canonical_name], proposal["proposed_changes"]
+                )
+                state.log_event(
+                    "refdes_check",
+                    {"outer_iter": outer_iter, "retry": retry, "approved": refdes_ok, "feedback": refdes_feedback},
+                )
+                if not refdes_ok:
+                    rejection_feedback = refdes_feedback
+                    continue
+
                 review = await agents.verify_pre(analysis, judge_result, proposal, netlist_texts[canonical_name])
                 state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
 
@@ -227,4 +238,15 @@ async def run_orchestration(
     except AgentExecutionError as exc:
         return _final_result(
             "FAIL", state, max(outer_iter - 1, 0), judge_result, failure_reason=f"agent execution error: {exc}"
+        )
+    except ValueError as exc:
+        # Belt-and-braces: check_refdes_resolution above is meant to reject an
+        # unresolvable/ambiguous refdes before it ever reaches apply_changes
+        # (which raises ValueError for the ambiguous case), so this should be
+        # unreachable in normal operation. Kept anyway so a ValueError from
+        # anywhere in the tuning-apply path (apply_changes, apply_topology_swap)
+        # yields a clean FAIL instead of an uncaught crash - the same guarantee
+        # CLAUDE.md documents for the AgentExecutionError catch above.
+        return _final_result(
+            "FAIL", state, max(outer_iter - 1, 0), judge_result, failure_reason=str(exc)
         )

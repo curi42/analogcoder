@@ -66,12 +66,16 @@ def allowed_multiplier_for(ctype: str, baseline_value: float) -> float | None:
 
 
 def index_baseline_components(netlist_text: str) -> dict[str, Component]:
-    """Keyed by "<subckt>.<refdes>" for components declared inside a subckt
-    and by plain refdes for top-level ones. A plain alias is added for any
-    refdes occurring exactly once netlist-wide, so an unqualified proposal
-    against an existing single-subckt benchmark still finds its baseline
-    instead of silently bypassing the area gate (check_area_growth treats a
-    missing baseline as unconstrained)."""
+    """Keyed by "<subckt>.<refdes>" for components declared inside a subckt,
+    plus a plain refdes alias - for both top-level and subckt-declared
+    components alike - for any refdes occurring exactly once netlist-wide.
+    A refdes occurring more than once (whether top-level vs. subckt, or
+    across two subckts) gets no plain key from either side: this mirrors
+    apply_changes' ambiguity rule exactly, so the area gate and the editor
+    always agree on what an unqualified refdes means. An unqualified
+    proposal against an existing single-subckt benchmark (no collisions)
+    still finds its baseline instead of silently bypassing the area gate
+    (check_area_growth treats a missing baseline as unconstrained)."""
     parsed = parse_netlist(netlist_text)
 
     plain_counts: dict[str, int] = {}
@@ -83,7 +87,8 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
 
     indexed: dict[str, Component] = {}
     for component in parsed.top_components:
-        indexed[component.refdes] = component
+        if plain_counts[component.refdes] == 1:
+            indexed[component.refdes] = component
     for subckt in parsed.subckts.values():
         for component in subckt.components:
             indexed[f"{subckt.name}.{component.refdes}"] = component

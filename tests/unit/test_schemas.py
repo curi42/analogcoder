@@ -58,6 +58,15 @@ def test_tuner_schema_accepts_named_param_and_scientific_notation_value():
     jsonschema.validate(payload, TUNER_SCHEMA)
 
 
+# Note: "M1.W" and "Cc.kappa" are deliberately NOT in this list. They are
+# syntactically valid <scope>.<refdes> forms per TUNER_SCHEMA's pattern (a
+# weak model writing "M1.W" probably meant to set M1's W param but put it in
+# the refdes field instead) - schema validation can't tell that from a
+# legitimate "BUF_N.Xcc" scoped refdes. Rejecting them is
+# netlist.check_refdes_resolution's job (a scope that names no subckt is
+# treated as "matches nothing"), exercised in tests/unit/test_netlist.py's
+# test_check_refdes_resolution_rejects_a_dotted_refdes_whose_scope_names_no_subckt
+# and test_check_refdes_resolution_rejects_cc_dot_kappa_shaped_refdes.
 @pytest.mark.parametrize(
     "field,bad_value",
     [

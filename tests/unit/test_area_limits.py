@@ -29,6 +29,26 @@ def test_index_baseline_components_finds_top_level_and_subckt_components():
     assert baseline["Rz"].value == "500"
 
 
+NETLIST_WITH_TOP_LEVEL_SUBCKT_COLLISION = (
+    "* test\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    ".ends AMP\n"
+    "M6 a b c d NMOSG W=10u L=1u\n"
+    ".end\n"
+)
+
+
+def test_index_baseline_components_gives_no_plain_key_when_top_level_collides_with_subckt():
+    # A refdes present both top-level and inside a subckt must get no plain
+    # key from either side, matching apply_changes' ambiguity rule - so the
+    # area gate and the editor agree on what an unqualified "M6" means (both
+    # "don't know", not "silently pick the top-level one").
+    baseline = index_baseline_components(NETLIST_WITH_TOP_LEVEL_SUBCKT_COLLISION)
+    assert "AMP.M6" in baseline
+    assert "M6" not in baseline
+
+
 def test_allowed_multiplier_for_transistor_tiers():
     assert allowed_multiplier_for("M", 20e-6) == 3.0
     assert allowed_multiplier_for("M", 50e-6) == 2.0
