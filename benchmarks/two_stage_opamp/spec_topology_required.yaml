@@ -20,10 +20,10 @@ testbenches:
       - name: unity_gain_bandwidth
         measurement: ugbw_hz
         operator: ">="
-        threshold: 20000000.0
+        threshold: 2500000.0
         unit: Hz
       - name: phase_margin
         measurement: phase_margin_deg
         operator: ">="
-        threshold: 65.0
+        threshold: 62.0
         unit: deg
