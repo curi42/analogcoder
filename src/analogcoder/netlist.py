@@ -68,6 +68,8 @@ class Subckt:
     name: str
     ports: list[str]
     components: list[Component] = field(default_factory=list)
+    path: str = ""
+    defaults: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -130,7 +132,7 @@ def _parse_component_line(line: str) -> Component:
 def parse_netlist(text: str) -> ParsedNetlist:
     top_components: list[Component] = []
     subckts: dict[str, Subckt] = {}
-    current_subckt: Subckt | None = None
+    stack: list[Subckt] = []
     scale = netlist_scale(text)
 
     for raw_line in text.splitlines():
@@ -144,20 +146,24 @@ def parse_netlist(text: str) -> ParsedNetlist:
         if _is_subckt_open(lower):
             tokens = line.split()
             name = tokens[1]
-            ports = tokens[2:]
-            current_subckt = Subckt(name=name, ports=ports)
-            subckts[name] = current_subckt
+            ports = [t for t in tokens[2:] if "=" not in t]
+            defaults = dict(t.split("=", 1) for t in tokens[2:] if "=" in t)
+            path = ".".join([s.name for s in stack] + [name])
+            subckt = Subckt(name=name, ports=ports, path=path, defaults=defaults)
+            subckts[path] = subckt
+            stack.append(subckt)
             continue
         if _is_subckt_close(lower):
-            current_subckt = None
+            if stack:
+                stack.pop()
             continue
         if line.startswith("."):
             continue
         component = _parse_component_line(line)
         component.geometry_scale = scale
-        if current_subckt is not None:
-            component.scope = current_subckt.name
-            current_subckt.components.append(component)
+        if stack:
+            component.scope = stack[-1].path
+            stack[-1].components.append(component)
         else:
             top_components.append(component)
 
@@ -165,9 +171,9 @@ def parse_netlist(text: str) -> ParsedNetlist:
 
 
 def split_scoped_refdes(scoped: str) -> tuple[str | None, str]:
-    """Splits "BUF_N.Xcc" into ("BUF_N", "Xcc") and a bare "Xcc" into
-    (None, "Xcc"). One level only: the scope is a subckt DEFINITION name,
-    which is unique within a netlist, so nesting never needs more."""
+    """"OUTER.INNER.M1"을 ("OUTER.INNER", "M1")로, 맨 refdes "Xcc"를
+    (None, "Xcc")로 나눈다. 스코프는 서브회로 정의의 전체 경로이며 임의
+    깊이로 중첩될 수 있으므로, 마지막 점에서 자른다."""
     scope, sep, refdes = scoped.rpartition(".")
     if not sep:
         return None, scoped
@@ -175,23 +181,30 @@ def split_scoped_refdes(scoped: str) -> tuple[str | None, str]:
 
 
 def _line_scopes(lines: list[str]) -> list[str | None]:
-    """For each line, the name of the .subckt it sits inside, or None at
-    top level. Directive lines themselves are reported as None; they are
-    skipped by every caller anyway."""
+    """각 줄이 속한 .subckt의 전체 경로("OUTER.INNER"), 최상위면 None.
+    디렉티브 줄 자체는 None으로 보고하며, 모든 호출자가 어차피 건너뛴다."""
     scopes: list[str | None] = []
-    current: str | None = None
+    stack: list[str] = []
     for raw_line in lines:
-        stripped = raw_line.strip()
+        pre_strip = raw_line.strip()
+        if pre_strip.startswith("*"):
+            # strip_inline_comment는 `*` 줄 전체 주석을 모른다 (Task 2) - 여기
+            # 넘기면 주석 본문을 코드로 오인할 수 있다. `*` 줄은 절대
+            # .subckt/.ends일 수 없으므로 그냥 현재 스코프를 그대로 기록한다.
+            scopes.append(".".join(stack) if stack else None)
+            continue
+        stripped, _ = strip_inline_comment(pre_strip)
         lower = stripped.lower()
-        if lower.startswith(".subckt"):
+        if _is_subckt_open(lower):
             scopes.append(None)
-            current = stripped.split()[1]
+            stack.append(stripped.split()[1])
             continue
-        if lower.startswith(".ends"):
+        if _is_subckt_close(lower):
             scopes.append(None)
-            current = None
+            if stack:
+                stack.pop()
             continue
-        scopes.append(current)
+        scopes.append(".".join(stack) if stack else None)
     return scopes
 
 
@@ -299,13 +312,27 @@ def apply_changes(text: str, changes: list[dict]) -> str:
 def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
     lines = text.splitlines()
     start = end = None
+    depth = 0
     for i, raw_line in enumerate(lines):
         stripped = raw_line.strip()
-        if stripped.lower().startswith(".subckt") and stripped.split()[1] == subckt_name:
-            start = i
-        elif start is not None and stripped.lower().startswith(".ends"):
-            end = i
-            break
+        if stripped.startswith("*"):
+            continue
+        stripped, _ = strip_inline_comment(stripped)
+        lower = stripped.lower()
+        opens = _is_subckt_open(lower)
+        closes = _is_subckt_close(lower)
+        if start is None:
+            if opens and stripped.split()[1] == subckt_name:
+                start = i
+                depth = 1
+            continue
+        if opens:
+            depth += 1
+        elif closes:
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
     if start is None or end is None:
         raise ValueError(f"subckt {subckt_name!r} not found or not closed")
     new_lines = lines[: start + 1] + new_body.splitlines() + lines[end:]

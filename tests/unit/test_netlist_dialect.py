@@ -1,5 +1,6 @@
 from analogcoder.netlist import (
     apply_changes,
+    check_refdes_resolution,
     parse_netlist,
     resolve_includes,
     strip_inline_comment,
@@ -64,6 +65,18 @@ def test_macro_and_eom_are_accepted_as_subckt_and_ends():
     assert parsed.subckts["AMP"].ports == ["a", "b"]
     assert [c.refdes for c in parsed.subckts["AMP"].components] == ["M1"]
     assert parsed.top_components == []
+
+
+def test_a_macro_scoped_refdes_resolves_through_check_refdes_resolution():
+    # 회귀: parse_netlist는 .macro/.eom을 .subckt/.ends 별칭으로 인식했지만
+    # _line_scopes는 여전히 문자 그대로 ".subckt"/".ends"만 찾고 있어서,
+    # AMP.M1이 parsed.subckts엔 있는데도 "매칭 없음"으로 거부됐었다.
+    deck = "* t\n.macro AMP a b\nM1 a b 0 0 nch W=1\n.eom\n.end\n"
+
+    ok, feedback = check_refdes_resolution(deck, [{"refdes": "AMP.M1", "param": "W"}])
+
+    assert ok is True
+    assert feedback is None
 
 
 def test_inc_is_accepted_as_an_alias_for_include(tmp_path):

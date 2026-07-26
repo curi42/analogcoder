@@ -89,8 +89,9 @@ def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = 
 
 
 def index_baseline_components(netlist_text: str) -> dict[str, Component]:
-    """Keyed by "<subckt>.<refdes>" for components declared inside a subckt,
-    plus a plain refdes alias - for both top-level and subckt-declared
+    """Keyed by "<path>.<refdes>" for components declared inside a subckt
+    (path is the dotted nesting path, e.g. "OUTER.INNER"), plus a plain
+    refdes alias - for both top-level and subckt-declared
     components alike - for any refdes occurring exactly once netlist-wide.
     A refdes occurring more than once (whether top-level vs. subckt, or
     across two subckts) gets no plain key from either side: this mirrors
@@ -112,9 +113,9 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     for component in parsed.top_components:
         if plain_counts[component.refdes] == 1:
             indexed[component.refdes] = component
-    for subckt in parsed.subckts.values():
+    for path, subckt in parsed.subckts.items():
         for component in subckt.components:
-            indexed[f"{subckt.name}.{component.refdes}"] = component
+            indexed[f"{path}.{component.refdes}"] = component
             if plain_counts[component.refdes] == 1:
                 indexed[component.refdes] = component
     return indexed
