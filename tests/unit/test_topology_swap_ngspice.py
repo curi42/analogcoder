@@ -19,15 +19,14 @@ def _run_topology(topology_id: str, tmp_path):
     topology = TOPOLOGY_LIBRARY[topology_id]
     swapped_text = apply_topology_swap(netlist_text, subckt_name, topology.subckt_body)
 
-    # Convert relative include paths to absolute paths so netlist works from tmp_path
+    # netlist.cir only has `.include "pdk_corner.inc"` - rewrite it to an
+    # absolute path so it still resolves once written to tmp_path (a
+    # different directory than benchmarks/two_stage_opamp/). pdk_corner.inc's
+    # own nested "../../third_party/..." includes resolve relative to
+    # pdk_corner.inc's own location, not this file's cwd - no rewrite needed
+    # for those (verified: netlist.cir never contains that string itself).
     abs_benchmark_dir = os.path.abspath(BENCHMARK_DIR)
-    third_party_path = os.path.join(abs_benchmark_dir, "..", "..", "third_party")
     pdk_corner_path = os.path.join(abs_benchmark_dir, "pdk_corner.inc")
-    swapped_text = swapped_text.replace(
-        '.include "../../third_party',
-        f'.include "{third_party_path}'
-    )
-    # Also handle the pdk_corner.inc include to use absolute path
     swapped_text = swapped_text.replace(
         '.include "pdk_corner.inc"',
         f'.include "{pdk_corner_path}"'
