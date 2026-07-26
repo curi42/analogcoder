@@ -296,6 +296,28 @@ worth reading before assuming a weak-model failure is a code bug:
   subset is deliberately narrow (arithmetic only); anything else resolves to
   `None` and takes that same fallback, which is now reached only when it is
   genuinely true.
+- **`apply_changes` corrupts a quoted expression containing spaces.**
+  `M1 d g 0 0 nch W='wn * 2' L=1` with a change to `W=50` becomes
+  `M1 d g 0 0 nch W=50 * 2' L=1`; `Cc a b 'cv * 2'` with `param="value"` and
+  `new_value="5p"` becomes `Cc a b 'cv * 5p`. The line is whitespace-tokenised,
+  so a value containing spaces is split across tokens. Every gate passes it
+  (`check_refdes_resolution` resolves fine, `check_area_growth` sees an
+  unresolvable baseline and does not block), so a corrupted deck reaches
+  ngspice and the failure looks like a bad tuning proposal, not a parser bug.
+  Whitespace-aware tokenisation is outside this work's scope; the point of
+  this note is that the hazard is now on the hot path because parameterised
+  values became first-class.
+- **A `.param` declared inside a `.subckt` body is ignored.** `params.py`'s
+  `_collect_global_raw_params` only walks lines at depth 0, and per-subckt
+  environments are built from `.subckt`-line defaults and instance overrides
+  only — a `.param` between `.subckt`/`.ends` never reaches either. The
+  direction is safe (the name resolves to `None` and the caller's fallback
+  fires) but it's a coverage hole, not intended behaviour.
+- **`+` continuation lines are unhandled.** `.param wn=4` followed on the next
+  line by `+ wp=8` loses `wp` entirely (only the first line is read as the
+  `.param` directive's body). `area_limits.py`'s `index_baseline_components`
+  additionally manufactures a bogus component with refdes `+`, since nothing
+  recognizes the line as a continuation rather than a new statement.
 
 ## Testing conventions
 

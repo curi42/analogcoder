@@ -214,12 +214,7 @@ def check_area_growth(
         if combined_ratio <= 1.0:
             continue
 
-        # _tier_baseline_value는 이제 해소된 수치만 읽으므로 ValueError를
-        # 던지지 않는다 (해소 단계에서 이미 걸러진다) - 방어적으로만 남겨둔다.
-        try:
-            tier_baseline = _tier_baseline_value(component)
-        except ValueError:
-            continue
+        tier_baseline = _tier_baseline_value(component)
         if tier_baseline is None:
             continue
         allowed = allowed_multiplier_for(

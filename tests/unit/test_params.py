@@ -36,6 +36,29 @@ def test_resolve_value_refuses_to_guess_outside_the_bounded_subset():
     assert resolve_value("'wn > 2 ? 1 : 0'", env) is None  # 조건식
 
 
+def test_an_unquoted_spaced_expression_is_not_silently_truncated():
+    # 회귀 재현: 이전 _ASSIGN_RE는 \S+ 대안 탓에 공백을 만나면 거기서 멈췄다.
+    # ".param wp = wn * 2"에서 "wn"만 캡처되고 "* 2"는 버려져 wp가 wn과 같은
+    # 값(4.0)으로 조용히 틀리게 풀렸다 - 절대 나오면 안 되는 값이다.
+    deck = "* t\n.param wn = 4\n.param wp = wn * 2\n.end\n"
+
+    envs = build_param_envs(deck)
+
+    assert envs[None]["wn"] == 4.0
+    assert envs[None]["wp"] != 4.0
+    assert envs[None]["wp"] == 8.0
+
+
+def test_multiple_assignments_on_one_param_line_still_split_correctly():
+    # 위 수정이 공백 포함 표현식을 통째로 삼키려다 한 줄에 여러 개 선언된
+    # 평범한 경우("wn=4 wp=8")까지 하나로 뭉개면 안 된다.
+    deck = "* t\n.param wn=4 wp=8\n.end\n"
+
+    envs = build_param_envs(deck)
+
+    assert envs[None] == {"wn": 4.0, "wp": 8.0}
+
+
 def test_a_circular_reference_resolves_to_nothing():
     deck = "* t\n.param a='b*2'\n.param b='a*2'\nM1 x y 0 0 nch W=a\n.end\n"
 
@@ -111,6 +134,20 @@ def test_an_instance_override_shadows_a_global_of_the_same_name():
     envs = build_param_envs(deck)
 
     assert envs["SUB"]["W"] == 99.0
+
+
+def test_a_non_x_component_whose_value_matches_a_subckt_name_is_not_an_instance():
+    # 회귀 재현: M1의 모델명이 우연히 서브회로 이름 CORE와 같다. X로 시작하지
+    # 않는 줄은 서브회로 인스턴스화가 아니므로 그 트랜지스터의 W=77이
+    # CORE의 기본값(W=10)을 밀어내면 안 된다.
+    deck = (
+        "* t\n.subckt CORE a b W=10\nM0 a b 0 0 nch W=W\n.ends\n"
+        "M1 d g s bb CORE W=77 L=1\n.end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs["CORE"]["W"] == 10.0
 
 
 def test_same_named_subckts_in_different_scopes_do_not_leak_instance_overrides():

@@ -288,9 +288,10 @@ def apply_changes(text: str, changes: list[dict]) -> str:
             continue
         if len(matches) > 1:
             where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            qualified = ", ".join(f"{s}.{refdes}" for s in where)
             raise ValueError(
                 f"refdes {change['refdes']!r} is ambiguous - it matches components in {', '.join(where)}; "
-                f"qualify it as <subckt>.{refdes}"
+                f"qualify it as one of: {qualified}"
             )
 
         i, tokens = matches[0]

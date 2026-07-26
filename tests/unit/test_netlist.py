@@ -206,6 +206,18 @@ def test_apply_changes_raises_on_an_ambiguous_unqualified_refdes():
         apply_changes(TWO_BUFFERS, [{"refdes": "Xcc", "param": "W", "new_value": "99"}])
 
 
+def test_apply_changes_ambiguous_error_names_the_actual_candidate_paths():
+    # Regression: the message used to say "qualify it as <subckt>.{refdes}",
+    # a literal template rather than the real dotted paths - feedback the
+    # tuner reads verbatim, so a wrong template teaches it to emit a wrong
+    # refdes. Must match what check_refdes_resolution already produces.
+    with pytest.raises(ValueError) as exc_info:
+        apply_changes(TWO_BUFFERS, [{"refdes": "Xcc", "param": "W", "new_value": "99"}])
+    message = str(exc_info.value)
+    assert "<subckt>" not in message
+    assert "qualify it as one of: BUF_N.Xcc, BUF_P.Xcc" in message
+
+
 def test_apply_changes_still_accepts_an_unqualified_refdes_that_is_unique():
     out = apply_changes(TWO_BUFFERS, [{"refdes": "Cload", "param": "value", "new_value": "5p"}])
 

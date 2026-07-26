@@ -10,7 +10,12 @@ from analogcoder.netlist import (
 )
 
 _PARAM_DIRECTIVE_RE = re.compile(r"^\s*\.param\b(.*)$", re.IGNORECASE)
-_ASSIGN_RE = re.compile(r"(\w+)\s*=\s*('[^']*'|\{[^}]*\}|\S+)")
+# 마지막 대안 `.+?(?=\s+\w+\s*=|$)`가 핵심이다: 따옴표도 중괄호도 없는 값은
+# 다음 `이름=` 경계(다음 .param 항목)나 줄 끝까지 통째로 삼킨다. 이전에는
+# `\S+`라 `wp = wn * 2`에서 공백 뒤 `* 2`가 잘려나가 wp가 wn과 같은 값으로
+# 조용히 틀리게 풀렸다 - 못 푸는 게 아니라 틀리게 푸는 게 이 프로젝트가
+# 막으려는 정확히 그 실패 모드다.
+_ASSIGN_RE = re.compile(r"(\w+)\s*=\s*('[^']*'|\{[^}]*\}|.+?(?=\s+\w+\s*=|$))")
 
 
 class _Unresolvable(Exception):
@@ -169,6 +174,11 @@ def _instance_overrides(parsed, subckt_path: str, subckt_name: str) -> tuple[dic
     걸러낸다 - 그래야 다른 스코프의 동명 서브회로 인스턴스가 섞여 들지
     않는다.
 
+    ctype이 X인 줄만 서브회로 인스턴스화로 본다. SPICE에서 서브회로를
+    부르는 것은 X-접두 줄뿐이다 - value가 우연히 subckt 이름과 같은 M/Q
+    같은 다른 소자(예: 트랜지스터 모델명이 "CORE")까지 매칭하면 그
+    트랜지스터의 파라미터가 서브회로 기본값 자리로 새어 들어간다.
+
     합의된 오버라이드는 기본값 위에 그대로 얹으면 되지만, 갈린 파라미터는
     호출자가 .subckt 줄 기본값째로 지워야 한다 - 값이 진짜로 인스턴스마다
     다른데 이 프로젝트는 소자를 서브회로 정의로 주소지정하므로 단일 정답이
@@ -180,7 +190,7 @@ def _instance_overrides(parsed, subckt_path: str, subckt_name: str) -> tuple[dic
     seen: dict[str, set[str]] = {}
     found = False
     for component in components:
-        if component.value != subckt_name:
+        if component.ctype != "X" or component.value != subckt_name:
             continue
         if _resolve_subckt_reference(parsed, component.scope, subckt_name) != subckt_path:
             continue
