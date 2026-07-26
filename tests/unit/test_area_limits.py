@@ -18,7 +18,12 @@ NETLIST_WITH_SUBCKT = (
 
 def test_index_baseline_components_finds_top_level_and_subckt_components():
     baseline = index_baseline_components(NETLIST_WITH_SUBCKT)
-    assert set(baseline.keys()) == {"M6", "Cc", "Iref", "Rz"}
+    # Scoped keys for subckt components, plain aliases for uniquely-named ones,
+    # and plain keys for top-level components.
+    assert set(baseline.keys()) == {"AMP.M6", "AMP.Cc", "M6", "Cc", "Iref", "Rz"}
+    # Both plain and scoped keys should resolve to the same component.
+    assert baseline["M6"] is baseline["AMP.M6"]
+    assert baseline["Cc"] is baseline["AMP.Cc"]
     assert baseline["M6"].params["W"] == "40u"
     assert baseline["Cc"].value == "2p"
     assert baseline["Rz"].value == "500"
@@ -186,3 +191,46 @@ def test_check_area_growth_still_treats_subckt_instantiation_as_unconstrained():
     approved, feedback = check_area_growth(baseline, changes)
     assert approved is True
     assert feedback is None
+
+
+TWO_BUFFERS_NETLIST = (
+    ".subckt BUF_P vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=10\n"
+    "Xonly n2 vss sky130_fd_pr__nfet_01v8 L=1 W=4\n"
+    ".ends BUF_P\n"
+    ".subckt BUF_N vinp vinn vout vdd vss\n"
+    "Xcc n1 vout sky130_fd_pr__nfet_01v8 L=2 W=20\n"
+    ".ends BUF_N\n"
+    "Cload vout 0 2p\n"
+)
+
+
+def test_index_baseline_components_keys_colliding_refdes_by_subckt():
+    indexed = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    assert indexed["BUF_P.Xcc"].params["W"] == "10"
+    assert indexed["BUF_N.Xcc"].params["W"] == "20"
+    # Ambiguous plain name gets no alias - it must not silently resolve to one of them.
+    assert "Xcc" not in indexed
+
+
+def test_index_baseline_components_aliases_a_unique_refdes_unqualified():
+    # Back-compat: existing single-subckt benchmarks propose unqualified
+    # refdes, and without this alias check_area_growth would find no
+    # baseline and silently wave the change through.
+    indexed = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    assert indexed["Xonly"] is indexed["BUF_P.Xonly"]
+    assert indexed["Cload"].value == "2p"
+
+
+def test_area_gate_uses_the_scoped_baseline_not_a_colliding_one():
+    baseline = index_baseline_components(TWO_BUFFERS_NETLIST)
+
+    # 20 -> 30 is 1.5x against BUF_N's own baseline, at the tier limit.
+    # Against BUF_P's 10 it would look like 3.0x and be rejected.
+    approved, feedback = check_area_growth(
+        baseline, [{"refdes": "BUF_N.Xcc", "param": "W", "new_value": "30"}]
+    )
+
+    assert approved, feedback

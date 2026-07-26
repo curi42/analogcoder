@@ -66,11 +66,30 @@ def allowed_multiplier_for(ctype: str, baseline_value: float) -> float | None:
 
 
 def index_baseline_components(netlist_text: str) -> dict[str, Component]:
+    """Keyed by "<subckt>.<refdes>" for components declared inside a subckt
+    and by plain refdes for top-level ones. A plain alias is added for any
+    refdes occurring exactly once netlist-wide, so an unqualified proposal
+    against an existing single-subckt benchmark still finds its baseline
+    instead of silently bypassing the area gate (check_area_growth treats a
+    missing baseline as unconstrained)."""
     parsed = parse_netlist(netlist_text)
-    components = list(parsed.top_components)
+
+    plain_counts: dict[str, int] = {}
+    for component in parsed.top_components:
+        plain_counts[component.refdes] = plain_counts.get(component.refdes, 0) + 1
     for subckt in parsed.subckts.values():
-        components.extend(subckt.components)
-    return {c.refdes: c for c in components}
+        for component in subckt.components:
+            plain_counts[component.refdes] = plain_counts.get(component.refdes, 0) + 1
+
+    indexed: dict[str, Component] = {}
+    for component in parsed.top_components:
+        indexed[component.refdes] = component
+    for subckt in parsed.subckts.values():
+        for component in subckt.components:
+            indexed[f"{subckt.name}.{component.refdes}"] = component
+            if plain_counts[component.refdes] == 1:
+                indexed[component.refdes] = component
+    return indexed
 
 
 def _baseline_value_for(component: Component, param: str) -> str | None:
