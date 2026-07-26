@@ -61,8 +61,8 @@ def test_tuner_schema_accepts_named_param_and_scientific_notation_value():
 @pytest.mark.parametrize(
     "field,bad_value",
     [
-        ("refdes", "Cc.kappa"),
-        ("refdes", "M1.W"),
+        ("refdes", "1Cc"),
+        ("refdes", "Cc kappa"),
         ("param", "resistance value"),
         ("old_value", "unknown"),
         ("new_value", "increase Rf to 15k"),
@@ -78,6 +78,43 @@ def test_tuner_schema_rejects_non_literal_values(field, bad_value):
     }
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(payload, TUNER_SCHEMA)
+
+
+def test_tuner_schema_accepts_a_subckt_scoped_refdes():
+    proposal = {
+        "proposed_changes": [
+            {
+                "refdes": "BUF_N.Xcc",
+                "param": "W",
+                "old_value": "20",
+                "new_value": "30",
+                "reasoning": "widen the vbg1 buffer's compensation cap",
+            }
+        ],
+        "overall_reasoning": "improve vbg1 settling",
+        "confidence": 0.8,
+    }
+
+    jsonschema.validate(proposal, TUNER_SCHEMA)
+
+
+def test_tuner_schema_rejects_a_malformed_scoped_refdes():
+    proposal = {
+        "proposed_changes": [
+            {
+                "refdes": "BUF_N.",
+                "param": "W",
+                "old_value": "20",
+                "new_value": "30",
+                "reasoning": "trailing dot is not a refdes",
+            }
+        ],
+        "overall_reasoning": "x",
+        "confidence": 0.8,
+    }
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(proposal, TUNER_SCHEMA)
 
 
 def test_verifier_pre_schema_accepts_valid_payload():

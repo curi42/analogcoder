@@ -16,12 +16,17 @@ async def verify_pre(
         f"Circuit analysis: {analysis}\n"
         f"Judge result before tuning: {judge_result}\n"
         f"Proposed changes: {proposal}\n"
-        "Decide whether to approve this proposal before it is applied. Reject any "
-        "change whose refdes is not the exact first token of some component line "
-        'in the netlist above (e.g. for "Rf vminus vout 10k" the refdes is exactly '
-        '"Rf", never "Rf.value" or any other variant) - applying a change to a '
-        "refdes that does not literally exist in the netlist silently does nothing "
-        "at all, with no error. Also reject any change whose param is not exactly "
+        "Decide whether to approve this proposal before it is applied. A refdes "
+        "is either the exact first token of a component line in the netlist "
+        "above, or - when that component is declared inside a .subckt - that "
+        'token qualified by the subckt name as "<SUBCKT>.<refdes>" (e.g. for '
+        '"Xcc n1 vout ..." declared inside ".subckt BUF_N ...", a valid refdes '
+        'is "Xcc" or "BUF_N.Xcc"). Reject any change whose refdes is neither - '
+        "applying a change to a refdes that does not exist in the netlist "
+        "silently does nothing at all, with no error. Also reject an "
+        "unqualified refdes whose bare token appears inside more than one "
+        "subckt: it is ambiguous and will be rejected when applied. "
+        "Also reject any change whose param is not exactly "
         '"value" (for a component whose value is a plain positional token in the '
         'netlist above) and is not an existing "name=" parameter already present '
         "on that component's own line in the netlist above - such a param would "
