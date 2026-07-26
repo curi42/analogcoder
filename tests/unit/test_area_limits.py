@@ -378,3 +378,48 @@ def test_real_sky130_benchmark_netlist_declares_its_geometry_scale():
 
     assert _tier_baseline_value(component) == pytest.approx(30e-6)
     assert allowed_multiplier_for("M", _tier_baseline_value(component), is_sky130=True) == 2.0
+
+
+PNP_NETLIST = (
+    ".option scale=1.0u\n"
+    ".subckt CORE vbgout vdd vss\n"
+    "Xq1 0 0 na 0 sky130_fd_pr__pnp_05v5_W3p40L3p40\n"
+    "Xq8 0 0 ne8 0 sky130_fd_pr__pnp_05v5_W3p40L3p40 m=8\n"
+    ".ends CORE\n"
+)
+
+
+def test_pnp_is_classified_rather_than_falling_through_to_unconstrained():
+    components = index_baseline_components(PNP_NETLIST)
+
+    assert _classify_ctype(components["CORE.Xq8"]) == "Q"
+
+
+def test_pnp_emitter_multiplier_growth_is_bounded():
+    # m is an emitter-area count, not a length: m=8 -> m=24 triples the PNP's
+    # area. Left unclassified it was completely unconstrained.
+    components = index_baseline_components(PNP_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "CORE.Xq8", "param": "m", "new_value": "24"}]
+    )
+
+    assert ok is False
+    assert "Xq8" in feedback
+
+
+def test_pnp_emitter_multiplier_small_growth_is_allowed():
+    components = index_baseline_components(PNP_NETLIST)
+
+    ok, _ = check_area_growth(
+        components, [{"refdes": "CORE.Xq8", "param": "m", "new_value": "12"}]
+    )
+
+    assert ok is True
+
+
+def test_pnp_multiplier_is_a_count_and_is_not_scaled_by_the_deck_scale():
+    # geometry_scale must not touch m, or an 8x device would tier as 8e-6.
+    components = index_baseline_components(PNP_NETLIST)
+
+    assert _tier_baseline_value(components["CORE.Xq8"]) == pytest.approx(8.0)

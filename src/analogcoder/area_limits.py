@@ -7,6 +7,7 @@ _SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
     ("fet", "M"),
     ("cap", "C"),
     ("res", "R"),
+    ("pnp", "Q"),
 ]
 
 
@@ -45,10 +46,14 @@ SKY130_GEOMETRY_TIERS: list[SizeTier] = [
     SizeTier(max_value=50e-6, allowed_multiplier=2.0),
     SizeTier(max_value=None, allowed_multiplier=1.5),
 ]
+# A bipolar's tuning knob is its emitter-area multiplier m, a count rather
+# than a length, so it gets one flat tier instead of a size-graded table.
+PNP_TIERS: list[SizeTier] = [SizeTier(max_value=None, allowed_multiplier=2.0)]
 TIERS_BY_CTYPE: dict[str, list[SizeTier]] = {
     "M": TRANSISTOR_TIERS,
     "C": CAPACITOR_TIERS,
     "R": RESISTOR_TIERS,
+    "Q": PNP_TIERS,
 }
 
 
@@ -70,7 +75,11 @@ def _classify_ctype(component: Component) -> str:
 
 
 def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = False) -> float | None:
-    tiers = SKY130_GEOMETRY_TIERS if is_sky130 else TIERS_BY_CTYPE.get(ctype)
+    if ctype == "Q":
+        # A bipolar is X-prefixed but tiered on a count, not on geometry.
+        tiers = PNP_TIERS
+    else:
+        tiers = SKY130_GEOMETRY_TIERS if is_sky130 else TIERS_BY_CTYPE.get(ctype)
     if tiers is None:
         return None
     for tier in tiers:
@@ -118,7 +127,7 @@ def _baseline_value_for(component: Component, param: str) -> str | None:
 
 
 # The geometry dimension each X-prefixed sky130 primitive is tiered on.
-_SKY130_GEOMETRY_PARAM: dict[str, str] = {"M": "W", "C": "w", "R": "l"}
+_SKY130_GEOMETRY_PARAM: dict[str, str] = {"M": "W", "C": "w", "R": "l", "Q": "m"}
 
 
 def _tier_baseline_value(component: Component) -> float | None:
@@ -139,7 +148,11 @@ def _tier_baseline_value(component: Component) -> float | None:
         if param is None:
             return None
         raw = component.params.get(param)
-        return parse_spice_value(raw) * component.geometry_scale if raw is not None else None
+        if raw is None:
+            return None
+        # m is an emitter-area count, not a length - it must not be scaled.
+        scale = 1.0 if ctype == "Q" else component.geometry_scale
+        return parse_spice_value(raw) * scale
     if ctype == "M":
         w = component.params.get("W")
         return parse_spice_value(w) * component.geometry_scale if w is not None else None
