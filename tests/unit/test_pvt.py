@@ -151,3 +151,71 @@ def test_worst_case_measurements_fails_criterion_when_any_corner_is_missing_the_
     assert "phase_margin_deg" not in measurements
     assert worst_corners["phase_margin"]["process"] == "ss"
     assert worst_corners["phase_margin"]["value"] is None
+
+
+def test_two_sided_window_keeps_both_worst_cases_separate():
+    # A min/max window is two criteria over ONE measurement with opposite
+    # operators. Keying the worst-case pool by measurement name lets the
+    # second criterion's value overwrite the first's, so one side of the
+    # window is evaluated against the wrong corner - and a violation on that
+    # side becomes invisible. benchmarks/bandgap is the first spec here with
+    # two-sided windows, which is how this surfaced.
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=27),
+        CornerPoint(process="ss", voltage=1.62, temperature=27),
+    ]
+    per_corner_measurements = [{"vbgout_v": 1.24}, {"vbgout_v": 1.10}, {"vbgout_v": 1.30}]
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+
+    _, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert worst_corners["vbgout_min"]["value"] == 1.10
+    assert worst_corners["vbgout_min"]["process"] == "ff"
+    assert worst_corners["vbgout_max"]["value"] == 1.30
+    assert worst_corners["vbgout_max"]["process"] == "ss"
+
+
+def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
+    class _StubBackend:
+        def __init__(self, values):
+            self.values = list(values)
+
+        def run(self, netlist_path, testbench_config):
+            from analogcoder.simulators.base import RawSimResult
+
+            return RawSimResult(
+                status="success",
+                measurements={"vbgout_v": self.values.pop(0)},
+                raw_log="",
+                warnings=[],
+            )
+
+    from types import SimpleNamespace
+
+    from analogcoder.pvt import run_full_pvt_sweep
+
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+    tb = SimpleNamespace(
+        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria
+    )
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        canonical=tb,
+        all_criteria=criteria,
+        pvt_corners=PVTCorners(process=["tt", "ff"], voltage=[1.8], temperature=[27]),
+    )
+    # ff dips to 1.10, which violates the >=1.20 side while the <=1.28 side is
+    # satisfied by both corners.
+    backend = _StubBackend([1.24, 1.10])
+
+    result = run_full_pvt_sweep({"dc": "* netlist\n.end\n"}, spec, backend)
+
+    failed = {c["name"] for c in result["criteria"] if not c["pass"]}
+    assert failed == {"vbgout_min"}

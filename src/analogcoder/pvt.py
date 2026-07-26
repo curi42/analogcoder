@@ -137,5 +137,30 @@ def run_full_pvt_sweep(netlist_texts: dict[str, str], spec, sim_backend) -> dict
         combined_measurements.update(tb_measurements)
         combined_worst_corners.update(tb_worst_corners)
 
-    evaluation = evaluate_criteria(combined_measurements, spec.all_criteria)
-    return {**evaluation, "worst_case_corners": combined_worst_corners}
+    # Evaluated one criterion at a time, each against ITS OWN worst-case value,
+    # rather than by handing evaluate_criteria one dict keyed by measurement
+    # name. A two-sided window (vbgout >= 1.20 and vbgout <= 1.28) is two
+    # criteria over one measurement with opposite operators, so a
+    # name-keyed dict can only hold one of the two worst cases and the other
+    # side is silently evaluated against the wrong corner - hiding, for
+    # instance, a low-side violation behind a passing high-side value.
+    results: list[dict] = []
+    overall_pass = True
+    for criterion in spec.all_criteria:
+        worst = combined_worst_corners.get(criterion.name)
+        value = worst.get("value") if worst else None
+        # A None value means some corner produced no measurement at all; an
+        # empty dict makes evaluate_criteria fail it as missing, which is the
+        # same handling the nominal path gives it.
+        measurements = {} if value is None else {criterion.measurement: value}
+        evaluation = evaluate_criteria(measurements, [criterion])
+        results.extend(evaluation["criteria"])
+        overall_pass = overall_pass and evaluation["overall_pass"]
+
+    summary = "all criteria passed" if overall_pass else "one or more criteria failed"
+    return {
+        "overall_pass": overall_pass,
+        "criteria": results,
+        "summary": summary,
+        "worst_case_corners": combined_worst_corners,
+    }
