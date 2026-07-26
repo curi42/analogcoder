@@ -31,6 +31,20 @@ RESISTOR_TIERS: list[SizeTier] = [
     SizeTier(max_value=10e3, allowed_multiplier=2.0),
     SizeTier(max_value=None, allowed_multiplier=1.5),
 ]
+# Tiers for an X-prefixed sky130 primitive, keyed on the GEOMETRY dimension in
+# metres (W for a transistor, w for a MiM cap, l for a poly resistor) rather
+# than on a value in ohms/farads. A subckt-instantiated primitive has no
+# numeric value to tier on - its positional value is the subckt name - so the
+# device-value tiers above simply do not apply to it.
+#
+# The 25um first boundary is load-bearing: benchmarks/bandgap's
+# spec_seed_buf0_droop.yaml is only solvable if BUF_P.Xcl can grow from W=20
+# to W=50 (2.5x), which needs the 3.0x tier.
+SKY130_GEOMETRY_TIERS: list[SizeTier] = [
+    SizeTier(max_value=25e-6, allowed_multiplier=3.0),
+    SizeTier(max_value=50e-6, allowed_multiplier=2.0),
+    SizeTier(max_value=None, allowed_multiplier=1.5),
+]
 TIERS_BY_CTYPE: dict[str, list[SizeTier]] = {
     "M": TRANSISTOR_TIERS,
     "C": CAPACITOR_TIERS,
@@ -55,8 +69,8 @@ def _classify_ctype(component: Component) -> str:
     return component.ctype
 
 
-def allowed_multiplier_for(ctype: str, baseline_value: float) -> float | None:
-    tiers = TIERS_BY_CTYPE.get(ctype)
+def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = False) -> float | None:
+    tiers = SKY130_GEOMETRY_TIERS if is_sky130 else TIERS_BY_CTYPE.get(ctype)
     if tiers is None:
         return None
     for tier in tiers:
@@ -103,19 +117,32 @@ def _baseline_value_for(component: Component, param: str) -> str | None:
     return component.params.get(param)
 
 
+# The geometry dimension each X-prefixed sky130 primitive is tiered on.
+_SKY130_GEOMETRY_PARAM: dict[str, str] = {"M": "W", "C": "w", "R": "l"}
+
+
 def _tier_baseline_value(component: Component) -> float | None:
-    """The dimension used to pick a size tier: baseline W for transistors
-    (L rarely varies in this project); for a sky130 MiM cap (X-prefixed,
-    classified as "C"), baseline w= (its "value" is a subckt name, not a
-    numeric literal, so it can't be used directly); the component's own
-    value for every other C/R."""
+    """The dimension used to pick a size tier.
+
+    An X-prefixed sky130 primitive is tiered on geometry scaled by the deck's
+    `.option scale`: W for a transistor, w for a MiM cap, l for a poly
+    resistor (its length sets both its resistance and its area). Its
+    positional `value` is the subckt NAME, so there is nothing else to tier
+    on - reading it raised ValueError, which check_area_growth swallowed,
+    leaving the device silently unconstrained.
+
+    A generic (non-X) transistor is still tiered on W; every other generic
+    component on its own value, which is already an absolute quantity."""
     ctype = _classify_ctype(component)
+    if component.ctype == "X":
+        param = _SKY130_GEOMETRY_PARAM.get(ctype)
+        if param is None:
+            return None
+        raw = component.params.get(param)
+        return parse_spice_value(raw) * component.geometry_scale if raw is not None else None
     if ctype == "M":
         w = component.params.get("W")
-        return parse_spice_value(w) if w is not None else None
-    if component.ctype == "X" and ctype == "C":
-        w = component.params.get("w")
-        return parse_spice_value(w) if w is not None else None
+        return parse_spice_value(w) * component.geometry_scale if w is not None else None
     if component.value is not None:
         return parse_spice_value(component.value)
     return None
@@ -165,7 +192,9 @@ def check_area_growth(
             continue
         if tier_baseline is None:
             continue
-        allowed = allowed_multiplier_for(_classify_ctype(component), tier_baseline)
+        allowed = allowed_multiplier_for(
+            _classify_ctype(component), tier_baseline, is_sky130=component.ctype == "X"
+        )
         if allowed is not None and combined_ratio > allowed:
             violations.append(
                 f"{refdes}: proposed change grows area by {combined_ratio:.2f}x, "

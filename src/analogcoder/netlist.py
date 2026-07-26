@@ -31,6 +31,26 @@ def resolve_includes(text: str, base_dir: str) -> str:
     return _INCLUDE_RE.sub(_absolutize, text)
 
 
+_SCALE_RE = re.compile(r"^\s*\.option[s]?\b.*?\bscale\s*=\s*(\S+)", re.IGNORECASE | re.MULTILINE)
+
+
+def netlist_scale(text: str) -> float:
+    """The `.option scale=` multiplier applied to device geometry, or 1.0 when
+    the deck sets none.
+
+    sky130 decks in this repo set `scale=1.0u` and then write bare geometry
+    (`W=30` meaning 30um). Any code that reads W/L as an absolute size is off
+    by six orders of magnitude without this - which is exactly what made
+    area_limits' size tiers inert on every PDK-backed benchmark."""
+    match = _SCALE_RE.search(text)
+    if not match:
+        return 1.0
+    try:
+        return parse_spice_value(match.group(1))
+    except ValueError:
+        return 1.0
+
+
 @dataclass
 class Component:
     refdes: str
@@ -40,6 +60,7 @@ class Component:
     params: dict[str, str] = field(default_factory=dict)
     raw_line: str = ""
     scope: str | None = None
+    geometry_scale: float = 1.0
 
 
 @dataclass
@@ -79,6 +100,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
     top_components: list[Component] = []
     subckts: dict[str, Subckt] = {}
     current_subckt: Subckt | None = None
+    scale = netlist_scale(text)
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -98,6 +120,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
         if line.startswith("."):
             continue
         component = _parse_component_line(line)
+        component.geometry_scale = scale
         if current_subckt is not None:
             component.scope = current_subckt.name
             current_subckt.components.append(component)

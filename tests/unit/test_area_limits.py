@@ -1,4 +1,8 @@
+import pytest
+
 from analogcoder.area_limits import (
+    _classify_ctype,
+    _tier_baseline_value,
     allowed_multiplier_for,
     check_area_growth,
     index_baseline_components,
@@ -270,3 +274,86 @@ def test_area_gate_uses_the_scoped_baseline_not_a_colliding_one():
     )
     assert not approved_wrong, "Should reject 3.0x growth against BUF_P's baseline"
     assert "BUF_P.Xcc" in feedback_wrong
+
+
+# --- scaled sky130 geometry -------------------------------------------------
+# ".option scale=1.0u" plus bare geometry ("W=30" meaning 30um) is how every
+# sky130 netlist in this repo is written. Reading those tokens as absolute
+# values put every PDK device past the 30e-6/80e-6 tier boundaries and into
+# the unbounded 1.5x tier, making the whole tier table inert on exactly the
+# benchmarks that use a real PDK.
+
+SCALED_NETLIST = (
+    ".option scale=1.0u\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "X7 vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=30\n"
+    "Xcc outA vout sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1\n"
+    "XRz vout nz 0 sky130_fd_pr__res_high_po w=1 l=15\n"
+    "Xcl vss vout vss vss sky130_fd_pr__nfet_01v8 L=20 W=20\n"
+    ".ends AMP\n"
+)
+
+
+def test_scale_option_is_applied_to_sky130_geometry():
+    components = index_baseline_components(SCALED_NETLIST)
+
+    assert _tier_baseline_value(components["AMP.X7"]) == pytest.approx(30e-6)
+
+
+def test_sky130_transistor_gets_its_real_tier_not_the_fallback():
+    component = index_baseline_components(SCALED_NETLIST)["AMP.X7"]
+
+    allowed = allowed_multiplier_for(
+        _classify_ctype(component), _tier_baseline_value(component), is_sky130=True
+    )
+
+    assert allowed == 2.0
+
+
+def test_sky130_mim_cap_is_tiered_by_geometry_not_by_farads():
+    components = index_baseline_components(SCALED_NETLIST)
+
+    assert _tier_baseline_value(components["AMP.Xcc"]) == pytest.approx(12.05e-6)
+
+
+def test_x_prefixed_resistor_is_tiered_by_length_instead_of_falling_through():
+    # A sky130 resistor's positional "value" is its subckt NAME, so the old
+    # code raised ValueError here and check_area_growth swallowed it, leaving
+    # the resistor silently unconstrained.
+    components = index_baseline_components(SCALED_NETLIST)
+
+    assert _tier_baseline_value(components["AMP.XRz"]) == pytest.approx(15e-6)
+
+
+def test_area_gate_rejects_an_oversized_sky130_resistor_growth():
+    components = index_baseline_components(SCALED_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "AMP.XRz", "param": "l", "new_value": "90"}]
+    )
+
+    assert ok is False
+    assert "XRz" in feedback
+
+
+def test_area_gate_allows_a_within_tier_sky130_resistor_growth():
+    components = index_baseline_components(SCALED_NETLIST)
+
+    ok, _ = check_area_growth(
+        components, [{"refdes": "AMP.XRz", "param": "l", "new_value": "40"}]
+    )
+
+    assert ok is True
+
+
+def test_area_gate_allows_the_seeded_buf_p_load_cap_growth():
+    # benchmarks/bandgap's spec_seed_buf0_droop.yaml is only solvable if
+    # BUF_P.Xcl can grow from W=20 to W=50 (2.5x), which needs the 3.0x tier.
+    # Read as 20 metres it falls into the unbounded 1.5x tier and is rejected.
+    components = index_baseline_components(SCALED_NETLIST)
+
+    ok, _ = check_area_growth(
+        components, [{"refdes": "AMP.Xcl", "param": "W", "new_value": "50"}]
+    )
+
+    assert ok is True
