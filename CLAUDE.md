@@ -183,9 +183,12 @@ worth reading before assuming a weak-model failure is a code bug:
   explicitly instructed to reject anything that doesn't match an existing
   netlist token — but a weak model can still get this wrong, so don't assume
   a proposal that passed schema validation is actually applicable.
-- **`netlist.py`'s `apply_changes`/`parse_netlist`** don't track subckt scope
-  (a refdes collision between a subckt-local and top-level component could
-  misfire) — known, deliberately deferred limitation, not fixed.
+- **`netlist.py` tracks subckt scope.** A component inside a `.subckt` is
+  addressable as `<SUBCKT>.<refdes>`; an unqualified refdes still works when
+  it matches exactly one component netlist-wide, and raises `ValueError` when
+  it is ambiguous rather than silently editing the first match. The scope is
+  the subckt *definition*, so a change applies to every instance of it —
+  two differently-tuned instances require two subckts.
 - **`param="value"` misapplied to a non-numeric positional token** (a
   transistor's model name, a subckt instance's subckt name) used to crash
   the whole run with an uncaught `ValueError` from `area_limits.py`'s
