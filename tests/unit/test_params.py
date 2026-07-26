@@ -86,6 +86,61 @@ def test_a_nested_subckt_sees_the_global_environment():
     assert envs["WRAP.DEEP"]["wn"] == 4.0
 
 
+def test_a_subckt_default_shadows_a_global_of_the_same_name():
+    # W=5 전역과 W=10 서브회로 기본값이 이름 충돌하면 로컬(기본값)이 이겨야
+    # 한다 - 전역 < 서브회로 기본값 < 인스턴스 오버라이드 순서.
+    deck = (
+        "* t\n.param W=5\n.subckt SUB a b W=10\nM1 a b 0 0 nch W=W\n.ends\n"
+        "X1 p q SUB\n.end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs["SUB"]["W"] == 10.0
+
+
+def test_an_instance_override_shadows_a_global_of_the_same_name():
+    # 회귀 재현: W=5 전역, W=10 기본값, 인스턴스가 W=99로 오버라이드.
+    # 이전 버그는 seed(전역)에 이미 W가 있다는 이유로 기본값도 오버라이드도
+    # 아예 시도하지 않아 envs["SUB"]["W"]가 5.0으로 나왔다.
+    deck = (
+        "* t\n.param W=5\n.subckt SUB a b W=10\nM1 a b 0 0 nch W=W\n.ends\n"
+        "X1 p q SUB W=99\n.end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs["SUB"]["W"] == 99.0
+
+
+def test_same_named_subckts_in_different_scopes_do_not_leak_instance_overrides():
+    # 회귀 재현: A.LOAD(기본 R=10)와 B.LOAD(기본 R=20)는 이름만 같은 별개의
+    # 정의다. A.LOAD의 인스턴스만 R=55로 오버라이드하고 B.LOAD의 인스턴스는
+    # 오버라이드가 없다. 이전 버그는 인스턴스를 짧은 이름(LOAD)만으로
+    # 매칭해 A.LOAD의 오버라이드가 B.LOAD로 새어 들어갔다.
+    deck = (
+        "* t\n"
+        ".subckt A p q\n"
+        ".subckt LOAD c d R=10\n"
+        "M1 c d 0 0 nch W=1\n"
+        ".ends\n"
+        "X1 c d LOAD R=55\n"
+        ".ends\n"
+        ".subckt B p q\n"
+        ".subckt LOAD c d R=20\n"
+        "M2 c d 0 0 nch W=1\n"
+        ".ends\n"
+        "X2 c d LOAD\n"
+        ".ends\n"
+        ".end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs["A.LOAD"]["R"] == 55.0
+    assert envs["B.LOAD"]["R"] == 20.0
+
+
 def test_the_fixture_parses_without_losing_any_block():
     parsed = parse_netlist(_fixture_text())
 
