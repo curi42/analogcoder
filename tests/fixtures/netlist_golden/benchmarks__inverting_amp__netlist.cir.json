@@ -1,0 +1,56 @@
+{
+  "subckts": {},
+  "top_components": [
+    {
+      "ctype": "V",
+      "geometry_scale": 1.0,
+      "nodes": [
+        "in",
+        "0",
+        "AC"
+      ],
+      "params": {},
+      "refdes": "Vin",
+      "scope": null,
+      "value": "1"
+    },
+    {
+      "ctype": "R",
+      "geometry_scale": 1.0,
+      "nodes": [
+        "in",
+        "vminus"
+      ],
+      "params": {},
+      "refdes": "Rin",
+      "scope": null,
+      "value": "1k"
+    },
+    {
+      "ctype": "R",
+      "geometry_scale": 1.0,
+      "nodes": [
+        "vminus",
+        "vout"
+      ],
+      "params": {},
+      "refdes": "Rf",
+      "scope": null,
+      "value": "10k"
+    },
+    {
+      "ctype": "E",
+      "geometry_scale": 1.0,
+      "nodes": [
+        "vout",
+        "0",
+        "0",
+        "vminus"
+      ],
+      "params": {},
+      "refdes": "Eopamp",
+      "scope": null,
+      "value": "100k"
+    }
+  ]
+}

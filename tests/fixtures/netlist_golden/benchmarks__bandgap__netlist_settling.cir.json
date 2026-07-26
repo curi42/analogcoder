@@ -1,0 +1,1708 @@
+{
+  "subckts": {
+    "BANDGAP": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vbgout",
+            "ampout",
+            "mpgate",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "params": {},
+          "refdes": "Xcore",
+          "scope": "BANDGAP",
+          "value": "BGR_CORE"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vbgout",
+            "trm_i",
+            "vtop",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "params": {},
+          "refdes": "Xtrim",
+          "scope": "BANDGAP",
+          "value": "TRIMAMP"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vtop",
+            "vfb",
+            "0"
+          ],
+          "params": {
+            "l": "68.6",
+            "w": "1"
+          },
+          "refdes": "XRl4",
+          "scope": "BANDGAP",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vfb",
+            "vt12",
+            "0"
+          ],
+          "params": {
+            "l": "23.4",
+            "w": "1"
+          },
+          "refdes": "XRl3",
+          "scope": "BANDGAP",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vt12",
+            "vt05",
+            "0"
+          ],
+          "params": {
+            "l": "439.6",
+            "w": "1"
+          },
+          "refdes": "XRl2",
+          "scope": "BANDGAP",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vt05",
+            "vss",
+            "0"
+          ],
+          "params": {
+            "l": "313.6",
+            "w": "1"
+          },
+          "refdes": "XRl1",
+          "scope": "BANDGAP",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vt12",
+            "b1_i",
+            "vbg1",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "params": {},
+          "refdes": "Xb1",
+          "scope": "BANDGAP",
+          "value": "BUF_N"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vt05",
+            "b0_i",
+            "vbg0",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "params": {},
+          "refdes": "Xb0",
+          "scope": "BANDGAP",
+          "value": "BUF_P"
+        }
+      ],
+      "ports": [
+        "vbgout",
+        "vbg0",
+        "vbg1",
+        "vtop",
+        "vfb",
+        "vdd",
+        "vss",
+        "ampout",
+        "mpgate",
+        "trm_i",
+        "b1_i",
+        "b0_i"
+      ]
+    },
+    "BGR_CORE": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vbgout",
+            "mpgate",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "10"
+          },
+          "refdes": "Xmpout",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vbgout",
+            "na",
+            "0"
+          ],
+          "params": {
+            "l": "324.74",
+            "w": "1"
+          },
+          "refdes": "XRpa",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vbgout",
+            "nb",
+            "0"
+          ],
+          "params": {
+            "l": "324.74",
+            "w": "1"
+          },
+          "refdes": "XRpb",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "0",
+            "0",
+            "na",
+            "0"
+          ],
+          "params": {},
+          "refdes": "Xq1",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pnp_05v5_W3p40L3p40"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nb",
+            "ne8",
+            "0"
+          ],
+          "params": {
+            "l": "33.12",
+            "w": "1"
+          },
+          "refdes": "XR1",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "0",
+            "0",
+            "ne8",
+            "0"
+          ],
+          "params": {
+            "m": "8"
+          },
+          "refdes": "Xq8",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pnp_05v5_W3p40L3p40"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nb",
+            "na",
+            "ampout",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "params": {},
+          "refdes": "Xerr",
+          "scope": "BGR_CORE",
+          "value": "ERRAMP"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nbias",
+            "ampout",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb1",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb2",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ncas",
+            "ampout",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb3",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ncas",
+            "ncas",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "1"
+          },
+          "refdes": "Xb4",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb5",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb6",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pcas",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xb7",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pcas",
+            "pcas",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "1"
+          },
+          "refdes": "Xb8",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nsu",
+            "vss",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "20",
+            "W": "0.42"
+          },
+          "refdes": "Xsu_r",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nsu",
+            "vbgout",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "2"
+          },
+          "refdes": "Xsu_d",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ampout",
+            "nsu",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "2"
+          },
+          "refdes": "Xsu_i",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nbias",
+            "vss",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "20",
+            "W": "0.42"
+          },
+          "refdes": "Xsu_b",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vss",
+            "ampout",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "20",
+            "W": "20"
+          },
+          "refdes": "Xcc",
+          "scope": "BGR_CORE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        }
+      ],
+      "ports": [
+        "vbgout",
+        "ampout",
+        "mpgate",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "BUF_N": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xt",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X1",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X2",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp1",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp2",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc1",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc2",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xn1",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xn2",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xm1",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xm2",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "40"
+          },
+          "refdes": "X6",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "X7",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "params": {
+            "L": "50",
+            "W": "50"
+          },
+          "refdes": "Xcc",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "params": {
+            "l": "40",
+            "w": "1"
+          },
+          "refdes": "XRz",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vss",
+            "vout",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "20",
+            "W": "20"
+          },
+          "refdes": "Xcl",
+          "scope": "BUF_N",
+          "value": "sky130_fd_pr__nfet_01v8"
+        }
+      ],
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "BUF_P": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "tail",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "24"
+          },
+          "refdes": "Xt",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "40"
+          },
+          "refdes": "X1",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "40"
+          },
+          "refdes": "X2",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xn1",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xn2",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "ncas",
+            "nx",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc1",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "ncas",
+            "ny",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc2",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "pcas",
+            "nr",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp1",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "pcas",
+            "ns",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp2",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nr",
+            "np",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xm1",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ns",
+            "np",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xm2",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "outA",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X6",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "24"
+          },
+          "refdes": "X7",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "params": {
+            "L": "40",
+            "W": "40"
+          },
+          "refdes": "Xcc",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "params": {
+            "l": "15",
+            "w": "1"
+          },
+          "refdes": "XRz",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__res_high_po"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vss",
+            "vout",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "20",
+            "W": "20"
+          },
+          "refdes": "Xcl",
+          "scope": "BUF_P",
+          "value": "sky130_fd_pr__nfet_01v8"
+        }
+      ],
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "ERRAMP": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "4",
+            "W": "4"
+          },
+          "refdes": "Xt",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "48"
+          },
+          "refdes": "X1",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "48"
+          },
+          "refdes": "X2",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "2",
+            "W": "8"
+          },
+          "refdes": "Xp1",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "2",
+            "W": "8"
+          },
+          "refdes": "Xp2",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xc1",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xc2",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xn1",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xn2",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xm1",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "Xm2",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X6",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "4"
+          },
+          "refdes": "X7",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "params": {
+            "L": "40",
+            "W": "40"
+          },
+          "refdes": "Xcc",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "params": {
+            "l": "40",
+            "w": "1"
+          },
+          "refdes": "XRz",
+          "scope": "ERRAMP",
+          "value": "sky130_fd_pr__res_high_po"
+        }
+      ],
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "TRIMAMP": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xt",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X1",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "20"
+          },
+          "refdes": "X2",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp1",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xp2",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc1",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "16"
+          },
+          "refdes": "Xc2",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xn1",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xn2",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xm1",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "Xm2",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "1",
+            "W": "40"
+          },
+          "refdes": "X6",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "1",
+            "W": "8"
+          },
+          "refdes": "X7",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "params": {
+            "L": "40",
+            "W": "40"
+          },
+          "refdes": "Xcc",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "params": {
+            "l": "15",
+            "w": "1"
+          },
+          "refdes": "XRz",
+          "scope": "TRIMAMP",
+          "value": "sky130_fd_pr__res_high_po"
+        }
+      ],
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    }
+  },
+  "top_components": [
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vdd",
+        "0",
+        "DC"
+      ],
+      "params": {},
+      "refdes": "Vdd",
+      "scope": null,
+      "value": "1.8"
+    },
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vss",
+        "0",
+        "DC"
+      ],
+      "params": {},
+      "refdes": "Vss",
+      "scope": null,
+      "value": "0"
+    },
+    {
+      "ctype": "X",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vbgout",
+        "vbg0",
+        "vbg1",
+        "vtop",
+        "vfb",
+        "vdd",
+        "vss",
+        "ampout",
+        "ampout",
+        "vfb",
+        "vbg1",
+        "vbg0"
+      ],
+      "params": {},
+      "refdes": "Xdut",
+      "scope": null,
+      "value": "BANDGAP"
+    },
+    {
+      "ctype": "I",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vbg0",
+        "0",
+        "PULSE(0",
+        "10u",
+        "1u",
+        "1n",
+        "1n",
+        "30n"
+      ],
+      "params": {},
+      "refdes": "Istep0",
+      "scope": null,
+      "value": "10u)"
+    },
+    {
+      "ctype": "I",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vbg1",
+        "0",
+        "PULSE(0",
+        "10u",
+        "1u",
+        "1n",
+        "1n",
+        "30n"
+      ],
+      "params": {},
+      "refdes": "Istep1",
+      "scope": null,
+      "value": "10u)"
+    }
+  ]
+}
