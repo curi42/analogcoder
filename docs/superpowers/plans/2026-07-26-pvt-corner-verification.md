@@ -667,10 +667,13 @@ def test_run_full_pvt_sweep_against_a_small_representative_corner_set():
 def test_run_full_pvt_sweep_with_single_point_corner_matches_nominal_baseline():
     # A 1-corner "sweep" (one process, one voltage, one temperature value)
     # is a degenerate but valid case - no special-casing needed in
-    # run_full_pvt_sweep. At tt/1.8V/27C, this must reduce to the already-
-    # validated nominal baseline (see the sky130 PDK migration design
-    # spec's Validation section: this exact netlist passes all criteria at
-    # nominal), so overall_pass must be True here.
+    # run_full_pvt_sweep. At tt/1.8V/27C, this reduces to the as-committed
+    # miller_basic topology baseline - not the post-tuning/post-topology-
+    # swap result. The sky130 PDK migration design spec's Validation section
+    # documents this baseline failing phase_margin by design (34.56 deg <
+    # 60 deg threshold), which is precisely what triggers the orchestrator's
+    # topology-swap mechanism during a real tuning run. So overall_pass must
+    # be False here.
     spec = load_spec(os.path.join(BENCHMARK_DIR, "spec_pvt.yaml"))
     spec.pvt_corners = PVTCorners(process=["tt"], voltage=[1.8], temperature=[27])
 
@@ -681,7 +684,9 @@ def test_run_full_pvt_sweep_with_single_point_corner_matches_nominal_baseline():
 
     result = run_full_pvt_sweep(netlist_texts, spec, NgspiceBackend())
 
-    assert result["overall_pass"] is True  # single tt/1.8V/27C point matches the already-validated nominal baseline
+    assert result["overall_pass"] is False
+    phase_margin_result = next(c for c in result["criteria"] if c["name"] == "phase_margin")
+    assert phase_margin_result["pass"] is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
