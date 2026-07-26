@@ -80,7 +80,14 @@ class ParsedNetlist:
     subckts: dict[str, Subckt]
 
 
-_PARAM_RE = re.compile(r"^(\w+)=(\S+)$")
+# 값 쪽이 `\S+`가 아닌 이유: split_tokens가 `W='wn * 2'`를 토큰 하나로
+# 유지하므로 값에 공백이 들어올 수 있다. 토큰 하나에만 적용되는 패턴이라
+# 탐욕적 `.+`로 충분하다.
+_PARAM_RE = re.compile(r"^(\w+)=(.+)$")
+
+# 인용을 여는 문자와 그에 대응해 닫는 문자. HSPICE는 표현식을 '...'로,
+# ngspice는 {...}로 감싼다.
+_QUOTE_PAIRS = {"'": "'", "{": "}"}
 
 # HSPICE는 "$", ngspice는 ";"로 줄 끝 주석을 연다. 두 문자 모두 SPICE
 # 식별자에 등장할 수 없으므로 첫 출현 위치에서 자르면 충분하다.
@@ -106,6 +113,45 @@ def strip_inline_comment(line: str) -> tuple[str, str]:
     return line[:index].rstrip(), line[index:].strip()
 
 
+def split_tokens(code: str) -> list[str]:
+    """SPICE 줄의 코드부를 토큰으로 나눈다. `str.split()`과 달리 `'...'`와
+    `{...}` 안의 공백은 토큰을 끊지 않는다.
+
+    `str.split()`을 쓰면 `W='wn * 2'`가 `W='wn`, `*`, `2'` 세 토큰이 되어
+    모델명이 노드 목록으로 밀려나고 value가 `2'`가 된다 - `$` 주석 버그와
+    똑같이, 예외 하나 없이 디바이스 종류와 에어리어 티어가 함께 틀어진다.
+    apply_changes가 토큰을 다시 `" "`로 잇기 때문에 편집도 덱을 망가뜨린다
+    (`W='wn * 2'` -> `W=50` 이 `W=50 * 2'`를 남긴다).
+
+    인용이 닫히지 않은 줄은 남은 전부를 한 토큰으로 돌려준다. 그런 줄은
+    이미 SPICE로서 유효하지 않으므로, 여기서 추측해 봐야 얻을 것이 없다.
+
+    주석은 다루지 않는다 - 호출자가 strip_inline_comment로 먼저 코드부만
+    떼어 넘겨야 한다."""
+    tokens: list[str] = []
+    current: list[str] = []
+    closer: str | None = None
+
+    for char in code:
+        if closer is not None:
+            current.append(char)
+            if char == closer:
+                closer = None
+            continue
+        if char.isspace():
+            if current:
+                tokens.append("".join(current))
+                current = []
+            continue
+        if char in _QUOTE_PAIRS:
+            closer = _QUOTE_PAIRS[char]
+        current.append(char)
+
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
 def _is_subckt_open(lower: str) -> bool:
     return lower.startswith(".subckt") or lower.startswith(".macro")
 
@@ -115,7 +161,7 @@ def _is_subckt_close(lower: str) -> bool:
 
 
 def _parse_component_line(line: str) -> Component:
-    tokens = line.split()
+    tokens = split_tokens(line)
     refdes = tokens[0]
     ctype = refdes[0].upper()
     params: dict[str, str] = {}
@@ -146,7 +192,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
             continue
         lower = line.lower()
         if _is_subckt_open(lower):
-            tokens = line.split()
+            tokens = split_tokens(line)
             name = tokens[1]
             ports = [t for t in tokens[2:] if "=" not in t]
             defaults = dict(t.split("=", 1) for t in tokens[2:] if "=" in t)
@@ -199,7 +245,7 @@ def _line_scopes(lines: list[str]) -> list[str | None]:
         lower = stripped.lower()
         if _is_subckt_open(lower):
             scopes.append(None)
-            stack.append(stripped.split()[1])
+            stack.append(split_tokens(stripped)[1])
             continue
         if _is_subckt_close(lower):
             scopes.append(None)
@@ -225,7 +271,7 @@ def _find_matches(
         code, _ = strip_inline_comment(stripped)
         if not code:
             continue
-        tokens = code.split()
+        tokens = split_tokens(code)
         if tokens[0] != refdes:
             continue
         if scope is not None and scopes[i] != scope:
@@ -325,7 +371,7 @@ def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
         opens = _is_subckt_open(lower)
         closes = _is_subckt_close(lower)
         if start is None:
-            if opens and stripped.split()[1] == subckt_name:
+            if opens and split_tokens(stripped)[1] == subckt_name:
                 start = i
                 depth = 1
             continue

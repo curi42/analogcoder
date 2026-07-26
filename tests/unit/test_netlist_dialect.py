@@ -83,3 +83,62 @@ def test_inc_is_accepted_as_an_alias_for_include(tmp_path):
     out = resolve_includes('.inc "models.lib"\n', "/base/dir")
 
     assert out.strip() == '.inc "/base/dir/models.lib"'
+
+
+def test_split_tokens_keeps_a_quoted_expression_whole():
+    from analogcoder.netlist import split_tokens
+
+    assert split_tokens("M1 d g 0 0 nch W=1") == ["M1", "d", "g", "0", "0", "nch", "W=1"]
+    assert split_tokens("M1 d g nch W='wn * 2'") == ["M1", "d", "g", "nch", "W='wn * 2'"]
+    assert split_tokens("M1 d g nch W={wn * 2}") == ["M1", "d", "g", "nch", "W={wn * 2}"]
+    assert split_tokens("Cc a b 'cv * 2'") == ["Cc", "a", "b", "'cv * 2'"]
+
+
+def test_a_spaced_quoted_expression_does_not_swallow_the_model_name():
+    # 회귀: 예전에는 nodes가 ['d','g','0','0','nch','*']가 되고 value가 "2'"가
+    # 되어, $ 주석 버그와 정확히 같은 모양으로 모델명이 사라졌다. 공백이 없는
+    # W='wn*2'는 원래도 정상이었으므로 경계는 따옴표 안의 공백이다.
+    deck = "* t\nM1 d g 0 0 nch W='wn * 2' L=1\n.end\n"
+
+    component = parse_netlist(deck).top_components[0]
+
+    assert component.nodes == ["d", "g", "0", "0"]
+    assert component.value == "nch"
+    assert component.params == {"W": "'wn * 2'", "L": "1"}
+
+
+def test_a_spaced_quoted_positional_value_stays_one_token():
+    deck = "* t\nCc a b 'cv * 2'\n.end\n"
+
+    component = parse_netlist(deck).top_components[0]
+
+    assert component.nodes == ["a", "b"]
+    assert component.value == "'cv * 2'"
+
+
+def test_applying_a_change_does_not_corrupt_a_spaced_quoted_expression():
+    # 회귀: W='wn * 2'를 W=50으로 바꾸면 "W=50 * 2'"가 남았다. 게이트 셋이
+    # 전부 통과시키므로 망가진 덱이 그대로 ngspice까지 갔다.
+    deck = "* t\nM1 d g 0 0 nch W='wn * 2' L=1\n.end\n"
+
+    out = apply_changes(deck, [{"refdes": "M1", "param": "W", "new_value": "50"}])
+
+    assert "M1 d g 0 0 nch W=50 L=1" in out
+    assert "*" not in out.splitlines()[1]
+
+
+def test_applying_a_positional_change_replaces_the_whole_quoted_value():
+    deck = "* t\nCc a b 'cv * 2'\n.end\n"
+
+    out = apply_changes(deck, [{"refdes": "Cc", "param": "value", "new_value": "5p"}])
+
+    assert "Cc a b 5p" in out
+
+
+def test_a_subckt_line_default_may_be_a_spaced_quoted_expression():
+    deck = "* t\n.subckt SUB a b W='wn * 2'\nM1 a b 0 0 nch W=W\n.ends\n.end\n"
+
+    subckt = parse_netlist(deck).subckts["SUB"]
+
+    assert subckt.ports == ["a", "b"]
+    assert subckt.defaults == {"W": "'wn * 2'"}

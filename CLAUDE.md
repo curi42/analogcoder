@@ -296,17 +296,17 @@ worth reading before assuming a weak-model failure is a code bug:
   subset is deliberately narrow (arithmetic only); anything else resolves to
   `None` and takes that same fallback, which is now reached only when it is
   genuinely true.
-- **`apply_changes` corrupts a quoted expression containing spaces.**
-  `M1 d g 0 0 nch W='wn * 2' L=1` with a change to `W=50` becomes
-  `M1 d g 0 0 nch W=50 * 2' L=1`; `Cc a b 'cv * 2'` with `param="value"` and
-  `new_value="5p"` becomes `Cc a b 'cv * 5p`. The line is whitespace-tokenised,
-  so a value containing spaces is split across tokens. Every gate passes it
-  (`check_refdes_resolution` resolves fine, `check_area_growth` sees an
-  unresolvable baseline and does not block), so a corrupted deck reaches
-  ngspice and the failure looks like a bad tuning proposal, not a parser bug.
-  Whitespace-aware tokenisation is outside this work's scope; the point of
-  this note is that the hazard is now on the hot path because parameterised
-  values became first-class.
+- **Tokenise a SPICE line with `netlist.split_tokens`, never `str.split()`.**
+  `split_tokens` keeps `'...'` and `{...}` whole, so `W='wn * 2'` stays one
+  token. Plain `.split()` turned it into `W='wn`, `*`, `2'`, which pushed the
+  model name into the node list and made `value` become `2'` — the same shape
+  as the `$`-comment bug, silently wrong device class and area tier — and made
+  `apply_changes` rewrite `W='wn * 2'` → `W=50` as `W=50 * 2'`. Every gate
+  passed the corrupted deck (`check_refdes_resolution` resolved fine,
+  `check_area_growth` saw an unresolvable baseline and did not block), so it
+  reached ngspice and the failure looked like a bad tuning proposal rather
+  than a parser bug. All five tokenisation sites in `netlist.py` route through
+  the helper; adding a sixth that uses `.split()` reopens this.
 - **A `.param` declared inside a `.subckt` body is ignored.** `params.py`'s
   `_collect_global_raw_params` only walks lines at depth 0, and per-subckt
   environments are built from `.subckt`-line defaults and instance overrides
