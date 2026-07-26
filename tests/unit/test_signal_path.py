@@ -69,3 +69,43 @@ def test_a_bulk_terminal_does_not_make_a_block_a_driver_of_ground():
     paths = build_signal_paths(derive_structure(CHAIN, "demo"))
 
     assert "STAGE" not in paths.net_blocks.get("0", {})
+
+
+def test_a_primitive_whose_model_name_collides_with_a_subckt_is_not_treated_as_an_instance():
+    # M1의 모델 토큰이 우연히 어떤 subckt 이름과 같아도(RMOD) 그건 이름 충돌일
+    # 뿐이다 - MOSFET은 ctype이 X가 아니므로 애초에 서브회로를 부를 수 없다.
+    # 포트 수(2)와 노드 수(4)가 다르다는 이유로 가짜 mismatch를 만들면 안 된다.
+    deck = (
+        "* t\n"
+        ".subckt RMOD p n\n"
+        "R1 p n 1k\n"
+        ".ends RMOD\n"
+        "M1 vout vin vss vss RMOD W=10 L=1\n"
+        ".end\n"
+    )
+
+    paths = build_signal_paths(derive_structure(deck, "demo"))
+
+    assert not any(e.instance_refdes == "M1" for e in paths.instances)
+
+
+def test_a_primitive_whose_model_name_and_node_count_coincide_with_a_subckt_is_not_fabricated_as_two_drivers():
+    # 더 위험한 경우: R2의 값 토큰이 우연히 subckt PMOD와 이름도 포트 수(2)도
+    # 같다. ctype 검사 없이는 mismatch조차 없이 조용히 잘못된 InstanceEdge를
+    # 만들고, net_blocks에 R2(실제 소자)와 PMOD(가짜 인스턴스) 둘 다를 같은
+    # 넷의 드라이버로 기록해 물리적으로 하나뿐인 소자에 두 개의 정체성을
+    # 지어낸다.
+    deck = (
+        "* t\n"
+        ".subckt PMOD p n\n"
+        "R1 p n 1k\n"
+        ".ends PMOD\n"
+        "R2 a b PMOD\n"
+        ".end\n"
+    )
+
+    paths = build_signal_paths(derive_structure(deck, "demo"))
+
+    assert not any(e.instance_refdes == "R2" for e in paths.instances)
+    assert paths.net_blocks["a"] == {"R2": "drive"}
+    assert paths.net_blocks["b"] == {"R2": "drive"}

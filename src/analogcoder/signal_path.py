@@ -48,6 +48,13 @@ def _build_instances(structure: NetlistStructure) -> list[InstanceEdge]:
     instances: list[InstanceEdge] = []
     for block in structure.blocks.values():
         for fact in block.components:
+            if fact.ctype != "X":
+                # X가 아닌 소자는 애초에 서브회로 인스턴스일 수 없다 - value가
+                # 우연히 어떤 subckt 이름과 같아도(예: 저항 값 토큰이 "PMOD"인
+                # 경우) 그건 이름 충돌일 뿐 인스턴스가 아니다. structure.py의
+                # instance_counts도 같은 기준(ctype == "X")으로 센다 - 두
+                # 모듈이 "무엇이 인스턴스인가"에 대해 일치해야 한다.
+                continue
             definition = _definition_of(structure, fact.model)
             if definition is None:
                 continue
