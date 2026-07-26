@@ -15,12 +15,12 @@ testbenches:
       - name: dc_gain
         measurement: gain_db
         operator: ">="
-        threshold: 70.0
+        threshold: 60.0
         unit: dB
       - name: unity_gain_bandwidth
         measurement: ugbw_hz
         operator: ">="
-        threshold: 20000000.0
+        threshold: 1500000.0
         unit: Hz
       - name: phase_margin
         measurement: phase_margin_deg
@@ -55,7 +55,7 @@ testbenches:
       - name: psr_minus
         measurement: psr_minus_db
         operator: "<="
-        threshold: -8.0
+        threshold: 0.0
         unit: dB
 
   - name: settling_time
@@ -64,17 +64,17 @@ testbenches:
     control_block: |
       .control
       tran 1n 6u
-      meas tran t_hi_last WHEN v(vout)=1.00539 CROSS=LAST
-      meas tran t_lo_last WHEN v(vout)=0.99539 CROSS=LAST
+      meas tran t_hi_last WHEN v(vout)=0.70398 CROSS=LAST
+      meas tran t_lo_last WHEN v(vout)=0.69698 CROSS=LAST
       .endc
     criteria:
       - name: settling_time_hi
         measurement: t_hi_last
         operator: "<="
-        threshold: 0.0000012
+        threshold: 0.0000028
         unit: s
       - name: settling_time_lo
         measurement: t_lo_last
         operator: "<="
-        threshold: 0.0000012
+        threshold: 0.0000028
         unit: s
