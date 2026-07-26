@@ -18,7 +18,15 @@ def render_corner_netlist(
     line with a trailing "AC 1" clause, e.g. netlist_psr_plus.cir)."""
     include_name = "pdk_corner.inc" if process == "tt" else f"pdk_corner_{process}.inc"
     abs_include = os.path.join(benchmark_dir, include_name)
-    text = netlist_text.replace('.include "pdk_corner.inc"', f'.include "{abs_include}"')
+
+    # Matched by basename, not by the exact relative string, because the
+    # netlist text reaching here has already been through
+    # netlist.resolve_includes - so its include is an absolute path, and on
+    # the FINAL sweep it comes back out of RunState in that same absolute
+    # form. An exact-match on the bare relative form would silently no-op,
+    # leaving all 45 corners running the tt models at the default temperature.
+    corner_include_pattern = re.compile(r'^\s*\.include\s+"?\S*pdk_corner\.inc"?\s*$', re.MULTILINE)
+    text = corner_include_pattern.sub(f'.include "{abs_include}"', netlist_text, count=1)
 
     include_line_pattern = re.compile(r'(\.include "' + re.escape(abs_include) + r'"\n)')
     text = include_line_pattern.sub(lambda m: m.group(1) + f".temp {temperature}\n", text, count=1)

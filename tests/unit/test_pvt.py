@@ -41,6 +41,23 @@ def test_render_corner_netlist_swaps_process_corner_include():
     assert "pdk_corner.inc" not in rendered
 
 
+def test_render_corner_netlist_swaps_corner_include_that_is_already_absolute():
+    # cli.py runs every netlist through resolve_includes at load time, so by
+    # the time a netlist text reaches the PVT sweep its include is already an
+    # absolute path - and the FINAL sweep gets exactly such a text back out of
+    # RunState. Matching only the bare relative form would silently leave every
+    # corner running the tt models, turning a 45-corner sweep into 45 identical
+    # nominal runs that all "pass".
+    absolute = NETLIST.replace(
+        '.include "pdk_corner.inc"', '.include "/benchmarks/two_stage_opamp/pdk_corner.inc"'
+    )
+
+    rendered = render_corner_netlist(absolute, "ss", 1.8, 27, "/benchmarks/two_stage_opamp")
+
+    assert '.include "/benchmarks/two_stage_opamp/pdk_corner_ss.inc"' in rendered
+    assert "pdk_corner.inc" not in rendered
+
+
 def test_render_corner_netlist_injects_temp_directive():
     rendered = render_corner_netlist(NETLIST, "tt", 1.8, -40, "/benchmarks/two_stage_opamp")
 
