@@ -143,6 +143,7 @@ def test_pvt_spec_reuses_baseline_spec_testbenches_and_thresholds():
     assert [tb.name for tb in spec.testbenches] == [tb.name for tb in baseline.testbenches]
     assert [tb.netlist_path for tb in spec.testbenches] == [tb.netlist_path for tb in baseline.testbenches]
     for tb, baseline_tb in zip(spec.testbenches, baseline.testbenches):
+        assert tb.control_block == baseline_tb.control_block
         assert {c.name: (c.operator, c.threshold) for c in tb.criteria} == {
             c.name: (c.operator, c.threshold) for c in baseline_tb.criteria
         }
