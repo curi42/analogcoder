@@ -14,6 +14,13 @@ class Criterion:
 
 
 @dataclass
+class PVTCorners:
+    process: list[str]
+    voltage: list[float]
+    temperature: list[float]
+
+
+@dataclass
 class Testbench:
     name: str
     netlist_path: str
@@ -26,6 +33,7 @@ class Testbench:
 class TargetSpec:
     circuit_name: str
     testbenches: list[Testbench]
+    pvt_corners: PVTCorners | None = None
 
     @property
     def canonical(self) -> Testbench:
@@ -49,6 +57,17 @@ def _load_criteria(raw_criteria: list[dict]) -> list[Criterion]:
     ]
 
 
+def _load_pvt_corners(raw: dict) -> PVTCorners | None:
+    raw_pvt = raw.get("pvt_corners")
+    if raw_pvt is None:
+        return None
+    return PVTCorners(
+        process=raw_pvt["process"],
+        voltage=[float(v) for v in raw_pvt["voltage"]],
+        temperature=[float(t) for t in raw_pvt["temperature"]],
+    )
+
+
 def load_spec(path: str) -> TargetSpec:
     with open(path) as f:
         raw = yaml.safe_load(f)
@@ -65,4 +84,4 @@ def load_spec(path: str) -> TargetSpec:
         for tb in raw["testbenches"]
     ]
 
-    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches)
+    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw))

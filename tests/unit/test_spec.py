@@ -115,3 +115,34 @@ def test_topology_required_spec_has_stricter_phase_margin_threshold():
     baseline_by_name = {c.name: c.threshold for c in baseline.canonical.criteria}
     for c in spec.canonical.criteria:
         assert c.threshold >= baseline_by_name[c.name]
+
+
+def test_load_spec_without_pvt_corners_defaults_to_none(tmp_path):
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+
+    spec = load_spec(str(spec_path))
+
+    assert spec.pvt_corners is None
+
+
+def test_pvt_spec_declares_full_45_corner_sweep():
+    spec = load_spec("benchmarks/two_stage_opamp/spec_pvt.yaml")
+
+    assert spec.pvt_corners is not None
+    assert spec.pvt_corners.process == ["tt", "ss", "ff", "sf", "fs"]
+    assert spec.pvt_corners.voltage == [1.62, 1.8, 1.98]
+    assert spec.pvt_corners.temperature == [-40.0, 27.0, 125.0]
+
+
+def test_pvt_spec_reuses_baseline_spec_testbenches_and_thresholds():
+    spec = load_spec("benchmarks/two_stage_opamp/spec_pvt.yaml")
+    baseline = load_spec("benchmarks/two_stage_opamp/spec.yaml")
+
+    assert [tb.name for tb in spec.testbenches] == [tb.name for tb in baseline.testbenches]
+    assert [tb.netlist_path for tb in spec.testbenches] == [tb.netlist_path for tb in baseline.testbenches]
+    for tb, baseline_tb in zip(spec.testbenches, baseline.testbenches):
+        assert {c.name: (c.operator, c.threshold) for c in tb.criteria} == {
+            c.name: (c.operator, c.threshold) for c in baseline_tb.criteria
+        }

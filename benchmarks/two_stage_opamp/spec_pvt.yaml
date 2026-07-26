@@ -1,0 +1,84 @@
+circuit_name: two_stage_opamp
+pvt_corners:
+  process: [tt, ss, ff, sf, fs]
+  voltage: [1.62, 1.8, 1.98]
+  temperature: [-40, 27, 125]
+testbenches:
+  - name: ac_loop_gain
+    netlist: netlist.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      set units=degrees
+      ac dec 20 1 100meg
+      meas ac gain_db find vdb(vout) at=1
+      meas ac ugbw_hz when vdb(vout)=0
+      meas ac phase_margin_deg find vp(vout) when vdb(vout)=0
+      .endc
+    criteria:
+      - name: dc_gain
+        measurement: gain_db
+        operator: ">="
+        threshold: 60.0
+        unit: dB
+      - name: unity_gain_bandwidth
+        measurement: ugbw_hz
+        operator: ">="
+        threshold: 1500000.0
+        unit: Hz
+      - name: phase_margin
+        measurement: phase_margin_deg
+        operator: ">="
+        threshold: 60.0
+        unit: deg
+
+  - name: psr_plus
+    netlist: netlist_psr_plus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_plus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_plus
+        measurement: psr_plus_db
+        operator: "<="
+        threshold: -10.0
+        unit: dB
+
+  - name: psr_minus
+    netlist: netlist_psr_minus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_minus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_minus
+        measurement: psr_minus_db
+        operator: "<="
+        threshold: 0.0
+        unit: dB
+
+  - name: settling_time
+    netlist: netlist_settling.cir
+    analyses: ["tran"]
+    control_block: |
+      .control
+      tran 1n 6u
+      meas tran t_hi_last WHEN v(vout)=0.70398 CROSS=LAST
+      meas tran t_lo_last WHEN v(vout)=0.69698 CROSS=LAST
+      .endc
+    criteria:
+      - name: settling_time_hi
+        measurement: t_hi_last
+        operator: "<="
+        threshold: 0.0000028
+        unit: s
+      - name: settling_time_lo
+        measurement: t_lo_last
+        operator: "<="
+        threshold: 0.0000028
+        unit: s
