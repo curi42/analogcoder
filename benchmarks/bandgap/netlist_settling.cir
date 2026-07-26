@@ -1,0 +1,169 @@
+* Kuijk bandgap reference chain, SkyWater sky130 PDK.
+* settling testbench: a 10uA/30ns charge kick on each buffered output at
+* t=1us. The metrics are droop and residual error, NOT a threshold-crossing
+* time - an absolute crossing level produced no measurement at all at 14 of 45
+* corners, because the DC output level moves with the corner.
+* Device geometry below is in microns. pdk_corner.inc sets the same option,
+* but it is declared here too because the tooling that reads this file (the
+* tuner's area gate) parses the netlist text only and never follows includes.
+.option scale=1.0u
+.include "pdk_corner.inc"
+
+* ===================== amplifier blocks =====================
+* Every amplifier is a folded cascode first stage plus a common-source output
+* stage, Miller-compensated with a nulling resistor - the structure actually
+* used in the target design.
+*
+* The fold is what makes 1.62V operation possible. With a plain PMOS mirror
+* load the input pair's drain sits at vdd - |Vgs_p| (~0.5V measured), leaving
+* Vds(input) = Vdd - Vcm - |Vgs_p| + Vgs_n, which is at or below zero once
+* Vcm reaches 1.2V. In a folded cascode that same drain node sits at
+* vdd - |Vdsat| (~0.2V below the rail), because the PMOS cascode gate pcas is
+* biased a full |Vgs| below vdd. That recovers ~0.5V of input headroom.
+*
+* Polarity convention, uniform across all four: vinp sits on X2, the input
+* device whose drain feeds the OUTPUT branch. vinp up -> X2 steals current
+* from that branch -> outA moves down -> the inverting CS stage moves vout up.
+* So the port named vinp really is non-inverting at vout.
+
+.subckt ERRAMP vinp vinn vout vdd vss nbias ncas pbias pcas
+* ERRAMP's input common mode is Vbe, which falls to 0.549V at 125C, so its
+* tail node (Vcm - Vgs_n) is the tightest headroom in the whole chain. The
+* tail runs at ~1uA (L=4 quarters the mirror ratio) into a wide input pair,
+* which is what keeps Vgs_n low enough: at 4uA with W=16 the tail node
+* measured 35mV at 125C and the loop latched to the rail; at 1uA with W=48 it
+* measures 128-175mV across every process corner.
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=4 W=4
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=48
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=48
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=2 W=8
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=2 W=8
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=8
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=8
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=20
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=40
+.ends ERRAMP
+
+.subckt TRIMAMP vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=15
+.ends TRIMAMP
+
+.subckt BUF_N vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=50 W=50
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=40
+Xcl  vss  vout  vss  vss sky130_fd_pr__nfet_01v8 L=20 W=20
+.ends BUF_N
+
+* Complementary fold: PMOS input pair (vbg0 ~0.5V is below any NMOS pair's
+* reach), NMOS folding sinks, NMOS cascodes, PMOS cascoded mirror on top,
+* NMOS common-source output.
+.subckt BUF_P vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
+X1   nx   vinn tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X2   ny   vinp tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+Xn1  nx   nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xn2  ny   nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xc1  np   ncas  nx   vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xc2  outA ncas  ny   vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xp1  np   pcas  nr   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  outA pcas  ns   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xm1  nr   np    vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xm2  ns   np    vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+X6   vout outA  vss  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X7   vout pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=15
+Xcl  vss  vout  vss  vss sky130_fd_pr__nfet_01v8 L=20 W=20
+.ends BUF_P
+
+* ===================== bandgap core =====================
+.subckt BGR_CORE vbgout ampout mpgate vdd vss nbias ncas pbias pcas
+Xmpout vbgout mpgate vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=10
+
+XRpa vbgout na 0 sky130_fd_pr__res_high_po w=1 l=324.74
+XRpb vbgout nb 0 sky130_fd_pr__res_high_po w=1 l=324.74
+Xq1  0 0 na  0 sky130_fd_pr__pnp_05v5_W3p40L3p40
+XR1  nb ne8 0  sky130_fd_pr__res_high_po w=1 l=33.12
+Xq8  0 0 ne8 0 sky130_fd_pr__pnp_05v5_W3p40L3p40 m=8
+
+Xerr nb na ampout vdd vss nbias ncas pbias pcas ERRAMP
+
+* Cascode bias chain, every leg a scaled copy of the core's OWN PTAT current
+* so the whole chain shares one zero-current degenerate state. ncas is a
+* NARROWER diode than nbias, so it sits a larger Vgs above vss and leaves the
+* bottom mirror its Vdsat; pcas is narrower than pbias for the same reason on
+* the top side, which is what puts the fold node within a Vdsat of vdd.
+Xb1 nbias  ampout vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb2 nbias  nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb3 ncas   ampout vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb4 ncas   ncas   vss vss sky130_fd_pr__nfet_01v8 L=1 W=1
+Xb5 pbias  nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb6 pbias  pbias  vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb7 pcas   nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb8 pcas   pcas   vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=1
+
+Xsu_r nsu    vss    vdd vdd sky130_fd_pr__pfet_01v8 L=20 W=0.42
+Xsu_d nsu    vbgout vss vss sky130_fd_pr__nfet_01v8 L=1  W=2
+Xsu_i ampout nsu    vss vss sky130_fd_pr__nfet_01v8 L=1  W=2
+* A trickle into nbias, always on. Without it the bias chain collapses with
+* the core, and then every CS output stage has its NMOS sink off while its
+* PMOS is fully on - so the amp output pins HIGH, the core PMOS stays off,
+* and the startup pull-down (W=2) cannot outfight a W=20 PMOS. This failure
+* mode did not exist before the amps gained CS output stages.
+Xsu_b nbias  vss    vdd vdd sky130_fd_pr__pfet_01v8 L=20 W=0.42
+
+Xcc vss ampout vss vss sky130_fd_pr__nfet_01v8 L=20 W=20
+.ends BGR_CORE
+
+.subckt BANDGAP vbgout vbg0 vbg1 vtop vfb vdd vss ampout mpgate trm_i b1_i b0_i
+Xcore vbgout ampout mpgate vdd vss nbias ncas pbias pcas BGR_CORE
+Xtrim vbgout trm_i vtop vdd vss nbias ncas pbias pcas TRIMAMP
+
+XRl4 vtop vfb  0 sky130_fd_pr__res_high_po w=1 l=68.6
+XRl3 vfb  vt12 0 sky130_fd_pr__res_high_po w=1 l=23.4
+XRl2 vt12 vt05 0 sky130_fd_pr__res_high_po w=1 l=439.6
+XRl1 vt05 vss  0 sky130_fd_pr__res_high_po w=1 l=313.6
+
+Xb1 vt12 b1_i vbg1 vdd vss nbias ncas pbias pcas BUF_N
+Xb0 vt05 b0_i vbg0 vdd vss nbias ncas pbias pcas BUF_P
+.ends BANDGAP
+
+Vdd vdd 0 DC 1.8
+Vss vss 0 DC 0
+Xdut vbgout vbg0 vbg1 vtop vfb vdd vss ampout ampout vfb vbg1 vbg0 BANDGAP
+Istep0 vbg0 0 PULSE(0 10u 1u 1n 1n 30n 10u)
+Istep1 vbg1 0 PULSE(0 10u 1u 1n 1n 30n 10u)
+.end
