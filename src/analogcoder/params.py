@@ -4,9 +4,10 @@ import re
 from analogcoder.netlist import (
     _is_subckt_close,
     _is_subckt_open,
+    logical_lines,
     parse_netlist,
     parse_spice_value,
-    strip_inline_comment,
+    split_tokens,
 )
 
 _PARAM_DIRECTIVE_RE = re.compile(r"^\s*\.param\b(.*)$", re.IGNORECASE)
@@ -89,7 +90,9 @@ def resolve_value(raw: str, env: dict[str, float]) -> float | None:
         return None
 
 
-def _resolve_environment(raw_params: dict[str, str], seed: dict[str, float]) -> dict[str, float]:
+def _resolve_environment(
+    raw_params: dict[str, str], seed: dict[str, float], shadowed: frozenset[str] = frozenset()
+) -> dict[str, float]:
     """raw_params를 고정점에 도달할 때까지 반복 해소한다.
 
     한 번의 통과로는 부족하다: `.param wp='wn*2'`가 `.param wn=4`보다 먼저
@@ -102,8 +105,14 @@ def _resolve_environment(raw_params: dict[str, str], seed: dict[str, float]) -> 
     우선순위가 뒤집힌다 (전역이 항상 이긴다). 그래서 raw_params의 이름은
     seed에서 지우고 시작하고, 로컬에서 끝내 못 풀면 seed 값으로 되돌아가지
     않고 그냥 빠진 채로 남긴다 - 로컬 선언이 있는데 그게 안 풀렸다고 전역을
-    노출하는 것도 같은 종류의 추측이다."""
-    env = {k: v for k, v in seed.items() if k not in raw_params}
+    노출하는 것도 같은 종류의 추측이다.
+
+    shadowed는 로컬에 선언은 있으나 값을 확정할 수 없어 raw_params에서 아예
+    빠진 이름들이다 (인스턴스마다 값이 갈렸거나, 인터페이스와 본문 .param이
+    같은 이름을 두고 충돌한 경우). raw_params에 없다는 이유로 seed 값이
+    비치면 "모른다"고 판정해 놓고 전역값을 내주는 셈이 되므로, 이쪽도
+    똑같이 가려야 한다."""
+    env = {k: v for k, v in seed.items() if k not in raw_params and k not in shadowed}
     for _ in range(len(raw_params) + 1):
         progressed = False
         for name, raw in raw_params.items():
@@ -118,28 +127,32 @@ def _resolve_environment(raw_params: dict[str, str], seed: dict[str, float]) -> 
     return env
 
 
-def _collect_global_raw_params(text: str) -> dict[str, str]:
-    raw: dict[str, str] = {}
-    depth = 0
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("*"):
-            continue
-        code, _ = strip_inline_comment(stripped)
+def _collect_raw_params(text: str) -> dict[str | None, dict[str, str]]:
+    """스코프 경로(최상위는 None) → 그 스코프에서 선언된 `.param` 원본 문자열.
+
+    서브회로 본문의 `.param`도 수집한다. 예전에는 depth를 세어 최상위 것만
+    읽었기 때문에 `.subckt` 안에 선언된 파라미터를 참조하는 소자는 값을
+    해소하지 못하고 폴백을 탔다 - 안전한 방향이긴 해도 커버리지 구멍이었다.
+
+    `logical_lines`를 쓰므로 `+` 연속 줄에 이어진 할당도 잃지 않는다."""
+    collected: dict[str | None, dict[str, str]] = {None: {}}
+    stack: list[str] = []
+    for code, _indices in logical_lines(text.splitlines()):
         lower = code.lower()
         if _is_subckt_open(lower):
-            depth += 1
+            stack.append(split_tokens(code)[1])
             continue
         if _is_subckt_close(lower):
-            depth = max(0, depth - 1)
-            continue
-        if depth:
+            if stack:
+                stack.pop()
             continue
         match = _PARAM_DIRECTIVE_RE.match(code)
         if match:
+            scope = ".".join(stack) if stack else None
+            target = collected.setdefault(scope, {})
             for name, value in _ASSIGN_RE.findall(match.group(1)):
-                raw[name] = value
-    return raw
+                target[name] = value
+    return collected
 
 
 def _resolve_subckt_reference(parsed, component_scope: str | None, name: str) -> str | None:
@@ -207,24 +220,32 @@ def _instance_overrides(parsed, subckt_path: str, subckt_name: str) -> tuple[dic
 def build_param_envs(text: str) -> dict[str | None, dict[str, float]]:
     """스코프 경로(최상위는 None) → 해소된 파라미터 환경.
 
-    우선순위는 낮은 것부터: 전역 .param, 서브회로 .subckt 줄 기본값,
-    인스턴스 오버라이드.
+    우선순위는 낮은 것부터: 전역 .param, 서브회로 본문 .param,
+    .subckt 줄 기본값, 인스턴스 오버라이드.
+
+    본문 .param과 .subckt 줄 기본값이 같은 이름을 선언하면 어느 쪽이 이기는지가
+    방언마다 다르므로 그 이름은 해소 불가로 둔다 - 인스턴스마다 값이 갈릴 때와
+    같은 규칙이고, 같은 이유다.
 
     인스턴스 오버라이드는 한 단계만 전파한다. 서브회로가 다른 서브회로 안에서
     인스턴스화되고 그 바깥쪽이 서로 다른 파라미터로 여러 번 인스턴스화되는
     경우까지는 따라가지 않는다 - 전체 트리 전파는 E2가 인스턴스 트리를 만든
     뒤에 가능하다."""
     parsed = parse_netlist(text)
-    global_env = _resolve_environment(_collect_global_raw_params(text), {})
+    raw_by_scope = _collect_raw_params(text)
+    global_env = _resolve_environment(raw_by_scope.get(None, {}), {})
 
     envs: dict[str | None, dict[str, float]] = {None: global_env}
     for path, subckt in parsed.subckts.items():
-        raw = dict(subckt.defaults)
+        body = raw_by_scope.get(path, {})
+        raw = {**body, **subckt.defaults}
+        shadowed = set(body) & set(subckt.defaults)
         result = _instance_overrides(parsed, path, subckt.name)
         if result is not None:
             agreed, disagreeing = result
             raw.update(agreed)
-            for name in disagreeing:
-                raw.pop(name, None)
-        envs[path] = _resolve_environment(raw, global_env)
+            shadowed |= disagreeing
+        for name in shadowed:
+            raw.pop(name, None)
+        envs[path] = _resolve_environment(raw, global_env, frozenset(shadowed))
     return envs

@@ -307,17 +307,22 @@ worth reading before assuming a weak-model failure is a code bug:
   reached ngspice and the failure looked like a bad tuning proposal rather
   than a parser bug. All five tokenisation sites in `netlist.py` route through
   the helper; adding a sixth that uses `.split()` reopens this.
-- **A `.param` declared inside a `.subckt` body is ignored.** `params.py`'s
-  `_collect_global_raw_params` only walks lines at depth 0, and per-subckt
-  environments are built from `.subckt`-line defaults and instance overrides
-  only — a `.param` between `.subckt`/`.ends` never reaches either. The
-  direction is safe (the name resolves to `None` and the caller's fallback
-  fires) but it's a coverage hole, not intended behaviour.
-- **`+` continuation lines are unhandled.** `.param wn=4` followed on the next
-  line by `+ wp=8` loses `wp` entirely (only the first line is read as the
-  `.param` directive's body). `area_limits.py`'s `index_baseline_components`
-  additionally manufactures a bogus component with refdes `+`, since nothing
-  recognizes the line as a continuation rather than a new statement.
+- **Fold `+` continuations with `netlist.logical_lines` before reading a deck
+  line-by-line.** It returns `(code, [physical line indices])`, so parsing sees
+  the joined statement while `apply_changes` still edits the physical line the
+  token actually sits on. Treating a `+` line as its own statement produced a
+  bogus component with refdes `+` that *stole* the real device's parameters —
+  leaving `M1` with `params={}` and therefore no area-gate baseline — and made
+  `apply_changes` append `W=99` to the first line while `W=10` stayed on the
+  continuation, so the deck carried `W` twice.
+- **A parameter's scope decides whether it resolves, and a contested name
+  resolves to nothing.** `params.py` collects `.param` at any depth and
+  attributes it to the enclosing subckt path. Precedence is global < subckt
+  body `.param` < `.subckt`-line default < instance override. When a name is
+  declared both in the body and on the `.subckt` line — or when instances
+  disagree on it — it is dropped *and* masked from the global environment, so
+  the caller sees "unknown" rather than a global value standing in for a local
+  one.
 
 ## Testing conventions
 

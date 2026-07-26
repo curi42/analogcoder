@@ -184,3 +184,18 @@ def test_the_fixture_parses_without_losing_any_block():
     assert sorted(parsed.subckts) == ["CORE", "WRAP", "WRAP.DEEP"]
     assert [c.refdes for c in parsed.subckts["WRAP"].components] == ["Xd", "M5"]
     assert [c.refdes for c in parsed.top_components] == ["Xc1", "Xw1"]
+
+
+def test_a_disagreeing_override_does_not_fall_back_to_a_global_of_the_same_name():
+    # 회귀: 불일치로 판정된 이름을 raw에서 제거하면 _resolve_environment가
+    # "로컬 선언 없음"으로 보고 시드(전역)의 값을 그대로 비춰줬다. "모른다"고
+    # 판정해 놓고 전역값을 내주는 셈이라, 추측하지 않는다는 계약 위반이다.
+    deck = (
+        "* t\n.param W=5\n.subckt SUB a b W=10\nM1 a b 0 0 nch W=W\n.ends\n"
+        "X1 p q SUB W=20\nX2 r s SUB W=40\n.end\n"
+    )
+
+    envs = build_param_envs(deck)
+
+    assert envs[None]["W"] == 5.0
+    assert "W" not in envs["SUB"]

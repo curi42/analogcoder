@@ -152,6 +152,39 @@ def split_tokens(code: str) -> list[str]:
     return tokens
 
 
+def logical_lines(lines: list[str]) -> list[tuple[str, list[int]]]:
+    """물리 줄 목록을 논리 줄로 접는다. 각 항목은 (코드부, 물리 줄 인덱스들).
+    빈 줄과 `*` 전체 주석 줄은 빠지고, 인라인 주석은 코드부에서 제거된다.
+
+    SPICE에서 `+`로 시작하는 줄은 앞 문장의 연속이다. 접지 않으면 그 줄이
+    새 문장으로 파싱되어 refdes가 `+`인 가짜 소자가 생기고, 원래 소자는
+    자기 파라미터를 그 가짜에게 빼앗겨 `params={}`가 된다 - 에어리어 게이트에
+    베이스라인이 없어진다는 뜻이다. 게다가 apply_changes가 그 소자에
+    `W=99`를 덧붙이면 연속 줄의 `W=10`이 그대로 남아 덱에 `W`가 두 번
+    나오는 상태가 된다.
+
+    물리 줄 인덱스를 함께 돌려주는 이유는 편집 때문이다: 파싱은 접힌
+    코드로 하지만, apply_changes는 토큰이 실제로 있는 물리 줄을 고쳐야
+    하고 `_line_scopes`도 물리 줄 단위로 정렬되어 있다."""
+    groups: list[tuple[list[str], list[int]]] = []
+    for i, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("*"):
+            continue
+        code, _ = strip_inline_comment(stripped)
+        if not code:
+            continue
+        if code.startswith("+"):
+            # 앞선 문장이 없는 연속 줄은 이어붙일 곳이 없다. 유효한 SPICE가
+            # 아니므로 버린다 - 가짜 소자를 만드는 것보다 낫다.
+            if groups:
+                groups[-1][0].append(code[1:].strip())
+                groups[-1][1].append(i)
+            continue
+        groups.append(([code], [i]))
+    return [(" ".join(parts), indices) for parts, indices in groups]
+
+
 def _is_subckt_open(lower: str) -> bool:
     return lower.startswith(".subckt") or lower.startswith(".macro")
 
@@ -183,13 +216,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
     stack: list[Subckt] = []
     scale = netlist_scale(text)
 
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("*"):
-            continue
-        line, _ = strip_inline_comment(line)
-        if not line:
-            continue
+    for line, _indices in logical_lines(text.splitlines()):
         lower = line.lower()
         if _is_subckt_open(lower):
             tokens = split_tokens(line)
@@ -258,25 +285,26 @@ def _line_scopes(lines: list[str]) -> list[str | None]:
 
 def _find_matches(
     lines: list[str], scopes: list[str | None], scope: str | None, refdes: str
-) -> list[tuple[int, list[str]]]:
-    """Every non-directive line whose first token is refdes, restricted to
-    scope when scope is not None. Shared by apply_changes (which acts on the
+) -> list[tuple[list[int], list[str]]]:
+    """Every non-directive logical line whose first token is refdes, restricted
+    to scope when scope is not None. Shared by apply_changes (which acts on the
     match) and check_refdes_resolution (which only classifies it) so the two
-    can never disagree about what a given <refdes> or <scope>.<refdes> means."""
-    matches: list[tuple[int, list[str]]] = []
-    for i, raw_line in enumerate(lines):
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("*") or stripped.startswith("."):
-            continue
-        code, _ = strip_inline_comment(stripped)
-        if not code:
+    can never disagree about what a given <refdes> or <scope>.<refdes> means.
+
+    논리 줄 단위로 돌되 물리 줄 인덱스 목록을 함께 돌려준다: 소자가 `+`
+    연속 줄에 걸쳐 있으면 토큰은 접힌 것을 봐야 맞고, 편집은 그 토큰이 실제로
+    있는 물리 줄에 가야 맞다. 스코프는 첫 물리 줄 것을 쓴다 - `_line_scopes`가
+    물리 줄 단위이기 때문이다."""
+    matches: list[tuple[list[int], list[str]]] = []
+    for code, indices in logical_lines(lines):
+        if code.startswith("."):
             continue
         tokens = split_tokens(code)
         if tokens[0] != refdes:
             continue
-        if scope is not None and scopes[i] != scope:
+        if scope is not None and scopes[indices[0]] != scope:
             continue
-        matches.append((i, tokens))
+        matches.append((indices, tokens))
     return matches
 
 
@@ -308,7 +336,7 @@ def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str |
             continue
 
         if len(matches) > 1:
-            where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            where = sorted({scopes[idx[0]] or "<top-level>" for idx, _ in matches})
             qualified = ", ".join(f"{s}.{refdes}" for s in where)
             violations.append(
                 f"{scoped_refdes!r} is ambiguous - it matches components in {', '.join(where)}; "
@@ -318,6 +346,51 @@ def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str |
     if violations:
         return False, "; ".join(violations)
     return True, None
+
+
+def _rewrite_line(lines: list[str], index: int, mutate) -> bool:
+    """물리 줄 하나를 토큰 단위로 고쳐 쓴다. mutate(tokens)가 False를 돌려주면
+    그 줄에는 대상이 없다는 뜻이므로 아무것도 바꾸지 않는다.
+
+    `+` 연속 접두와 인라인 주석은 보존한다 - 접두를 잃으면 그 줄이 새 문장이
+    되어 다음 파싱에서 가짜 소자가 된다."""
+    code, comment = strip_inline_comment(lines[index].strip())
+    prefix, body = ("+ ", code[1:].strip()) if code.startswith("+") else ("", code)
+    tokens = split_tokens(body)
+    if not mutate(tokens):
+        return False
+    lines[index] = prefix + " ".join(tokens) + (f" {comment}" if comment else "")
+    return True
+
+
+def _replace_positional(new_value: str):
+    def mutate(tokens: list[str]) -> bool:
+        positional = [j for j, t in enumerate(tokens) if "=" not in t]
+        if not positional:
+            return False
+        tokens[positional[-1]] = new_value
+        return True
+
+    return mutate
+
+
+def _replace_param(param: str, new_value: str):
+    def mutate(tokens: list[str]) -> bool:
+        for j, token in enumerate(tokens):
+            if token.startswith(f"{param}="):
+                tokens[j] = f"{param}={new_value}"
+                return True
+        return False
+
+    return mutate
+
+
+def _append_param(param: str, new_value: str):
+    def mutate(tokens: list[str]) -> bool:
+        tokens.append(f"{param}={new_value}")
+        return True
+
+    return mutate
 
 
 def apply_changes(text: str, changes: list[dict]) -> str:
@@ -333,28 +406,24 @@ def apply_changes(text: str, changes: list[dict]) -> str:
         if not matches:
             continue
         if len(matches) > 1:
-            where = sorted({scopes[i] or "<top-level>" for i, _ in matches})
+            where = sorted({scopes[idx[0]] or "<top-level>" for idx, _ in matches})
             qualified = ", ".join(f"{s}.{refdes}" for s in where)
             raise ValueError(
                 f"refdes {change['refdes']!r} is ambiguous - it matches components in {', '.join(where)}; "
                 f"qualify it as one of: {qualified}"
             )
 
-        i, tokens = matches[0]
-        _, comment = strip_inline_comment(lines[i].strip())
+        indices, _tokens = matches[0]
         if param == "value":
-            positional_idx = [j for j, t in enumerate(tokens) if "=" not in t]
-            tokens[positional_idx[-1]] = new_value
-        else:
-            replaced = False
-            for j, tok in enumerate(tokens):
-                if tok.startswith(f"{param}="):
-                    tokens[j] = f"{param}={new_value}"
-                    replaced = True
+            # 마지막 위치 토큰을 가진 물리 줄을 뒤에서부터 찾는다. 연속 줄은
+            # 보통 name=value 뿐이라 위치 토큰이 없고, 값은 첫 줄에 있다.
+            for index in reversed(indices):
+                if _rewrite_line(lines, index, _replace_positional(new_value)):
                     break
-            if not replaced:
-                tokens.append(f"{param}={new_value}")
-        lines[i] = " ".join(tokens) + (f" {comment}" if comment else "")
+        elif not any(_rewrite_line(lines, i, _replace_param(param, new_value)) for i in indices):
+            # 어느 물리 줄에도 없는 param은 마지막 줄에 덧붙인다. 첫 줄에
+            # 붙이면 연속 줄에 같은 이름이 있을 때 덱에 두 번 나오게 된다.
+            _rewrite_line(lines, indices[-1], _append_param(param, new_value))
     return "\n".join(lines) + "\n"
 
 
