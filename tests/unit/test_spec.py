@@ -107,9 +107,11 @@ def test_topology_required_spec_has_stricter_phase_margin_threshold():
     phase_margin = next(c for c in spec.canonical.criteria if c.name == "phase_margin")
     baseline_phase_margin = next(c for c in baseline.canonical.criteria if c.name == "phase_margin")
 
-    assert phase_margin.threshold == 65.0
+    assert phase_margin.threshold == 62.0
     assert phase_margin.threshold > baseline_phase_margin.threshold
-    # gain and UGBW thresholds are unchanged from the baseline spec
-    assert {c.name: c.threshold for c in spec.canonical.criteria if c.name != "phase_margin"} == {
-        c.name: c.threshold for c in baseline.canonical.criteria if c.name != "phase_margin"
-    }
+    # On sky130 (see docs/superpowers/specs/2026-07-26-sky130-pdk-migration-design.md),
+    # dc_gain and unity_gain_bandwidth are also raised, not just phase_margin -
+    # every criterion in the harder spec is at least as strict as the baseline.
+    baseline_by_name = {c.name: c.threshold for c in baseline.canonical.criteria}
+    for c in spec.canonical.criteria:
+        assert c.threshold >= baseline_by_name[c.name]
