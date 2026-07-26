@@ -227,10 +227,26 @@ def test_index_baseline_components_aliases_a_unique_refdes_unqualified():
 def test_area_gate_uses_the_scoped_baseline_not_a_colliding_one():
     baseline = index_baseline_components(TWO_BUFFERS_NETLIST)
 
+    # Prove that colliding refdes has no plain alias (would be present pre-change)
+    assert "Xcc" not in baseline
+
+    # Prove that scoped keys exist (would not exist pre-change)
+    assert "BUF_P.Xcc" in baseline
+    assert "BUF_N.Xcc" in baseline
+
     # 20 -> 30 is 1.5x against BUF_N's own baseline, at the tier limit.
     # Against BUF_P's 10 it would look like 3.0x and be rejected.
     approved, feedback = check_area_growth(
         baseline, [{"refdes": "BUF_N.Xcc", "param": "W", "new_value": "30"}]
     )
-
     assert approved, feedback
+
+    # Verify that using the WRONG scoped key's baseline would fail,
+    # because 20 -> 30 is 3.0x against BUF_P's W=10 baseline, exceeding
+    # the 1.5x tier limit. Pre-change would have approved=True for the wrong
+    # reason (scoped key not found, so check silently skipped).
+    approved_wrong, feedback_wrong = check_area_growth(
+        baseline, [{"refdes": "BUF_P.Xcc", "param": "W", "new_value": "30"}]
+    )
+    assert not approved_wrong, "Should reject 3.0x growth against BUF_P's baseline"
+    assert "BUF_P.Xcc" in feedback_wrong
