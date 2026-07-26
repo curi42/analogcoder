@@ -14,7 +14,19 @@ def _wrap_tool(tool_spec: ToolSpec):
     return _handler
 
 
+DEFAULT_CLAUDE_MODEL = "sonnet"
+
+
 class ClaudeSDKBackend(AgentBackend):
+    def __init__(self, model: str = DEFAULT_CLAUDE_MODEL):
+        # Always pinned explicitly, never left unset. An unset model inherits
+        # the bundled claude CLI's configured default, so a change to the
+        # user's ~/.claude/settings.json silently changes which model every
+        # agent runs on - that is how a whole verification run ended up on
+        # Opus. Dev runs must not be MORE capable than the production target
+        # model, or the pipeline's reliability looks better than it will be.
+        self.model = model
+
     async def run(
         self, system_prompt: str, user_prompt: str, output_schema: dict, tools: list[ToolSpec]
     ) -> dict:
@@ -26,6 +38,7 @@ class ClaudeSDKBackend(AgentBackend):
             allowed_tools = [f"mcp__agent_tools__{t.name}" for t in tools]
 
         options = ClaudeAgentOptions(
+            model=self.model,
             system_prompt=system_prompt,
             output_format={"type": "json_schema", "schema": output_schema},
             mcp_servers=mcp_servers,

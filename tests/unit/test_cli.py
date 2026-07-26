@@ -4,7 +4,7 @@ import pytest
 
 from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
-from analogcoder.cli import _build_agent_backend, _run, build_arg_parser
+from analogcoder.cli import _build_agent_backend, _build_agent_backends, _run, build_arg_parser
 
 SPEC_YAML = (
     "circuit_name: test\n"
@@ -243,3 +243,74 @@ async def test_run_keeps_pass_when_final_pvt_sweep_also_passes(tmp_path):
     assert mock_sweep.call_count == 2
     assert result["status"] == "PASS"
     assert result["pvt_sweep"]["overall_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_hands_orchestration_include_resolved_netlist_texts(tmp_path):
+    # The orchestration loop simulates the netlist copies RunState stages into
+    # the run dir, not the originals in the benchmark dir. A bare relative
+    # `.include "pdk_corner.inc"` cannot resolve from there, so _run must
+    # absolutize includes against the netlist's own directory before handing
+    # the texts off - otherwise every simulation of a real PDK-based benchmark
+    # fails with "could not find include file" and the whole loop runs on
+    # empty measurements.
+    (tmp_path / "pdk_corner.inc").write_text("* pdk\n")
+    (tmp_path / "netlist.cir").write_text('* netlist\n.include "pdk_corner.inc"\n.end\n')
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", str(tmp_path / "runs" / "r6")])
+
+    fake_result = {
+        "status": "PASS", "final_netlist_paths": {"ac_loop_gain": str(tmp_path / "netlist.cir")},
+        "run_dir": str(tmp_path / "runs" / "r6"), "iterations_used": 1, "final_criteria": [],
+    }
+
+    with patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)) as mock_orch:
+        await _run(args)
+
+    passed_texts = mock_orch.await_args.args[0]
+    assert f'.include "{tmp_path / "pdk_corner.inc"}"' in passed_texts["ac_loop_gain"]
+
+
+def test_claude_backend_defaults_to_sonnet():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", "s.yaml"])
+
+    backends = _build_agent_backends(args)
+
+    assert set(backends) == {"analyzer", "simulator", "judge", "tuner", "verifier"}
+    assert all(b.model == "sonnet" for b in backends.values())
+
+
+def test_claude_model_flag_sets_every_agent_model():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", "s.yaml", "--claude-model", "haiku"])
+
+    backends = _build_agent_backends(args)
+
+    assert all(b.model == "haiku" for b in backends.values())
+
+
+def test_agent_model_flag_overrides_a_single_agent():
+    # Lets a run drop one agent to a weaker model to see whether the pipeline
+    # still holds - the tool-calling agents (simulator, judge) are the ones a
+    # lower-capability model has historically struggled with.
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        ["--spec", "s.yaml", "--claude-model", "sonnet", "--agent-model", "simulator=haiku"]
+    )
+
+    backends = _build_agent_backends(args)
+
+    assert backends["simulator"].model == "haiku"
+    assert backends["tuner"].model == "sonnet"
+
+
+def test_agent_model_flag_rejects_an_unknown_agent_name():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", "s.yaml", "--agent-model", "nosuchagent=haiku"])
+
+    with pytest.raises(ValueError, match="nosuchagent"):
+        _build_agent_backends(args)

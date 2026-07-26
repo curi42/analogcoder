@@ -96,3 +96,38 @@ async def test_wrap_tool_invokes_tool_spec_handler_and_serializes_result():
 
     handler.assert_awaited_once_with({"x": 1})
     assert result == {"content": [{"type": "text", "text": json.dumps({"computed": 42})}]}
+
+
+@pytest.mark.asyncio
+async def test_run_defaults_to_sonnet_rather_than_inheriting_the_cli_default():
+    # ClaudeAgentOptions with no model set inherits whatever the bundled claude
+    # CLI's configured default is - which silently ran every agent on Opus once
+    # the user's ~/.claude/settings.json default changed. Dev runs must not be
+    # more capable than the production target model, or the pipeline looks more
+    # reliable than it will actually be.
+    backend = ClaudeSDKBackend()
+    captured = {}
+
+    async def fake_query(prompt, options):
+        captured["options"] = options
+        yield _result_message(structured_output={"ok": True})
+
+    with patch("analogcoder.agents.backends.claude_sdk.query", fake_query):
+        await backend.run("system prompt", "user prompt", {"type": "object"}, [])
+
+    assert captured["options"].model == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_run_uses_explicitly_configured_model():
+    backend = ClaudeSDKBackend(model="haiku")
+    captured = {}
+
+    async def fake_query(prompt, options):
+        captured["options"] = options
+        yield _result_message(structured_output={"ok": True})
+
+    with patch("analogcoder.agents.backends.claude_sdk.query", fake_query):
+        await backend.run("system prompt", "user prompt", {"type": "object"}, [])
+
+    assert captured["options"].model == "haiku"
