@@ -4,11 +4,15 @@
 # BUF_P - whatever is done inside BUF_P, vbg1_droop never leaves 23.93..24.22mV,
 # and growing BUF_N.Xcl changes vbg0 not at all.
 #
-# The reachable knob is BUF_P.Xt, the bias current: W 24 -> 72 (3.0x, the area
-# gate's limit for a 24um baseline) gives 2.34mV. The compensation cap does NOT
-# work here: BUF_P.Xcl saturates at 16.79mV even at its own 3.0x limit (W=60),
-# so a proposal that only grows Xcl cannot pass however many iterations it
-# spends. Measured table is in the design spec's "Validation runs" section.
+# At least two knobs reach the threshold within the area gate: BUF_P.Xt, the
+# bias current (W 24 -> 72, the 3.0x limit for a 24um baseline, gives 2.34mV),
+# and BUF_P.X6, the output stage's drive strength (W 20 -> 55, 2.75x, gives
+# 14.79mV - found by a real run, not by the sweep). This list is not exhaustive.
+#
+# The compensation cap does NOT work here: BUF_P.Xcl saturates at 16.79mV even
+# at its own 3.0x limit (W=60), so a proposal that only grows Xcl cannot pass
+# however many iterations it spends. Measured tables are in the design spec's
+# "Validation runs" section.
 circuit_name: bandgap
 testbenches:
   - name: dc_tc

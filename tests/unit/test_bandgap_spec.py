@@ -67,10 +67,12 @@ def test_trim_pm_seed_fails_at_nominal(tmp_path):
 
 
 def test_buf0_droop_seed_fails_at_nominal_and_is_local_to_buf_p(tmp_path):
-    # Measured: BUF_P.Xcl 20x20 -> 19.93mV droop (fails <=15), 50x50 -> 12.50mV
-    # (passes). Growing BUF_N.Xcl instead moves only vbg1's droop (24.12 ->
-    # 23.97mV) and leaves vbg0 untouched, so this criterion really does
-    # localise to one block.
+    # Measured: 19.93mV droop at nominal, failing <=15. Reachable within the
+    # area gate via BUF_P.X6.W 20 -> 55 (14.79mV, confirmed by a full run) or
+    # BUF_P.Xt.W 24 -> 72 (2.34mV); BUF_P.Xcl saturates at 16.79mV at its own
+    # 3.0x limit and cannot get there. Growing BUF_N.Xcl instead moves only
+    # vbg1's droop (24.12 -> 23.97mV) and leaves vbg0 untouched, so this
+    # criterion really does localise to one block.
     spec = load_spec(os.path.join(BENCH, "spec_seed_buf0_droop.yaml"))
 
     verdict, failed = _failed(spec, tmp_path)

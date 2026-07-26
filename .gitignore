@@ -5,3 +5,4 @@ __pycache__/
 runs/
 .pytest_cache/
 .worktrees/
+runs_*.log

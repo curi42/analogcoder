@@ -719,7 +719,7 @@ minimisation sub-project, so it should have room to be optimised.
 |---|---|---|---|---|---|
 | `spec_seed_tc.yaml` | `tc_ppm_per_c ≤ 30` | 36.30 | `BGR_CORE.XRpa`/`XRpb` `l` 324.74→321.3 | 29.30 | `vbgout` 1.2389→1.2334, `vbg1` 1.1999→1.1947 (deliberately coupled) |
 | `spec_seed_trim_pm.yaml` | `trim_pm_deg ≥ 85` | 81.14 | `TRIMAMP.XRz` `l` 15→25 | 98.22 | `buf1_pm` 101.56→101.65 (unmoved) |
-| `spec_seed_buf0_droop.yaml` | `vbg0_droop_mv ≤ 15` | 19.93 | `BUF_P.Xcl` 20×20→50×50 | 12.50 | `vbg1_droop` 24.12→23.97 (unmoved) |
+| `spec_seed_buf0_droop.yaml` | `vbg0_droop_mv ≤ 15` | 19.93 | `BUF_P.X6.W` 20→55 (see the validation section — this row originally named `BUF_P.Xcl`, which the area gate blocks) | 14.79 | `vbg1_droop` 24.12→24.03 (unmoved) |
 
 The tc seed is the interesting one: `Rp/R1` moves `vbgout` and `vbg1` as well,
 so the tuner cannot fix TC in isolation — it has to keep two other criteria
@@ -742,7 +742,7 @@ The three seeded specs were run end-to-end through the CLI on `sonnet`.
 |---|---|---|
 | `spec_seed_trim_pm.yaml` | **PASS, 1 iteration** | `TRIMAMP.XRz.l 15 → 25` |
 | `spec_seed_tc.yaml` | **PASS, 1 iteration** | `BGR_CORE.XRpa.l` **and** `XRpb.l`, both 324.74 → 321.3 |
-| `spec_seed_buf0_droop.yaml` | see below | `BUF_P.Xcl.W 20 → 30`, then iterating |
+| `spec_seed_buf0_droop.yaml` | **PASS, 4 iterations** | `BUF_P.Xcl.W 20 → 50`, then `BUF_P.X6.W 20 → 35 → 45 → 55` |
 
 The first two are exactly the intended results. In both cases the tuner picked
 the correct block on its **first** proposal, with a correctly subckt-qualified
@@ -776,6 +776,45 @@ above and in the spec file's header was wrong.
 This is worth keeping as a finding rather than quietly correcting: a seeded
 benchmark whose documented fix is blocked by another of the project's own gates
 is exactly the kind of interaction that only shows up when the whole pipeline
-runs. The `spec_seed_buf0_droop.yaml` header and the culprit map now name
-`BUF_P.Xt` (bias current) as the reachable knob and `BUF_P.Xcl` as the one that
-saturates.
+runs.
+
+### The area gate does not just block — it redirects
+
+The run itself then found a third knob, and did it *because* the gate fired:
+
+| iteration | proposal | outcome | `vbg0_droop` |
+|---|---|---|---|
+| — | baseline | — | 19.93 mV |
+| 1 | `BUF_P.Xcl.W` 20→50 | kept | 17.47 mV |
+| 2 retry 1 | `BUF_P.Xcl` `W` 50→60 **and** `L` 20→50 | **area gate rejected**, 7.50× | — |
+| 2 retry 2 | `BUF_P.X6.W` 20→35 | kept | 15.51 mV |
+| 3 | `BUF_P.X6.W` 35→45 | kept | 15.02 mV |
+| 4 | `BUF_P.X6.W` 45→55 | kept | **14.79 mV — PASS** |
+
+Two things this shows that the unit tests could not. First, the gate's feedback
+changed the tuner's *strategy*, not just its numbers: told that growing the cap
+7.5× was out of bounds, it abandoned the cap entirely on the very next retry and
+moved to the output stage. That retry cost no LLM call for the rejection itself
+— `check_area_growth` runs before `verify_pre` — which is the whole reason the
+gate sits where it does.
+
+Second, `BUF_P.X6` (the CS output stage's drive strength) is a reachable knob
+that this document's own sweep never tried: 20→55 is 2.75×, inside the 3.0×
+tier. The sweep above covered `Xcl` and `Xt` and concluded `Xt` was *the*
+answer. It was one answer. This is the same pattern as `two_stage_opamp`, where
+a live run solved the topology-swap spec with a `Cc` + `M6.W` combination that
+was outside the recorded Cc-only sweep. A measured sweep bounds what is known to
+work; it does not bound what works.
+
+The header of `spec_seed_buf0_droop.yaml` and the culprit map now name both
+`BUF_P.Xt` and `BUF_P.X6` as reachable, and `BUF_P.Xcl` as the one that
+saturates — phrased so as not to claim the list is exhaustive.
+
+### All three seeds converge
+
+With this run, every seeded spec passes end-to-end on `sonnet`, and the
+benchmark's actual question is answered affirmatively in all three: **every**
+proposal across the three runs landed in the correct block, subckt-qualified.
+In the buf0 run specifically, all eight proposed changes were inside `BUF_P` —
+one of four structurally identical amplifiers — and `vbg1_droop`, produced by
+the sibling `BUF_N`, moved only 24.118 → 24.025 mV across the whole run.
