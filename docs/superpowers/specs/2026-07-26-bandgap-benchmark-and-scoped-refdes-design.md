@@ -731,3 +731,51 @@ of localisation: touching the wrong buffer changes nothing.
 `TRIMAMP.XRz` is also non-monotone — `l` = 25 → 98°, 40 → 124°, 60 → 125°,
 90 → 88° — so overshooting the knob is a real failure mode rather than a free
 win.
+
+---
+
+# Validation runs (2026-07-26) — and a defect in one seed's recorded knob
+
+The three seeded specs were run end-to-end through the CLI on `sonnet`.
+
+| seed | result | tuner's proposal |
+|---|---|---|
+| `spec_seed_trim_pm.yaml` | **PASS, 1 iteration** | `TRIMAMP.XRz.l 15 → 25` |
+| `spec_seed_tc.yaml` | **PASS, 1 iteration** | `BGR_CORE.XRpa.l` **and** `XRpb.l`, both 324.74 → 321.3 |
+| `spec_seed_buf0_droop.yaml` | see below | `BUF_P.Xcl.W 20 → 30`, then iterating |
+
+The first two are exactly the intended results. In both cases the tuner picked
+the correct block on its **first** proposal, with a correctly subckt-qualified
+refdes, and `verify_pre` explicitly noted that a bare `XRz` would be ambiguous
+because it appears in all four amplifiers — Part 1's addressing doing its job.
+The tc case is the stronger evidence: the tuner moved **both** `Rp` resistors
+together, which is required to keep the two branches balanced, and it landed on
+the exact value that had been measured as the optimum.
+
+## The buf0 seed's documented knob does not fit through the area gate
+
+Running it exposed a real defect in this design document. The seed's stated fix
+was "grow `BUF_P.Xcl` from 20×20 to 50×50" — a 6.25× area growth, which
+`check_area_growth` correctly **rejects** (the 3.0× tier). Measured, with only
+the knobs the area gate actually permits:
+
+| knob | growth | `vbg0_droop` | `vbg1_droop` |
+|---|---|---|---|
+| baseline | — | 19.93 mV | 24.12 mV |
+| `BUF_P.Xcl.W` 20→40 | 2.0× | 18.13 mV | 24.05 mV |
+| `BUF_P.Xcl.W` 20→60 | 3.0× (the cap) | **16.79 mV** | 24.01 mV |
+| `BUF_P.Xt.W` 24→48 | 2.0× | 18.94 mV | 24.22 mV |
+| `BUF_P.Xt.W` 24→72 | 3.0× | **2.34 mV** | 23.93 mV |
+
+So the compensation cap **cannot** reach the 15 mV threshold within the area
+gate — it saturates at 16.79 mV. The bias-current knob can, comfortably. The
+seed is still solvable and still perfectly localised (`vbg1_droop` never moves
+outside 23.93–24.22 mV whatever is done to `BUF_P`), but the knob recorded
+above and in the spec file's header was wrong.
+
+This is worth keeping as a finding rather than quietly correcting: a seeded
+benchmark whose documented fix is blocked by another of the project's own gates
+is exactly the kind of interaction that only shows up when the whole pipeline
+runs. The `spec_seed_buf0_droop.yaml` header and the culprit map now name
+`BUF_P.Xt` (bias current) as the reachable knob and `BUF_P.Xcl` as the one that
+saturates.

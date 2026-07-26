@@ -1,0 +1,4 @@
+an error occurred during closing of asynchronous generator <async_generator object InternalClient._process_query_inner at 0x10881bde0>
+asyncgen: <async_generator object InternalClient._process_query_inner at 0x10881bde0>
+RuntimeError: aclose(): asynchronous generator is already running
+Status: PASS

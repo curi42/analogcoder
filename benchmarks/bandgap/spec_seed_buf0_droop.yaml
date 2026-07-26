@@ -1,10 +1,14 @@
 # Seeded-failure variant of spec.yaml: exactly ONE threshold is tightened.
 #
-# vbg0_droop <= 15mV fails at nominal (measured 19.93) and localises cleanly
-# to BUF_P: growing BUF_P.Xcl from 20x20 to 50x50 gives 12.50mV, while
-# vbg1_droop moves only 24.12 -> 23.97mV. Growing BUF_N.Xcl instead changes
-# vbg0 not at all. That 2.5x growth needs the area gate's 3.0x tier, which is
-# why SKY130_GEOMETRY_TIERS' first boundary sits at 25um.
+# vbg0_droop <= 15mV fails at nominal (measured 19.93) and localises cleanly to
+# BUF_P - whatever is done inside BUF_P, vbg1_droop never leaves 23.93..24.22mV,
+# and growing BUF_N.Xcl changes vbg0 not at all.
+#
+# The reachable knob is BUF_P.Xt, the bias current: W 24 -> 72 (3.0x, the area
+# gate's limit for a 24um baseline) gives 2.34mV. The compensation cap does NOT
+# work here: BUF_P.Xcl saturates at 16.79mV even at its own 3.0x limit (W=60),
+# so a proposal that only grows Xcl cannot pass however many iterations it
+# spends. Measured table is in the design spec's "Validation runs" section.
 circuit_name: bandgap
 testbenches:
   - name: dc_tc
