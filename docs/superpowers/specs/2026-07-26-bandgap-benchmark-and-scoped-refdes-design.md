@@ -597,3 +597,137 @@ Three are real defects that Part 2 must fix, not just benchmark content:
   non-inverting input to the other side. Getting this backwards does not
   produce an obvious failure — the core latched at `vbgout = 1.759 V` with a
   perfectly respectable-looking TC of 36 ppm/°C.
+
+---
+
+# Part 2 revision — folded cascode + CS output (2026-07-26)
+
+The user stated that in their real design **every amplifier is a folded
+cascode first stage followed by a common-source output stage**. The benchmark
+exists to resemble their structure, so all four amplifiers were rebuilt that
+way. This supersedes the 5T-OTA sizing in the "as built" section above; the
+measurements there are kept because several of them are still the *reason* for
+choices here.
+
+This was not only a fidelity change. **It recovered the ±10 % supply range**
+that the 5T version had to give up.
+
+## Why the fold fixes the headroom
+
+The 5T version failed at 1.62 V because the input pair's drain sits at
+`vdd − |Vgs_p|` under a PMOS mirror load, leaving
+`Vds(X1) = Vdd − Vcm − |Vgs_p| + Vgs_n ≈ 0` once `Vcm` reaches 1.2 V
+(measured: 27.8 mV, trim loop gain −45.4 dB, `vbg1` = 1.084 V).
+
+In a folded cascode that same node sits at `vdd − |Vdsat|`, because the PMOS
+cascode gate `pcas` is biased a full `|Vgs|` below the rail while the folding
+current source only needs its `|Vdsat|`. Measured on the rebuilt chain at
+1.8 V: the fold node is **1.652 V**, i.e. 148 mV below the rail, and
+`Vds(X1) = 1.099 V` — versus 27.8 mV before. At 1.62 V/−40 °C every process
+corner now holds `vbg1` between 1.195 V and 1.201 V.
+
+The trim amplifier's input-referred offset fell from 1.65 mV to **0.08 mV** at
+the same time, because the cascode's output impedance raises the loop gain.
+
+## Two new failure modes the CS output stage introduced
+
+Both were found by simulation, not inspection, and both are recorded because
+they are not obvious.
+
+**1. The bias chain and the CS stage latch each other off.** In the degenerate
+zero-current state the PTAT bias chain collapses (`nbias` measured at 15 mV),
+which turns every CS stage's NMOS sink off while its PMOS is fully on. Each
+amplifier output therefore pins HIGH, the core's PMOS stays off, and the
+startup pull-down (W = 2) cannot outfight a W = 20 PMOS. The 5T version had no
+such path. Fixed with `Xsu_b`, an always-on long-L PMOS trickling ~0.2 µA into
+`nbias`, so the chain can never be fully dead.
+
+**2. `ERRAMP`'s tail is the tightest node in the chain.** Its input common
+mode is `Vbe`, which falls to 0.549 V at 125 °C, so `tail = Vcm − Vgs_n`. At
+4 µA with a W = 16 pair the tail measured **35 mV** at 125 °C, the input pair
+left saturation, and — because a CS stage amplifies that gain collapse — the
+loop latched to the rail at `fs`/1.62 V/125 °C with `vbgout` = 1.576 V and
+1.3 mA of supply current. The fix is *less* current, not more width:
+`Vgs_n ∝ √(I/(W/L))`, so the tail was moved to L = 4 (≈1 µA) with a W = 48
+pair. Measured tail node afterwards: **128–175 mV** across all five process
+corners.
+
+## Loop-gain measurement had to change too
+
+The `Lfb`/`Cin` harness inherited from `two_stage_opamp` **does not work
+against a folded cascode**. A 1 MH inductor is a 6.3 MΩ open at 1 Hz, which
+was ample against the 5T's ~100 kΩ output impedance but is not against a
+cascode's tens of megohms — so the loop was never actually broken and the
+readings were nonsense. Raising the inductor to 1 GH restores the open but
+spreads the matrix over ~20 decades, and at many corners the solver returned
+garbage instead: gains of +189 dB and −108 dB, with **63 of 225 measurements
+missing entirely**.
+
+Replaced by **series voltage injection**. Every break point in this circuit
+drives a MOS gate only, so a `DC 0 AC 1` source in series is an exact
+unidirectional break with no reactive elements at all, and the loop gain is
+just the ratio of the two sides:
+
+```
+Vsc mpgate ampout DC 0 AC 0
+...
+let tmag = vdb(ampout)-vdb(mpgate)
+let tph  = vp(ampout)-vp(mpgate)
+meas ac core_gain_db FIND tmag AT=1
+meas ac core_pm_deg  FIND tph WHEN tmag=0
+```
+
+This also demonstrates that `meas ac ... FIND <let-vector> WHEN <let-vector>=0`
+works on user-defined vectors, which is what makes the two-node difference
+measurable at all.
+
+## Measured baseline, all 45 corners (5 process × 3 voltage × 3 temperature)
+
+Supply axis is back to **1.62 / 1.80 / 1.98 V (±10 %)**. All 225 measurements
+present — no gaps.
+
+| measurement | min (corner) | max (corner) | nominal |
+|---|---|---|---|
+| `vbgout_v` | 1.2337 (ff/1.98/27) | 1.2451 (ss/1.62/27) | 1.2399 |
+| `vbg0_v` | 0.49772 (ff/1.98/27) | 0.50374 (ss/1.62/27) | 0.50031 |
+| `vbg1_v` | 1.1959 (ff/1.98/27) | 1.2054 (ss/1.62/27) | 1.2009 |
+| `tc_ppm_per_c` | 31.31 (ff/1.62) | 53.92 (ss/1.62) | 36.30 |
+| `iq_ua` | 193.4 (sf/1.62) | 235.1 (fs/1.98) | 213.1 |
+| `psrr_bg_db` | −51.05 (fs/1.62/−40) | −31.04 (sf/1.98/125) | −43.60 |
+| `startup_time` | 74.8 ns (ff/1.98/125) | 9.75 µs (sf/1.62/−40) | 96.0 ns |
+| `vbg0_droop_mv` | 16.98 (ff/1.98/125) | 31.60 (ss/1.62/−40) | 19.92 |
+| `vbg1_droop_mv` | 19.64 (ff/1.98/−40) | 27.82 (ss/1.62/125) | 24.11 |
+| `core_gain_db` | 45.24 (sf/1.98/125) | 65.12 (fs/1.98/−40) | 57.83 |
+| `core_pm_deg` | 58.33 (ff/1.8/125) | 78.44 (fs/1.62/−40) | 66.09 |
+| `trim_gain_db` | 76.89 (sf/1.62/125) | 95.86 (fs/1.8/−40) | 87.55 |
+| `trim_pm_deg` | 78.84 (sf/1.98/27) | 86.16 (fs/1.62/−40) | 81.16 |
+| `buf1_gain_db` | 88.43 (sf/1.62/125) | 105.91 (fs/1.8/−40) | 97.98 |
+| `buf1_pm_deg` | 94.00 (sf/1.62/−40) | 111.90 (fs/1.98/125) | 101.56 |
+| `buf0_gain_db` | 74.85 (sf/1.62/−40) | 104.94 (ss/1.98/−40) | 100.16 |
+| `buf0_pm_deg` | 91.40 (sf/1.62/−40) | 112.06 (fs/1.98/−40) | 104.38 |
+
+Against the 5T version: `vbg1` at 1.62 V went 1.084 V → 1.196 V, amplifier
+gains 41–64 dB → 45–106 dB, output droop 56–81 mV → 17–32 mV. The cost is
+quiescent current, 79–89 µA → 193–235 µA, and a much wider `startup_time`
+spread (91 ns → 9.75 µs worst case). `iq_ua`'s threshold is set loosely at
+300 µA deliberately: this circuit is the input to the later area/current
+minimisation sub-project, so it should have room to be optimised.
+
+## The three seeded-failure specs, each verified solvable and block-local
+
+| spec | criterion | nominal | knob | result | other blocks |
+|---|---|---|---|---|---|
+| `spec_seed_tc.yaml` | `tc_ppm_per_c ≤ 30` | 36.30 | `BGR_CORE.XRpa`/`XRpb` `l` 324.74→321.3 | 29.30 | `vbgout` 1.2389→1.2334, `vbg1` 1.1999→1.1947 (deliberately coupled) |
+| `spec_seed_trim_pm.yaml` | `trim_pm_deg ≥ 85` | 81.14 | `TRIMAMP.XRz` `l` 15→25 | 98.22 | `buf1_pm` 101.56→101.65 (unmoved) |
+| `spec_seed_buf0_droop.yaml` | `vbg0_droop_mv ≤ 15` | 19.93 | `BUF_P.Xcl` 20×20→50×50 | 12.50 | `vbg1_droop` 24.12→23.97 (unmoved) |
+
+The tc seed is the interesting one: `Rp/R1` moves `vbgout` and `vbg1` as well,
+so the tuner cannot fix TC in isolation — it has to keep two other criteria
+inside their windows at the same time. That is the coupled-knob structure this
+benchmark was supposed to have. The other two are deliberately clean
+single-block targets, and the "other blocks" column is the actual measurement
+of localisation: touching the wrong buffer changes nothing.
+
+`TRIMAMP.XRz` is also non-monotone — `l` = 25 → 98°, 40 → 124°, 60 → 125°,
+90 → 88° — so overshooting the knob is a real failure mode rather than a free
+win.
