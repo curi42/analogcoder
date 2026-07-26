@@ -48,6 +48,12 @@ against a fixed schema (`schemas.py`).
   with the topology-swap threshold above — repeated area-blocked tuning can
   escalate into a topology swap instead of just giving up. See
   `docs/superpowers/specs/2026-07-25-area-aware-tuning-design.md`.
+  Size tiers are keyed on *scaled geometry* for sky130 primitives (`W`/`w`/`l`
+  times the deck's `.option scale`), and on the component's own value for
+  generic M/C/R. Reading a bare `W=30` as an absolute value had put every PDK
+  device in the unbounded 1.5x tier, so the tier table did nothing on exactly
+  the benchmarks that use a real PDK. A `pnp_05v5` is tiered on its emitter
+  multiplier `m`, a count rather than a length.
 - `spec.py` — `spec.yaml` declares one or more **testbenches** (`TargetSpec.testbenches`),
   each with its own netlist file, control block, and criteria — not a single
   implicit testbench. `TargetSpec.canonical` (`testbenches[0]`) is the netlist
@@ -128,6 +134,28 @@ and criteria — there's no separate `--netlist` flag.
   testbench together every iteration instead of just the one being tuned
   for. See `docs/superpowers/specs/2026-07-25-psr-verification-design.md`
   for the full Cc/M6.W/M7.W sweep data and a jointly-passing combination.
+
+- `benchmarks/bandgap/` — five-block Kuijk bandgap reference chain
+  (`BGR_CORE` + `ERRAMP` → `TRIMAMP` → resistor ladder → `BUF_N`/`BUF_P`),
+  producing `vbg1`=1.2V and `vbg0`=0.5V. Unlike every other benchmark this one
+  is **multi-block**, and its actual purpose is to measure whether the tuner
+  changes the *correct* block. `spec.yaml` passes everywhere; the three
+  `spec_seed_*.yaml` variants each tighten exactly one criterion whose only fix
+  lives in one subckt, and each was verified both solvable and localised —
+  e.g. growing `BUF_N.Xcl` does nothing for `vbg0_droop`, only `BUF_P.Xcl`
+  does. `spec_seed_tc.yaml` is deliberately the coupled one: `Rp/R1` fixes TC
+  but drags `vbgout` and `vbg1` with it. This benchmark is what made
+  subckt-scoped refdes a prerequisite — four amplifiers in one netlist means
+  refdes collision is the normal case.
+  Every amplifier is a **folded cascode plus a common-source output stage**,
+  matching the structure the target design uses. That is also what lets
+  `spec_pvt.yaml` sweep 45 corners over the full ±10% supply axis: a plain
+  mirror load leaves a 1.2V-common-mode input pair no saturation margin at
+  1.62V (measured: trim loop gain −45dB, `vbg1` = 1.084V). Uses `pnp_05v5` and
+  `res_high_po` alongside the FETs; every capacitor is an nfet or pfet MOS cap,
+  never MiM. Full corner table and the design assumptions ngspice disproved:
+  `docs/superpowers/specs/2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md`
+  ("Part 2 — as built" and "Part 2 revision").
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -216,6 +244,36 @@ worth reading before assuming a weak-model failure is a code bug:
   change), matching the existing philosophy for a missing baseline value —
   not by rejecting it, which would have been a different, larger behavior
   change. If you touch `check_area_growth`, keep this guard.
+- **sky130 device models are binned and exceeding a bin is a hard error.**
+  `wmax`/`lmax` are 100 µm. `W=120` aborts the run with `could not find a
+  valid modelname` — not a warning, not a bad number.
+- **`mult` on a sky130 `pnp_05v5` does nothing.** It scales only the model's
+  mismatch terms, which are zero without Monte Carlo. The emitter-area ratio a
+  bandgap needs is the *instance* multiplier `m=8`; `mult=8` yields ΔVbe ≈ 0
+  and a core with no PTAT current at all, silently.
+- **An nfet MOS cap cannot float** — its body is the p-substrate, so one plate
+  is pinned to `vss`. A Miller cap, which must sit between two signal nodes,
+  has to be a *pfet* MOS cap (isolated nwell body).
+- **The first line of a SPICE deck is the title.** A `.temp` placed there is
+  silently consumed and the run happens at 27 °C, producing corner data that
+  looks plausible and is wrong.
+- **`Lfb`/`Cin` loop breaking does not survive a cascode.** A 1 MH inductor is
+  only a 6.3 MΩ open at 1 Hz, so against a folded cascode's tens of megohms the
+  loop is never actually broken; raising it to 1 GH spans the matrix over ~20
+  decades and the solver returns garbage at many corners. Where the break point
+  drives a MOS gate, use series voltage injection (`DC 0 AC 1`) and read the
+  loop gain as `vdb(out)-vdb(in)` — exact, with no reactive elements. See
+  `benchmarks/bandgap/netlist_loops.cir`.
+- **A cascoded amp with a CS output stage can latch itself off.** If the bias
+  chain collapses with the core, every CS stage's NMOS sink turns off while its
+  PMOS is fully on, pinning each amp output HIGH; a startup pull-down then has
+  to outfight a much larger PMOS and loses. Keep a trickle current in the bias
+  chain (`BGR_CORE.Xsu_b`).
+- **`.option scale` must be declared in the netlist itself, not only in an
+  include.** `parse_netlist` never follows includes, so a deck that gets its
+  scale from `pdk_corner.inc` alone reads `W=30` as thirty *metres* — which is
+  exactly how the area gate's size tiers came to be inert on every PDK-backed
+  benchmark.
 - Local models are noticeably more reliable at agents with **no tool calls**
   (analyzer, tuner, verifier) than at tool-calling agents (simulator, judge).
   If a weak-model run fails, check which agent failed before assuming the
