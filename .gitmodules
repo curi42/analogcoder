@@ -1,0 +1,3 @@
+[submodule "third_party/skywater-pdk-libs-sky130_fd_pr"]
+	path = third_party/skywater-pdk-libs-sky130_fd_pr
+	url = https://github.com/google/skywater-pdk-libs-sky130_fd_pr.git
