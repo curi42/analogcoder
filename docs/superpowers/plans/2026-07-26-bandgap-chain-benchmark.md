@@ -27,8 +27,11 @@ Python 3 / pytest.
   gate on the signal node) where a rail reference works; a pfet cap (D/S/B in
   its own nwell) only where the cap must float. This is a user requirement
   about their real process, not a stylistic choice.
-- **Do not change the corner grid's voltage axis to ±10 %.** It is
-  1.71/1.80/1.89 V for a measured reason recorded in the design spec.
+- **Every amplifier is a folded cascode plus a common-source output stage.**
+  This is the structure the target design uses, and it is also what makes
+  1.62 V operation possible — a plain mirror load leaves the input pair no
+  saturation margin at a 1.2 V common mode. Do not "simplify" an amp back to
+  a 5T OTA.
 - **Never guess a threshold.** Every number in `spec.yaml` comes from the
   measured table in the design spec. If a step here disagrees with a
   measurement you take, report it rather than adjusting the number silently.
@@ -416,11 +419,16 @@ In `area_limits.py`, add after `RESISTOR_TIERS`:
 # numeric value to tier on - its positional value is the subckt name - so the
 # device-value tiers above simply do not apply to it.
 SKY130_GEOMETRY_TIERS: list[SizeTier] = [
-    SizeTier(max_value=20e-6, allowed_multiplier=3.0),
+    SizeTier(max_value=25e-6, allowed_multiplier=3.0),
     SizeTier(max_value=50e-6, allowed_multiplier=2.0),
     SizeTier(max_value=None, allowed_multiplier=1.5),
 ]
 ```
+
+The 25 µm boundary is not arbitrary: `BUF_P.Xcl` has a 20 µm baseline and the
+`spec_seed_buf0_droop.yaml` fix needs to grow it to 50 µm (2.5×), which only
+the 3.0× tier permits. `TRIMAMP.XRz` (15 µm baseline) and `ERRAMP`'s devices
+land in the same tier; `X7` at 30 µm lands in the 2.0× tier.
 
 Replace `_tier_baseline_value` in full with:
 
@@ -693,11 +701,11 @@ def test_dc_tc_testbench_reproduces_the_measured_nominal_operating_point(tmp_pat
 
     assert result.status == "success"
     m = result.measurements
-    assert m["vbgout_v"] == pytest.approx(1.2390, abs=0.010)
-    assert m["vbg1_v"] == pytest.approx(1.1957, abs=0.010)
-    assert m["vbg0_v"] == pytest.approx(0.5010, abs=0.005)
-    assert m["tc_ppm_per_c"] == pytest.approx(33.9, abs=5.0)
-    assert m["iq_ua"] == pytest.approx(85.9, abs=8.0)
+    assert m["vbgout_v"] == pytest.approx(1.2399, abs=0.010)
+    assert m["vbg1_v"] == pytest.approx(1.2009, abs=0.010)
+    assert m["vbg0_v"] == pytest.approx(0.5003, abs=0.005)
+    assert m["tc_ppm_per_c"] == pytest.approx(36.3, abs=5.0)
+    assert m["iq_ua"] == pytest.approx(213.1, abs=20.0)
 
 
 def test_every_testbench_defines_the_same_blocks(tmp_path):
@@ -726,8 +734,9 @@ def test_all_five_blocks_are_addressable_by_scoped_refdes():
     assert set(parsed.subckts) == {
         "ERRAMP", "TRIMAMP", "BUF_N", "BUF_P", "BGR_CORE", "BANDGAP"
     }
-    # BUF_N and BUF_P both declare X5/X1/X2 - the whole point of scoping.
-    assert {c.refdes for c in parsed.subckts["BUF_P"].components} >= {"X5", "X1", "Xcl"}
+    # All four amps declare Xt/X1/X2/Xcc/XRz - the whole point of scoping.
+    assert {c.refdes for c in parsed.subckts["BUF_P"].components} >= {"Xt", "X1", "Xcc", "XRz", "Xcl"}
+    assert {c.refdes for c in parsed.subckts["BUF_N"].components} >= {"Xt", "X1", "Xcc", "XRz", "Xcl"}
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -741,88 +750,114 @@ This block is identical in all five files. Write it once, then paste it
 verbatim into each. Do not reformat it per file — Step 1's
 `test_every_testbench_defines_the_same_blocks` compares the text.
 
+Every amplifier is a **folded cascode first stage plus a common-source output
+stage**, matching the target design. Every sizing number below is measured;
+the reasoning for the non-obvious ones is in the design spec's
+"Part 2 revision" section.
+
 ```
 * ===================== amplifier blocks =====================
-* Input-pair polarity is forced by the input common mode, measured on the
-* working circuit:
-*   ERRAMP  in = Vbe, 0.549V (125C) .. 0.832V (-40C) -> NMOS pair. A PMOS pair
-*           has no tail headroom at the COLD end, where Vbe is highest.
-*   TRIMAMP in = vbgout ~1.24V                       -> NMOS
-*   BUF_N   in = vbg1   ~1.20V                       -> NMOS
-*   BUF_P   in = vbg0   ~0.50V                       -> PMOS (an NMOS pair
-*           cannot reach down to 0.5V)
+* Every amplifier is a folded cascode first stage plus a common-source output
+* stage, Miller-compensated with a nulling resistor - the structure actually
+* used in the target design.
 *
-* Stage count is forced by the load. A 5T OTA can only deliver DC load current
-* by unbalancing its input pair, and that imbalance IS input-referred offset:
-* measured 42mV when a 5T TRIMAMP drove the 270k ladder, versus 1.65mV once it
-* was made two-stage. The buffers drive gate capacitance only, so they have no
-* DC load current and stay 5T.
+* The fold is what makes 1.62V operation possible. With a plain PMOS mirror
+* load the input pair's drain sits at vdd - |Vgs_p| (~0.5V measured), leaving
+* Vds(input) = Vdd - Vcm - |Vgs_p| + Vgs_n, which is at or below zero once
+* Vcm reaches 1.2V. In a folded cascode that same drain node sits at
+* vdd - |Vdsat| (~0.2V below the rail), because the PMOS cascode gate pcas is
+* biased a full |Vgs| below vdd. That recovers ~0.5V of input headroom.
 *
-* Polarity differs with stage count: in a 5T OTA the DIODE-side input (X1) is
-* non-inverting, but an inverting second stage flips that, so TRIMAMP's
-* non-inverting input sits on X2. Every subckt below is wired so the port
-* named vinp really is the non-inverting one - getting this backwards does not
-* fail loudly, it just latches the core at a wrong operating point with a
-* respectable-looking TC.
+* Polarity convention, uniform across all four: vinp sits on X2, the input
+* device whose drain feeds the OUTPUT branch. vinp up -> X2 steals current
+* from that branch -> outA moves down -> the inverting CS stage moves vout up.
+* So the port named vinp really is non-inverting at vout.
 
-.subckt ERRAMP vinp vinn vout vdd vss nbias
-X5   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=6
-X1   n1   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=10
-X2   vout vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=10
-X3   n1   n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=10
-X4   vout n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=10
+.subckt ERRAMP vinp vinn vout vdd vss nbias ncas pbias pcas
+* ERRAMP's input common mode is Vbe, which falls to 0.549V at 125C, so its
+* tail node (Vcm - Vgs_n) is the tightest headroom in the whole chain. The
+* tail runs at ~1uA (L=4 quarters the mirror ratio) into a wide input pair,
+* which is what keeps Vgs_n low enough: at 4uA with W=16 the tail node
+* measured 35mV at 125C and the loop latched to the rail; at 1uA with W=48 it
+* measures 128-175mV across every process corner.
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=4 W=4
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=48
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=48
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=2 W=8
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=2 W=8
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=8
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=8
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=20
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=40
 .ends ERRAMP
 
-.subckt TRIMAMP vinp vinn vout vdd vss nbias
-X5   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
-X1   n1   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=16
-X2   outA vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=16
-X3   n1   n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=40
-X4   outA n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=40
-X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=30
-X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=6
-* Miller compensation with a nulling resistor. Loading outA instead was
-* measured useless (50pF only reached 25.7 deg): in a two-stage amp the second
-* stage's gain sits after that pole, so only pole splitting moves the
-* crossover. Cc is a PFET MOS cap because its nwell body is isolated and can
-* float at vout - an nfet cap's body is the p-substrate and cannot. Rz kills
-* the Miller RHP zero, which otherwise pins phase margin near 45 deg however
-* large Cc gets.
-Xcc  nz  outA nz  nz sky130_fd_pr__pfet_01v8 L=40 W=40
+.subckt TRIMAMP vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
 XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=15
 .ends TRIMAMP
 
-.subckt BUF_N vinp vinn vout vdd vss nbias
-X5   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=10
-X1   n1   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
-X2   vout vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
-X3   n1   n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=40
-X4   vout n1   vdd   vdd sky130_fd_pr__pfet_01v8 L=2 W=40
-* Output decoupling cap, which is also this buffer's compensation: a 5T OTA
-* loaded by a large output cap is single-pole dominant. vbg1 ~1.2V keeps the
-* nfet cap in inversion (7.5 fF/um2).
-Xcl  vss  vout vss vss sky130_fd_pr__nfet_01v8 L=20 W=20
+.subckt BUF_N vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X2   ny   vinp tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+Xp1  nx   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  ny   pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc1  np   pcas  nx   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xc2  outA pcas  ny   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xn1  np   ncas  nr   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xn2  outA ncas  ns   vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm1  nr   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xm2  ns   np    vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+X6   vout outA  vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X7   vout nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=50 W=50
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=40
+Xcl  vss  vout  vss  vss sky130_fd_pr__nfet_01v8 L=20 W=20
 .ends BUF_N
 
-.subckt BUF_P vinp vinn vout vdd vss pbias
-X5   tail pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
-X1   n1   vinp tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=60
-X2   vout vinn tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=60
-X3   n1   n1   vss   vss sky130_fd_pr__nfet_01v8 L=2 W=10
-X4   vout n1   vss   vss sky130_fd_pr__nfet_01v8 L=2 W=10
-* Same role as BUF_N's Xcl. vbg0 ~0.5V yields 5.7 fF/um2 rather than 7.5, so
-* identical geometry buys less capacitance here - that is real, not an error.
-Xcl  vss  vout vss vss sky130_fd_pr__nfet_01v8 L=20 W=20
+* Complementary fold: PMOS input pair (vbg0 ~0.5V is below any NMOS pair's
+* reach), NMOS folding sinks, NMOS cascodes, PMOS cascoded mirror on top,
+* NMOS common-source output.
+.subckt BUF_P vinp vinn vout vdd vss nbias ncas pbias pcas
+Xt   tail pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
+X1   nx   vinn tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+X2   ny   vinp tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=40
+Xn1  nx   nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xn2  ny   nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xc1  np   ncas  nx   vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xc2  outA ncas  ny   vss sky130_fd_pr__nfet_01v8 L=1 W=16
+Xp1  np   pcas  nr   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xp2  outA pcas  ns   vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xm1  nr   np    vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+Xm2  ns   np    vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=16
+X6   vout outA  vss  vss sky130_fd_pr__nfet_01v8 L=1 W=20
+X7   vout pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
+Xcc  nz   outA  nz   nz  sky130_fd_pr__pfet_01v8 L=40 W=40
+XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=15
+Xcl  vss  vout  vss  vss sky130_fd_pr__nfet_01v8 L=20 W=20
 .ends BUF_P
 
 * ===================== bandgap core =====================
-* Kuijk: the amp forces V(na)=V(nb), so both branches carry the same current
-* I = VT*ln(8)/R1 and vbgout = Vbe1 + (Rp/R1)*VT*ln(8). The 1:8 emitter ratio
-* is the INSTANCE multiplier m=8 - the pnp subckt's own "mult" parameter only
-* scales mismatch terms and would give zero delta-Vbe. Rp/R1 = 9.5 is the
-* measured zero-TC ratio with THIS amplifier; with an ideal op-amp it is 9.3,
-* the difference being the OTA's own temperature-dependent offset.
-.subckt BGR_CORE vbgout ampout mpgate vdd vss nbias pbias
+.subckt BGR_CORE vbgout ampout mpgate vdd vss nbias ncas pbias pcas
 Xmpout vbgout mpgate vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=10
 
 XRpa vbgout na 0 sky130_fd_pr__res_high_po w=1 l=324.74
@@ -831,55 +866,46 @@ Xq1  0 0 na  0 sky130_fd_pr__pnp_05v5_W3p40L3p40
 XR1  nb ne8 0  sky130_fd_pr__res_high_po w=1 l=33.12
 Xq8  0 0 ne8 0 sky130_fd_pr__pnp_05v5_W3p40L3p40 m=8
 
-* Loop polarity: vbgout up -> I up -> nb rises faster than na (the I*R1 term)
-* -> ampout up -> the PMOS backs off. Negative feedback.
-Xerr nb na ampout vdd vss nbias ERRAMP
+Xerr nb na ampout vdd vss nbias ncas pbias pcas ERRAMP
 
-* Bias chain: a scaled copy of the core's OWN PTAT current, so every amp in
-* the chain shares the core's zero-current degenerate state and startup is a
-* real requirement rather than a formality.
-Xmb1  nbias ampout vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
-Xmbn  nbias nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
-Xmbn2 pbias nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
-Xmbp  pbias pbias  vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+* Cascode bias chain, every leg a scaled copy of the core's OWN PTAT current
+* so the whole chain shares one zero-current degenerate state. ncas is a
+* NARROWER diode than nbias, so it sits a larger Vgs above vss and leaves the
+* bottom mirror its Vdsat; pcas is narrower than pbias for the same reason on
+* the top side, which is what puts the fold node within a Vdsat of vdd.
+Xb1 nbias  ampout vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb2 nbias  nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb3 ncas   ampout vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb4 ncas   ncas   vss vss sky130_fd_pr__nfet_01v8 L=1 W=1
+Xb5 pbias  nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb6 pbias  pbias  vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=4
+Xb7 pcas   nbias  vss vss sky130_fd_pr__nfet_01v8 L=1 W=4
+Xb8 pcas   pcas   vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=1
 
-* Startup. The Kuijk loop is genuinely bistable: without this, ngspice settles
-* into the degenerate sub-nA state at vbgout ~0.47V. Xsu_r weakly holds nsu
-* high while the core is dead, turning Xsu_i on and dragging ampout to vss,
-* which forces Xmpout fully on. Once vbgout comes up, Xsu_d pulls nsu low and
-* the startup path switches itself off.
 Xsu_r nsu    vss    vdd vdd sky130_fd_pr__pfet_01v8 L=20 W=0.42
 Xsu_d nsu    vbgout vss vss sky130_fd_pr__nfet_01v8 L=1  W=2
 Xsu_i ampout nsu    vss vss sky130_fd_pr__nfet_01v8 L=1  W=2
+* A trickle into nbias, always on. Without it the bias chain collapses with
+* the core, and then every CS output stage has its NMOS sink off while its
+* PMOS is fully on - so the amp output pins HIGH, the core PMOS stays off,
+* and the startup pull-down (W=2) cannot outfight a W=20 PMOS. This failure
+* mode did not exist before the amps gained CS output stages.
+Xsu_b nbias  vss    vdd vdd sky130_fd_pr__pfet_01v8 L=20 W=0.42
 
-* Core loop compensation: rail-referenced nfet MOS cap on the amp output.
 Xcc vss ampout vss vss sky130_fd_pr__nfet_01v8 L=20 W=20
 .ends BGR_CORE
 
-* ===================== full chain =====================
-* vbgout -> TRIMAMP -> vtop, with a resistor ladder from vtop to vss. The loop
-* closes on the vfb tap, so vtop = vbgout * Rtotal / R(vfb..vss); taps below
-* vfb produce 1.2V and 0.5V, each buffered because a ladder tap cannot drive
-* load. The trim tap is hard-wired at nominal: trimming compensates
-* manufacturing spread, which is orthogonal to the PVT robustness this
-* benchmark measures.
-*
-* Each of the four feedback loops is broken at a PORT pair, so a testbench can
-* pass the same node twice to close the loop (ampout/mpgate, vfb/trm_i,
-* vbg1/b1_i, vbg0/b0_i) or insert an Lfb/Cin harness to open it at AC only.
-* That keeps this definition block byte-identical across all five testbench
-* files, which is what makes one tuning proposal land in all of them.
 .subckt BANDGAP vbgout vbg0 vbg1 vtop vfb vdd vss ampout mpgate trm_i b1_i b0_i
-Xcore vbgout ampout mpgate vdd vss nbias pbias BGR_CORE
-Xtrim vbgout trm_i vtop vdd vss nbias TRIMAMP
+Xcore vbgout ampout mpgate vdd vss nbias ncas pbias pcas BGR_CORE
+Xtrim vbgout trm_i vtop vdd vss nbias ncas pbias pcas TRIMAMP
 
 XRl4 vtop vfb  0 sky130_fd_pr__res_high_po w=1 l=68.6
 XRl3 vfb  vt12 0 sky130_fd_pr__res_high_po w=1 l=23.4
 XRl2 vt12 vt05 0 sky130_fd_pr__res_high_po w=1 l=439.6
 XRl1 vt05 vss  0 sky130_fd_pr__res_high_po w=1 l=313.6
 
-Xb1 vt12 b1_i vbg1 vdd vss nbias BUF_N
-Xb0 vt05 b0_i vbg0 vdd vss pbias BUF_P
+Xb1 vt12 b1_i vbg1 vdd vss nbias ncas pbias pcas BUF_N
+Xb0 vt05 b0_i vbg0 vdd vss nbias ncas pbias pcas BUF_P
 .ends BANDGAP
 ```
 
@@ -959,29 +985,31 @@ Vdd vdd 0 DC 1.8
 Vss vss 0 DC 0
 Xdut vbgout vbg0 vbg1 vtop vfb vdd vss ampout mpgate trm_i b1_i b0_i BANDGAP
 
-Lc ampout mpgate 1e6
-Cc vsc mpgate 1
-Vsc vsc 0 DC 0 AC 0
-Lt vfb trm_i 1e6
-Ct vst trm_i 1
-Vst vst 0 DC 0 AC 0
-L1 vbg1 b1_i 1e6
-C1 vs1 b1_i 1
-Vs1 vs1 0 DC 0 AC 0
-L0 vbg0 b0_i 1e6
-C0 vs0 b0_i 1
-Vs0 vs0 0 DC 0 AC 0
+Vsc mpgate ampout DC 0 AC 0
+Vst trm_i  vfb    DC 0 AC 0
+Vs1 b1_i   vbg1   DC 0 AC 0
+Vs0 b0_i   vbg0   DC 0 AC 0
 .end
 ```
 
 with header note:
 
 ```
-* amp_loops testbench: all four feedback loops broken with the Lfb/Cin harness
-* (1MH is a DC short and an AC open; 1F is an AC short). The control block
-* runs four ac analyses and uses "alter @Vsrc[acmag]" to enable ONE injection
-* source at a time - driving all four at once would cross-couple through
-* vbgout and the ladder and corrupt every reading.
+* amp_loops testbench: all four feedback loops broken by SERIES VOLTAGE
+* INJECTION. Every break point in this circuit drives a MOS gate only, so a
+* "DC 0 AC 1" source in series is an exact unidirectional break with no
+* reactive elements, and the loop gain is just the ratio of the two sides.
+*
+* Do NOT go back to two_stage_opamp's Lfb/Cin harness here. A 1MH inductor is
+* a 6.3Mohm open at 1Hz - ample against that op-amp's ~100k output impedance,
+* but not against a folded cascode's tens of megohms, so the loop was never
+* actually broken. Raising it to 1GH restores the open and then spreads the
+* matrix over ~20 decades: measured result was gains of +189dB and -108dB with
+* 63 of 225 corner measurements missing entirely.
+*
+* The control block runs four ac analyses and uses "alter @Vsrc[acmag]" to
+* enable ONE injection source at a time - driving all four at once would
+* cross-couple through vbgout and the ladder.
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
@@ -1003,6 +1031,7 @@ git commit -m "feat: add the five-block Kuijk bandgap chain benchmark netlists"
 **Files:**
 - Create: `benchmarks/bandgap/spec.yaml`
 - Create: `benchmarks/bandgap/spec_pvt.yaml`
+- Create: `benchmarks/bandgap/spec_seed_tc.yaml`
 - Create: `benchmarks/bandgap/spec_seed_trim_pm.yaml`
 - Create: `benchmarks/bandgap/spec_seed_buf0_droop.yaml`
 - Test: `tests/unit/test_bandgap_spec.py`
@@ -1010,7 +1039,7 @@ git commit -m "feat: add the five-block Kuijk bandgap chain benchmark netlists"
 **Interfaces:**
 - Consumes: the five netlists from Task 4.
 - Produces: `TargetSpec` loadable specs; `spec.yaml` passes at nominal,
-  the two `spec_seed_*` files fail at nominal in exactly one block.
+  the three `spec_seed_*` files each fail at nominal in exactly one block.
 
 - [ ] **Step 1: Write the failing spec test**
 
@@ -1055,11 +1084,24 @@ def test_baseline_spec_passes_at_nominal(tmp_path):
     assert verdict["overall_pass"] is True, verdict
 
 
+def test_tc_seed_fails_at_nominal(tmp_path):
+    # The coupled seed: Rp/R1 sets TC but also moves vbgout and vbg1, so the
+    # tuner cannot fix this one in isolation. Measured: l=324.74 -> 36.30ppm
+    # (fails), l=321.3 -> 29.30ppm (passes) with vbgout 1.2389 -> 1.2334.
+    spec = load_spec(os.path.join(BENCH, "spec_seed_tc.yaml"))
+
+    verdict = evaluate_criteria(_simulate_all(spec, tmp_path), spec.all_criteria)
+
+    assert verdict["overall_pass"] is False
+    failed = {c["name"] for c in verdict["criteria"] if not c["pass"]}
+    assert failed == {"temperature_coefficient"}
+
+
 def test_trim_pm_seed_fails_at_nominal(tmp_path):
     # Seeded so the tuner has exactly one correct move: raise TRIMAMP.XRz's
-    # length. Measured: l=15 -> 66.8 deg (fails), l=25 -> 83.3 (still fails),
-    # l=30 -> 91.2 (passes). Every other block is already passing, so a
-    # proposal that touches BGR_CORE or a buffer is a targeting miss.
+    # length. Measured: l=15 -> 81.1 deg (fails), l=25 -> 98.2 (passes),
+    # l=90 -> 88.3 (overshoot loses margin again). Every other criterion
+    # already passes, so a proposal aimed at another block is a targeting miss.
     spec = load_spec(os.path.join(BENCH, "spec_seed_trim_pm.yaml"))
 
     verdict = evaluate_criteria(_simulate_all(spec, tmp_path), spec.all_criteria)
@@ -1070,9 +1112,9 @@ def test_trim_pm_seed_fails_at_nominal(tmp_path):
 
 
 def test_buf0_droop_seed_fails_at_nominal_and_is_local_to_buf_p(tmp_path):
-    # Measured: BUF_P.Xcl 20x20 -> 62.1mV droop (fails <=45), 30x30 -> 41.5mV
-    # (passes). Growing BUF_N.Xcl instead moves vbg1's droop from 59.03 to
-    # 58.57mV and leaves vbg0 untouched, so this criterion really does
+    # Measured: BUF_P.Xcl 20x20 -> 19.93mV droop (fails <=15), 50x50 -> 12.50mV
+    # (passes). Growing BUF_N.Xcl instead moves only vbg1's droop (24.12 ->
+    # 23.97mV) and leaves vbg0 untouched, so this criterion really does
     # localise to one block.
     spec = load_spec(os.path.join(BENCH, "spec_seed_buf0_droop.yaml"))
 
@@ -1083,10 +1125,10 @@ def test_buf0_droop_seed_fails_at_nominal_and_is_local_to_buf_p(tmp_path):
     assert failed == {"vbg0_droop"}
 
 
-def test_pvt_spec_declares_the_measured_supply_axis():
+def test_pvt_spec_declares_the_full_supply_axis():
     spec = load_spec(os.path.join(BENCH, "spec_pvt.yaml"))
 
-    assert spec.pvt_corners.voltage == [1.71, 1.8, 1.89]
+    assert spec.pvt_corners.voltage == [1.62, 1.8, 1.98]
     assert len(spec.pvt_corners.process) == 5
     assert len(spec.pvt_corners.temperature) == 3
 ```
@@ -1154,12 +1196,12 @@ testbenches:
       - name: temperature_coefficient
         measurement: tc_ppm_per_c
         operator: "<="
-        threshold: 60.0
+        threshold: 70.0
         unit: ppm/C
       - name: quiescent_current
         measurement: iq_ua
         operator: "<="
-        threshold: 120.0
+        threshold: 300.0
         unit: uA
 
   - name: startup
@@ -1176,7 +1218,7 @@ testbenches:
       - name: startup_time
         measurement: startup_time
         operator: "<="
-        threshold: 0.0000002
+        threshold: 0.00002
         unit: s
 
   - name: psrr
@@ -1191,7 +1233,7 @@ testbenches:
       - name: psrr_dc
         measurement: psrr_bg_db
         operator: "<="
-        threshold: -35.0
+        threshold: -25.0
         unit: dB
 
   - name: settling
@@ -1216,12 +1258,12 @@ testbenches:
       - name: vbg0_droop
         measurement: vbg0_droop_mv
         operator: "<="
-        threshold: 120.0
+        threshold: 50.0
         unit: mV
       - name: vbg1_droop
         measurement: vbg1_droop_mv
         operator: "<="
-        threshold: 120.0
+        threshold: 50.0
         unit: mV
       - name: vbg0_residual
         measurement: vbg0_resid_mv
@@ -1242,89 +1284,114 @@ testbenches:
       set units=degrees
       alter @Vsc[acmag] = 1
       ac dec 20 1 100meg
-      meas ac core_gain_db FIND vdb(ampout) AT=1
-      meas ac core_pm_deg  FIND vp(ampout) WHEN vdb(ampout)=0
+      let tmag = vdb(ampout)-vdb(mpgate)
+      let tph  = vp(ampout)-vp(mpgate)
+      meas ac core_gain_db FIND tmag AT=1
+      meas ac core_pm_deg  FIND tph WHEN tmag=0
       alter @Vsc[acmag] = 0
       alter @Vst[acmag] = 1
       ac dec 20 1 100meg
-      meas ac trim_gain_db FIND vdb(vfb) AT=1
-      meas ac trim_pm_deg  FIND vp(vfb) WHEN vdb(vfb)=0
+      let tmag = vdb(vfb)-vdb(trm_i)
+      let tph  = vp(vfb)-vp(trm_i)
+      meas ac trim_gain_db FIND tmag AT=1
+      meas ac trim_pm_deg  FIND tph WHEN tmag=0
       alter @Vst[acmag] = 0
       alter @Vs1[acmag] = 1
       ac dec 20 1 100meg
-      meas ac buf1_gain_db FIND vdb(vbg1) AT=1
-      meas ac buf1_pm_deg  FIND vp(vbg1) WHEN vdb(vbg1)=0
+      let tmag = vdb(vbg1)-vdb(b1_i)
+      let tph  = vp(vbg1)-vp(b1_i)
+      meas ac buf1_gain_db FIND tmag AT=1
+      meas ac buf1_pm_deg  FIND tph WHEN tmag=0
       alter @Vs1[acmag] = 0
       alter @Vs0[acmag] = 1
       ac dec 20 1 100meg
-      meas ac buf0_gain_db FIND vdb(vbg0) AT=1
-      meas ac buf0_pm_deg  FIND vp(vbg0) WHEN vdb(vbg0)=0
+      let tmag = vdb(vbg0)-vdb(b0_i)
+      let tph  = vp(vbg0)-vp(b0_i)
+      meas ac buf0_gain_db FIND tmag AT=1
+      meas ac buf0_pm_deg  FIND tph WHEN tmag=0
       .endc
     criteria:
       - name: core_loop_gain
         measurement: core_gain_db
         operator: ">="
-        threshold: 30.0
+        threshold: 40.0
         unit: dB
       - name: core_phase_margin
         measurement: core_pm_deg
         operator: ">="
-        threshold: 55.0
+        threshold: 50.0
         unit: deg
       - name: trim_loop_gain
         measurement: trim_gain_db
         operator: ">="
-        threshold: 20.0
+        threshold: 60.0
         unit: dB
       - name: trim_phase_margin
         measurement: trim_pm_deg
         operator: ">="
-        threshold: 55.0
+        threshold: 70.0
         unit: deg
       - name: buf1_loop_gain
         measurement: buf1_gain_db
         operator: ">="
-        threshold: 35.0
+        threshold: 70.0
         unit: dB
       - name: buf1_phase_margin
         measurement: buf1_pm_deg
         operator: ">="
-        threshold: 55.0
+        threshold: 80.0
         unit: deg
       - name: buf0_loop_gain
         measurement: buf0_gain_db
         operator: ">="
-        threshold: 35.0
+        threshold: 60.0
         unit: dB
       - name: buf0_phase_margin
         measurement: buf0_pm_deg
         operator: ">="
-        threshold: 55.0
+        threshold: 80.0
         unit: deg
 ```
 
-- [ ] **Step 4: Write the two seeded-failure specs**
+- [ ] **Step 4: Write the three seeded-failure specs**
 
-`spec_seed_trim_pm.yaml` is `spec.yaml` with `trim_phase_margin`'s threshold
-changed from `55.0` to `85.0`, and this header comment:
+Each is a copy of `spec.yaml` with exactly ONE threshold tightened, so a run
+must fix exactly one block. Every one was verified to fail at nominal and to
+be reachable by a knob inside a single subckt.
+
+`spec_seed_tc.yaml` — change `temperature_coefficient`'s threshold from `70.0`
+to `30.0`, with this header:
 
 ```yaml
-# Same circuit as spec.yaml with ONE criterion tightened, so the run must fix
-# exactly one block. trim_phase_margin >= 85 deg fails at nominal (measured
-# 66.8) and the only knob that reaches it is TRIMAMP.XRz's length: measured
-# l=15 -> 66.8, l=25 -> 83.3, l=30 -> 91.2 deg. Every other criterion already
-# passes, so a proposal aimed at any other block is a targeting miss - which
-# is what this benchmark exists to measure.
+# tc_ppm_per_c <= 30 fails at nominal (measured 36.30). The knob is the
+# BGR_CORE Rp/R1 ratio: XRpa/XRpb l = 324.74 -> 321.3 (Rp/R1 9.5 -> 9.4) gives
+# 29.30. This is the COUPLED seed - moving Rp also moves vbgout (1.2389 ->
+# 1.2334) and vbg1 (1.1999 -> 1.1947), so the tuner has to hold two other
+# criteria inside their windows while fixing this one. Both resistors must
+# move together; changing only one unbalances the two branches.
 ```
 
-`spec_seed_buf0_droop.yaml` is `spec.yaml` with `vbg0_droop`'s threshold
-changed from `120.0` to `45.0`, and this header comment:
+`spec_seed_trim_pm.yaml` — change `trim_phase_margin`'s threshold from `70.0`
+to `85.0`, with this header:
 
 ```yaml
-# Same circuit as spec.yaml with ONE criterion tightened. vbg0_droop <= 45mV
-# fails at nominal (measured 62.1) and localises cleanly to BUF_P: growing
-# BUF_P.Xcl from 20x20 to 30x30 gives 41.5mV, while growing BUF_N.Xcl instead
-# moves only vbg1's droop (59.03 -> 58.57mV) and leaves vbg0 untouched.
+# trim_phase_margin >= 85 deg fails at nominal (measured 81.14). The only knob
+# that reaches it is TRIMAMP.XRz's length: l=15 -> 81.1, l=25 -> 98.2,
+# l=40 -> 124.0, l=60 -> 125.4, l=90 -> 88.3 deg. Note it is NOT monotone -
+# overshooting the nulling resistor loses phase margin again. Meanwhile
+# buf1_phase_margin moves only 101.56 -> 101.65, so a proposal aimed at a
+# buffer is a targeting miss.
+```
+
+`spec_seed_buf0_droop.yaml` — change `vbg0_droop`'s threshold from `50.0` to
+`15.0`, with this header:
+
+```yaml
+# vbg0_droop <= 15mV fails at nominal (measured 19.93) and localises cleanly
+# to BUF_P: growing BUF_P.Xcl from 20x20 to 50x50 gives 12.50mV, while
+# vbg1_droop moves only 24.12 -> 23.97mV. Growing BUF_N.Xcl instead changes
+# vbg0 not at all. The 2.5x growth needs the area gate's 3.0x tier, which is
+# why SKY130_GEOMETRY_TIERS' first boundary is 25um (Task 2).
 ```
 
 - [ ] **Step 5: Write `spec_pvt.yaml`**
@@ -1334,22 +1401,22 @@ A copy of `spec.yaml` with a `pvt_corners:` block inserted **above**
 `benchmarks/two_stage_opamp/spec_pvt.yaml` puts it first — match that).
 
 ```yaml
-# The supply axis is +-5%, not +-10%. Measured: at Vdd=1.62V the TRIMAMP and
-# BUF_N input pairs leave saturation (Vds(X1) = Vdd - Vcm - |Vgs_p| + Vgs_n,
-# with Vcm ~1.2V, |Vgs_p| ~1.0V), the trim loop gain collapses to -45dB and
-# vbg1 falls to 1.084V. Fixing that needs a folded-cascode or rail-to-rail
-# input stage, which is out of scope for this benchmark - see the design spec.
-# Do not widen this axis without also replacing those input stages.
+# The full +-10% supply axis. This is only reachable because every amplifier
+# is a folded cascode: the input pair's drain sits a |Vdsat| below vdd rather
+# than a |Vgs| below it, which is worth ~0.5V of input headroom. An earlier
+# 5T-OTA version of this circuit had to be specified at +-5% because at 1.62V
+# the trim loop gain collapsed to -45dB and vbg1 fell to 1.084V. If an amp is
+# ever simplified back to a mirror load, this axis stops being achievable.
 pvt_corners:
   process: ["tt", "ss", "ff", "sf", "fs"]
-  voltage: [1.71, 1.8, 1.89]
+  voltage: [1.62, 1.8, 1.98]
   temperature: [-40, 27, 125]
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_bandgap_spec.py -v`
-Expected: 4 passed.
+Expected: 5 passed.
 
 - [ ] **Step 7: Run the whole suite**
 
@@ -1379,16 +1446,20 @@ Insert after the `two_stage_opamp` entries:
   (`BGR_CORE` + `ERRAMP` → `TRIMAMP` → resistor ladder → `BUF_N`/`BUF_P`),
   producing `vbg1`=1.2V and `vbg0`=0.5V. Unlike every other benchmark this
   one is **multi-block**, and its actual purpose is to measure whether the
-  tuner changes the *correct* block: `spec_seed_trim_pm.yaml` and
-  `spec_seed_buf0_droop.yaml` each tighten exactly one criterion whose only
-  fix lives in one subckt. This is what made subckt-scoped refdes a
-  prerequisite — four amplifiers in one netlist means refdes collision is
-  the normal case. Uses `pnp_05v5` and `res_high_po` in addition to the FETs;
-  every capacitor is an nfet/pfet MOS cap, never MiM. `spec_pvt.yaml` sweeps
-  45 corners at **±5 %** supply, not ±10 % — see
+  tuner changes the *correct* block: `spec_seed_tc.yaml`,
+  `spec_seed_trim_pm.yaml` and `spec_seed_buf0_droop.yaml` each tighten
+  exactly one criterion whose only fix lives in one subckt, and each was
+  verified both solvable and localised (fixing `BUF_N` does nothing for
+  `vbg0`). This is what made subckt-scoped refdes a prerequisite — four
+  amplifiers in one netlist means refdes collision is the normal case.
+  Every amplifier is a folded cascode plus a common-source output stage,
+  which is also what lets the 45-corner `spec_pvt.yaml` run the full ±10 %
+  supply axis: a plain mirror load leaves a 1.2V-common-mode input pair no
+  saturation margin at 1.62V. Uses `pnp_05v5` and `res_high_po` in addition
+  to the FETs; every capacitor is an nfet/pfet MOS cap, never MiM. See
   `docs/superpowers/specs/2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md`
-  ("Part 2 — as built") for the measurement that forced it, together with the
-  full corner table and the design assumptions that ngspice disproved.
+  ("Part 2 — as built" and "Part 2 revision") for the full corner table and
+  for the design assumptions ngspice disproved along the way.
 ```
 
 - [ ] **Step 2: Add the sky130 gotchas to "Known limitations / gotchas"**
@@ -1409,6 +1480,17 @@ Insert after the `two_stage_opamp` entries:
 - **The first line of a SPICE deck is the title.** A `.temp` placed there is
   silently consumed and the run happens at 27 °C, producing corner data that
   looks plausible and is wrong.
+- **`Lfb`/`Cin` loop breaking does not survive a cascode.** A 1 MH inductor is
+  only a 6.3 MΩ open at 1 Hz, so against a folded cascode's tens of megohms
+  the loop is never actually broken; raising it to 1 GH spans the matrix over
+  ~20 decades and the solver returns garbage at many corners. Where the break
+  point drives a MOS gate, use series voltage injection (`DC 0 AC 1`) and read
+  the loop gain as `vdb(out)-vdb(in)` — exact, and with no reactive elements.
+- **A cascoded amp with a CS output stage can latch itself off.** If the bias
+  chain is allowed to collapse with the core, every CS stage's NMOS sink turns
+  off while its PMOS is fully on, pinning each amp output HIGH; a startup
+  pull-down then has to outfight a much larger PMOS and loses. Keep a trickle
+  current in the bias chain (`benchmarks/bandgap`'s `BGR_CORE.Xsu_b`).
 ```
 
 - [ ] **Step 3: Note the area-gate fix in the `area_limits.py` architecture bullet**
