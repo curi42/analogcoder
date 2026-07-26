@@ -2,7 +2,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-_INCLUDE_RE = re.compile(r'^(\s*\.include\s+)"?([^"\s]+)"?\s*$', re.IGNORECASE | re.MULTILINE)
+_INCLUDE_RE = re.compile(r'^(\s*\.inc(?:lude)?\s+)"?([^"\s]+)"?\s*$', re.IGNORECASE | re.MULTILINE)
 
 
 def resolve_includes(text: str, base_dir: str) -> str:
@@ -78,6 +78,32 @@ class ParsedNetlist:
 
 _PARAM_RE = re.compile(r"^(\w+)=(\S+)$")
 
+# HSPICE는 "$", ngspice는 ";"로 줄 끝 주석을 연다. 두 문자 모두 SPICE
+# 식별자에 등장할 수 없으므로 첫 출현 위치에서 자르면 충분하다.
+_COMMENT_MARKERS = "$;"
+
+
+def strip_inline_comment(line: str) -> tuple[str, str]:
+    """줄을 (코드부, 주석부)로 나눈다. 주석이 없으면 주석부는 빈 문자열.
+
+    분리해서 돌려주는 이유는 apply_changes 때문이다. 그쪽은 코드를 토큰으로
+    쪼개 다시 합치는데, 주석을 코드에 남겨두면 param="value"가 마지막 위치
+    토큰(주석의 마지막 단어)을 소자 값으로 착각해 교체한다."""
+    positions = [line.find(marker) for marker in _COMMENT_MARKERS]
+    positions = [p for p in positions if p != -1]
+    if not positions:
+        return line, ""
+    index = min(positions)
+    return line[:index].rstrip(), line[index:].strip()
+
+
+def _is_subckt_open(lower: str) -> bool:
+    return lower.startswith(".subckt") or lower.startswith(".macro")
+
+
+def _is_subckt_close(lower: str) -> bool:
+    return lower.startswith(".ends") or lower.startswith(".eom")
+
 
 def _parse_component_line(line: str) -> Component:
     tokens = line.split()
@@ -106,15 +132,18 @@ def parse_netlist(text: str) -> ParsedNetlist:
         line = raw_line.strip()
         if not line or line.startswith("*"):
             continue
+        line, _ = strip_inline_comment(line)
+        if not line:
+            continue
         lower = line.lower()
-        if lower.startswith(".subckt"):
+        if _is_subckt_open(lower):
             tokens = line.split()
             name = tokens[1]
             ports = tokens[2:]
             current_subckt = Subckt(name=name, ports=ports)
             subckts[name] = current_subckt
             continue
-        if lower.startswith(".ends"):
+        if _is_subckt_close(lower):
             current_subckt = None
             continue
         if line.startswith("."):
@@ -173,7 +202,10 @@ def _find_matches(
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("*") or stripped.startswith("."):
             continue
-        tokens = stripped.split()
+        code, _ = strip_inline_comment(stripped)
+        if not code:
+            continue
+        tokens = code.split()
         if tokens[0] != refdes:
             continue
         if scope is not None and scopes[i] != scope:
@@ -242,6 +274,7 @@ def apply_changes(text: str, changes: list[dict]) -> str:
             )
 
         i, tokens = matches[0]
+        _, comment = strip_inline_comment(lines[i].strip())
         if param == "value":
             positional_idx = [j for j, t in enumerate(tokens) if "=" not in t]
             tokens[positional_idx[-1]] = new_value
@@ -254,7 +287,7 @@ def apply_changes(text: str, changes: list[dict]) -> str:
                     break
             if not replaced:
                 tokens.append(f"{param}={new_value}")
-        lines[i] = " ".join(tokens)
+        lines[i] = " ".join(tokens) + (f" {comment}" if comment else "")
     return "\n".join(lines) + "\n"
 
 
