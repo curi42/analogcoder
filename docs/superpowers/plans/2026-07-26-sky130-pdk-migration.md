@@ -392,7 +392,18 @@ def test_pdk_corner_inc_loads_nfet_pfet_and_mim_cap_cleanly():
 
     try:
         backend = NgspiceBackend()
-        result = backend.run(smoke_path, {"control_block": ".control\nop\nprint v(n) v(p)\n.endc"})
+        # A plain "op" + "print" control block never populates
+        # result.measurements (NgspiceBackend only captures lines matching
+        # "name = number", and ngspice's "print v(n)" emits "v(n) = ..." -
+        # the parentheses aren't \w characters, so the regex never matches,
+        # and status would stay "error" even on a fully working include
+        # chain). Use a tiny DC sweep + ".meas dc" instead, which does
+        # produce a matching "n_val = <number>" line - verified directly
+        # against this exact netlist during plan review.
+        result = backend.run(
+            smoke_path,
+            {"control_block": ".control\ndc Vdd 1.7 1.9 0.1\nmeas dc n_val find v(n) at=1.8\n.endc"},
+        )
     finally:
         os.remove(smoke_path)
 
