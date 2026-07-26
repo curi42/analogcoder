@@ -52,20 +52,39 @@ def worst_case_measurements(
     value if the criterion's operator is ">=" or ">", the maximum
     otherwise. Returns (worst_case_measurements, worst_case_corners), where
     worst_case_corners maps each criterion's name to the corner (plus the
-    value) that produced its worst case, for diagnostics. A criterion whose
-    measurement never appears in any corner's results is skipped (not an
-    error here - evaluate_criteria's caller is responsible for treating a
-    missing measurement as a failure)."""
+    value) that produced its worst case, for diagnostics.
+
+    If ANY corner fails to produce a criterion's measurement (not just all
+    of them), that criterion's measurement is withheld entirely from the
+    returned dict, so evaluate_criteria's existing missing-measurement
+    handling fails it - a corner that doesn't produce an expected
+    measurement (e.g. an AC response that never crosses 0dB) is itself
+    evidence the circuit doesn't function there, and must not be silently
+    excluded from the worst-case pool while other corners paper over it."""
     measurements: dict[str, float] = {}
     worst_corners: dict[str, dict] = {}
     for criterion in criteria:
-        values_with_corner = [
-            (m[criterion.measurement], corner)
-            for m, corner in zip(per_corner_measurements, corners)
-            if criterion.measurement in m
-        ]
+        values_with_corner = []
+        missing_corners = []
+        for m, corner in zip(per_corner_measurements, corners):
+            if criterion.measurement in m:
+                values_with_corner.append((m[criterion.measurement], corner))
+            else:
+                missing_corners.append(corner)
+
         if not values_with_corner:
-            continue
+            continue  # measurement never appears anywhere - nothing to report a corner for
+
+        if missing_corners:
+            corner = missing_corners[0]
+            worst_corners[criterion.name] = {
+                "process": corner.process,
+                "voltage": corner.voltage,
+                "temperature": corner.temperature,
+                "value": None,
+            }
+            continue  # withhold the measurement so evaluate_criteria fails it as missing
+
         if criterion.operator in (">=", ">"):
             value, corner = min(values_with_corner, key=lambda vc: vc[0])
         else:

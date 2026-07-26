@@ -111,3 +111,26 @@ def test_worst_case_measurements_skips_criterion_missing_from_all_corners():
 
     assert measurements == {}
     assert worst_corners == {}
+
+
+def test_worst_case_measurements_fails_criterion_when_any_corner_is_missing_the_measurement():
+    # A corner that fails to produce a measurement (e.g. an AC response that
+    # never crosses 0dB, so a WHEN-conditioned .meas line finds nothing) is
+    # itself evidence the circuit doesn't function correctly at that corner -
+    # even if OTHER corners did produce a passing-looking value, the
+    # criterion must not silently pass on the subset that happened to
+    # measure. Two of three corners produce phase_margin_deg; the third
+    # (the "ss" corner) produced nothing.
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=125),
+        CornerPoint(process="ss", voltage=1.62, temperature=-40),
+    ]
+    per_corner_measurements = [{"phase_margin_deg": 62.88}, {"phase_margin_deg": 113.0}, {}]
+    criteria = [Criterion(name="phase_margin", measurement="phase_margin_deg", operator=">=", threshold=60.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert "phase_margin_deg" not in measurements
+    assert worst_corners["phase_margin"]["process"] == "ss"
+    assert worst_corners["phase_margin"]["value"] is None
