@@ -34,6 +34,12 @@ async def test_propose_tuning_includes_history_and_rejection_feedback_in_prompt(
     assert kwargs["backend"] is fake_backend
 
 
+def test_the_tuner_prompt_explains_full_path_addressing():
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert "OUTER.INNER" in TUNER_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_propose_topology_swap_calls_run_agent_with_available_topologies():
     fake_result = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}

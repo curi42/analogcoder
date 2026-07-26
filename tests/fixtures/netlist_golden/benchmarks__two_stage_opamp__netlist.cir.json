@@ -1,0 +1,365 @@
+{
+  "subckts": {
+    "OPAMP2STAGE": {
+      "components": [
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "2"
+          },
+          "refdes": "Xp3",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "2"
+          },
+          "refdes": "Xp4",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "pbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "2"
+          },
+          "refdes": "Xn1",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "nbias",
+            "nbias",
+            "degn",
+            "vss"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "8"
+          },
+          "refdes": "Xn2",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "R",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "degn",
+            "vss"
+          ],
+          "params": {},
+          "refdes": "Rdeg",
+          "scope": "OPAMP2STAGE",
+          "value": "20k"
+        },
+        {
+          "ctype": "R",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vdd",
+            "nbias"
+          ],
+          "params": {},
+          "refdes": "Rstart",
+          "scope": "OPAMP2STAGE",
+          "value": "3Meg"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "n1",
+            "vinn",
+            "tail",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "8"
+          },
+          "refdes": "X1",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "vinp",
+            "tail",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "8"
+          },
+          "refdes": "X2",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "n1",
+            "n1",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "4"
+          },
+          "refdes": "X3",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "n1",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "4"
+          },
+          "refdes": "X4",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "tail",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "15"
+          },
+          "refdes": "X5",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "outA",
+            "vss",
+            "vss"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "8"
+          },
+          "refdes": "X6",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__nfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "vout",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "params": {
+            "L": "0.5",
+            "W": "30"
+          },
+          "refdes": "X7",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__pfet_01v8"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "vout"
+          ],
+          "params": {
+            "l": "12.05",
+            "mf": "1",
+            "w": "12.05"
+          },
+          "refdes": "Xcc",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__cap_mim_m3_1"
+        },
+        {
+          "ctype": "X",
+          "geometry_scale": 1e-06,
+          "nodes": [
+            "outA",
+            "0"
+          ],
+          "params": {
+            "l": "6.88",
+            "mf": "1",
+            "w": "6.88"
+          },
+          "refdes": "Xca",
+          "scope": "OPAMP2STAGE",
+          "value": "sky130_fd_pr__cap_mim_m3_1"
+        }
+      ],
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss"
+      ]
+    }
+  },
+  "top_components": [
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vdd",
+        "0",
+        "DC"
+      ],
+      "params": {},
+      "refdes": "Vdd",
+      "scope": null,
+      "value": "1.8"
+    },
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vss",
+        "0",
+        "DC"
+      ],
+      "params": {},
+      "refdes": "Vss",
+      "scope": null,
+      "value": "0"
+    },
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vinp",
+        "0",
+        "DC"
+      ],
+      "params": {},
+      "refdes": "Vinp",
+      "scope": null,
+      "value": "0.55"
+    },
+    {
+      "ctype": "L",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vout",
+        "vinn"
+      ],
+      "params": {},
+      "refdes": "Lfb",
+      "scope": null,
+      "value": "1e6"
+    },
+    {
+      "ctype": "C",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vstim",
+        "vinn"
+      ],
+      "params": {},
+      "refdes": "Cin",
+      "scope": null,
+      "value": "1"
+    },
+    {
+      "ctype": "V",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vstim",
+        "0",
+        "DC",
+        "0",
+        "AC"
+      ],
+      "params": {},
+      "refdes": "Vstim",
+      "scope": null,
+      "value": "1"
+    },
+    {
+      "ctype": "X",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss"
+      ],
+      "params": {},
+      "refdes": "Xdut",
+      "scope": null,
+      "value": "OPAMP2STAGE"
+    },
+    {
+      "ctype": "C",
+      "geometry_scale": 1e-06,
+      "nodes": [
+        "vout",
+        "0"
+      ],
+      "params": {},
+      "refdes": "Cload",
+      "scope": null,
+      "value": "2p"
+    }
+  ]
+}

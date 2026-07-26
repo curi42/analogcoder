@@ -216,10 +216,10 @@ worth reading before assuming a weak-model failure is a code bug:
   it matches exactly one component netlist-wide, and raises `ValueError` when
   it is ambiguous rather than silently editing the first match. The scope is
   the subckt *definition*, so a change applies to every instance of it —
-  two differently-tuned instances require two subckts. Nested subckts are
-  still not scope-tracked (`Component.scope`/`_line_scopes` are single-level)
-  — a refdes inside a subckt nested within another subckt is not
-  distinguishable from one at the outer subckt's level.
+  two differently-tuned instances require two subckts. Nested subckts **are**
+  scope-tracked: `Component.scope` and the `ParsedNetlist.subckts` key are
+  dotted paths (`OUTER.INNER`), and a qualified refdes must match a path
+  exactly — a partial path like `INNER.M1` is rejected rather than guessed at.
 - **An unresolvable or ambiguous refdes is rejected deterministically before
   it ever reaches the tuner's proposal being applied.** `netlist.py`'s
   `check_refdes_resolution` runs in the orchestrator's tuning retry loop
@@ -285,6 +285,39 @@ worth reading before assuming a weak-model failure is a code bug:
   catches `ValueError` for the same reason (belt-and-braces against a
   `ValueError` from the netlist-apply path, e.g. an ambiguous refdes that
   somehow bypassed `check_refdes_resolution`) — don't remove that either.
+- **An inline `$` or `;` comment is stripped before parsing, and re-appended
+  by `apply_changes`.** Leaving it in used to swallow the model name into the
+  node list, and made `param="value"` replace the comment's last word instead
+  of the device value.
+- **A parameterised value is resolved before the area gate reads it**
+  (`params.py`). Without this, `W='wn*2'` was unparseable, and
+  `check_area_growth`'s "cannot judge, do not block" fallback fired on every
+  device — so the gate was absent on any parameterised deck. The resolver's
+  subset is deliberately narrow (arithmetic only); anything else resolves to
+  `None` and takes that same fallback, which is now reached only when it is
+  genuinely true.
+- **`apply_changes` corrupts a quoted expression containing spaces.**
+  `M1 d g 0 0 nch W='wn * 2' L=1` with a change to `W=50` becomes
+  `M1 d g 0 0 nch W=50 * 2' L=1`; `Cc a b 'cv * 2'` with `param="value"` and
+  `new_value="5p"` becomes `Cc a b 'cv * 5p`. The line is whitespace-tokenised,
+  so a value containing spaces is split across tokens. Every gate passes it
+  (`check_refdes_resolution` resolves fine, `check_area_growth` sees an
+  unresolvable baseline and does not block), so a corrupted deck reaches
+  ngspice and the failure looks like a bad tuning proposal, not a parser bug.
+  Whitespace-aware tokenisation is outside this work's scope; the point of
+  this note is that the hazard is now on the hot path because parameterised
+  values became first-class.
+- **A `.param` declared inside a `.subckt` body is ignored.** `params.py`'s
+  `_collect_global_raw_params` only walks lines at depth 0, and per-subckt
+  environments are built from `.subckt`-line defaults and instance overrides
+  only — a `.param` between `.subckt`/`.ends` never reaches either. The
+  direction is safe (the name resolves to `None` and the caller's fallback
+  fires) but it's a coverage hole, not intended behaviour.
+- **`+` continuation lines are unhandled.** `.param wn=4` followed on the next
+  line by `+ wp=8` loses `wp` entirely (only the first line is read as the
+  `.param` directive's body). `area_limits.py`'s `index_baseline_components`
+  additionally manufactures a bogus component with refdes `+`, since nothing
+  recognizes the line as a continuation rather than a new statement.
 
 ## Testing conventions
 
