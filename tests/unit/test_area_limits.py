@@ -357,3 +357,24 @@ def test_area_gate_allows_the_seeded_buf_p_load_cap_growth():
     )
 
     assert ok is True
+
+
+def test_real_sky130_benchmark_netlist_declares_its_geometry_scale():
+    # The scale lives in pdk_corner.inc, which parse_netlist never sees - it
+    # only gets the netlist text. Without the netlist declaring it too, every
+    # sky130 device reads as tens of metres and lands in the unbounded tier,
+    # which is the state this whole task exists to fix. Guarding the real
+    # benchmark file, not a fixture, because a fixture cannot catch someone
+    # dropping the line from the netlist.
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "benchmarks", "two_stage_opamp", "netlist.cir"
+    )
+    with open(path) as f:
+        text = f.read()
+
+    component = index_baseline_components(text)["OPAMP2STAGE.X7"]
+
+    assert _tier_baseline_value(component) == pytest.approx(30e-6)
+    assert allowed_multiplier_for("M", _tier_baseline_value(component), is_sky130=True) == 2.0

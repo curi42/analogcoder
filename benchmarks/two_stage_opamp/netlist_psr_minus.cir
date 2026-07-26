@@ -8,6 +8,12 @@
 * OPAMP2STAGE subckt body below must stay byte-identical to netlist.cir,
 * netlist_psr_plus.cir, and netlist_settling.cir - tuning changes are
 * applied to all four files independently and rely on that.
+* Device geometry below is in microns. pdk_corner.inc sets the same option,
+* but it is declared here too because the tooling that reads this file (the
+* tuner's area gate) parses the netlist text only and never follows includes -
+* without this line every W/L reads as tens of METRES and the area gate's size
+* tiers silently collapse into their unbounded fallback.
+.option scale=1.0u
 .include "pdk_corner.inc"
 
 .subckt OPAMP2STAGE vinp vinn vout vdd vss
