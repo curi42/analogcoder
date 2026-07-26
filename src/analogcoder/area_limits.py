@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
-from analogcoder.netlist import Component, parse_netlist, parse_spice_value
+from analogcoder.netlist import Component, parse_netlist
+from analogcoder.params import build_param_envs, resolve_value
 
 
 _SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
@@ -101,6 +102,22 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     still finds its baseline instead of silently bypassing the area gate
     (check_area_growth treats a missing baseline as unconstrained)."""
     parsed = parse_netlist(netlist_text)
+    envs = build_param_envs(netlist_text)
+
+    def _annotate(component: Component) -> None:
+        env = envs.get(component.scope, envs[None])
+        for name, raw in component.params.items():
+            value = resolve_value(raw, env)
+            if value is not None:
+                component.resolved_params[name] = value
+        if component.value is not None:
+            component.resolved_value = resolve_value(component.value, env)
+
+    for component in parsed.top_components:
+        _annotate(component)
+    for subckt in parsed.subckts.values():
+        for component in subckt.components:
+            _annotate(component)
 
     plain_counts: dict[str, int] = {}
     for component in parsed.top_components:
@@ -121,10 +138,16 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     return indexed
 
 
-def _baseline_value_for(component: Component, param: str) -> str | None:
+def _baseline_value_for(component: Component, param: str) -> float | None:
+    """해소된 수치. 확정할 수 없으면 None.
+
+    원본 토큰이 아니라 해소값을 돌려주는 것이 핵심이다. W='wn*2'를 문자열로
+    읽으면 parse_spice_value가 ValueError를 내고, check_area_growth가 그것을
+    '판단 불가, 막지 않음'으로 처리해 파라미터화된 덱 전체에서 게이트가
+    사라진다."""
     if param == "value":
-        return component.value
-    return component.params.get(param)
+        return component.resolved_value
+    return component.resolved_params.get(param)
 
 
 # The geometry dimension each X-prefixed sky130 primitive is tiered on.
@@ -148,18 +171,16 @@ def _tier_baseline_value(component: Component) -> float | None:
         param = _SKY130_GEOMETRY_PARAM.get(ctype)
         if param is None:
             return None
-        raw = component.params.get(param)
+        raw = component.resolved_params.get(param)
         if raw is None:
             return None
         # m is an emitter-area count, not a length - it must not be scaled.
         scale = 1.0 if ctype == "Q" else component.geometry_scale
-        return parse_spice_value(raw) * scale
+        return raw * scale
     if ctype == "M":
-        w = component.params.get("W")
-        return parse_spice_value(w) * component.geometry_scale if w is not None else None
-    if component.value is not None:
-        return parse_spice_value(component.value)
-    return None
+        w = component.resolved_params.get("W")
+        return w * component.geometry_scale if w is not None else None
+    return component.resolved_value
 
 
 def check_area_growth(
@@ -177,29 +198,19 @@ def check_area_growth(
 
         combined_ratio = 1.0
         for change in changes:
-            baseline_str = _baseline_value_for(component, change["param"])
-            if baseline_str is None:
+            baseline_value = _baseline_value_for(component, change["param"])
+            if baseline_value is None or baseline_value <= 0:
                 continue
-            try:
-                baseline_value = parse_spice_value(baseline_str)
-            except ValueError:
-                # e.g. param="value" misapplied to a non-numeric positional
-                # token (a transistor's model name, a subckt instance's
-                # subckt name). Not something we can judge area impact on -
-                # treat this change as unconstrained, same as a missing
-                # baseline value.
-                continue
-            if baseline_value <= 0:
-                continue
-            try:
-                new_value = parse_spice_value(change["new_value"])
-            except ValueError:
+            new_value = resolve_value(change["new_value"], {})
+            if new_value is None:
                 continue
             combined_ratio *= new_value / baseline_value
 
         if combined_ratio <= 1.0:
             continue
 
+        # _tier_baseline_value는 이제 해소된 수치만 읽으므로 ValueError를
+        # 던지지 않는다 (해소 단계에서 이미 걸러진다) - 방어적으로만 남겨둔다.
         try:
             tier_baseline = _tier_baseline_value(component)
         except ValueError:

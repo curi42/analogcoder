@@ -423,3 +423,56 @@ def test_pnp_multiplier_is_a_count_and_is_not_scaled_by_the_deck_scale():
     components = index_baseline_components(PNP_NETLIST)
 
     assert _tier_baseline_value(components["CORE.Xq8"]) == pytest.approx(8.0)
+
+
+def test_a_parameterised_width_is_tiered_like_a_literal_one():
+    # 회귀: W=30 -> 300은 차단되는데 W='wn*2' -> 'wn*20'은 같은 10x인데도
+    # 승인됐다. 리터럴 덱에서는 드문 예외지만 파라미터화가 기본인 HSPICE
+    # 덱에서는 모든 소자에 발동해 게이트가 사실상 사라진다.
+    deck = (
+        "* t\n.option scale=1.0u\n.param wn=20\n"
+        "M1 d g 0 0 nch W='wn*2' L=1\n.end\n"
+    )
+    indexed = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        indexed, [{"refdes": "M1", "param": "W", "old_value": "'wn*2'", "new_value": "400"}]
+    )
+
+    assert ok is False
+    assert "10.00x" in feedback
+
+
+def test_an_unresolvable_value_still_falls_back_to_not_blocking():
+    # 의도된 폴백이다. 값을 확정할 수 없으면 면적 영향을 판단할 수 없고,
+    # 판단할 수 없는 것을 막지는 않는다.
+    deck = (
+        "* t\n.option scale=1.0u\n"
+        "M1 d g 0 0 nch W='sqrt(nope)' L=1\n.end\n"
+    )
+    indexed = index_baseline_components(deck)
+
+    ok, _ = check_area_growth(
+        indexed, [{"refdes": "M1", "param": "W", "old_value": "x", "new_value": "300"}]
+    )
+
+    assert ok is True
+
+
+def test_the_resolved_tier_baseline_uses_the_parameterised_geometry():
+    # 티어 선택도 해소된 값을 봐야 한다. M1은 일반(비-sky130) 소자이므로
+    # TRANSISTOR_TIERS를 타고, wn*2 = 40um는 30um 초과 80um 이하 구간이라
+    # 2.0x 티어다. 해소가 안 되면 티어 베이스라인 자체가 None이 되어 게이트가
+    # 아예 판정하지 않는다.
+    deck = (
+        "* t\n.option scale=1.0u\n.param wn=20\n"
+        "M1 d g 0 0 nch W='wn*2' L=1\n.end\n"
+    )
+    indexed = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        indexed, [{"refdes": "M1", "param": "W", "old_value": "'wn*2'", "new_value": "100"}]
+    )
+
+    assert ok is False
+    assert "2.0x" in feedback

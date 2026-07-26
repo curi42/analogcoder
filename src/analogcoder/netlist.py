@@ -61,6 +61,8 @@ class Component:
     raw_line: str = ""
     scope: str | None = None
     geometry_scale: float = 1.0
+    resolved_params: dict[str, float] = field(default_factory=dict)
+    resolved_value: float | None = None
 
 
 @dataclass
