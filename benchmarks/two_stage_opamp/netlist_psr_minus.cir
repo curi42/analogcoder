@@ -1,34 +1,40 @@
-* Two-stage CMOS op-amp (Miller-compensated), generic level-1 devices.
-* PSR- testbench: AC=1 injected on Vss, no input stimulus, same AC loop-break
-* (Lfb) topology as the main AC testbench. The OPAMP2STAGE subckt body below
-* must stay byte-identical to netlist.cir and netlist_psr_plus.cir - tuning
-* changes are applied to all three files independently and rely on that.
-.model NMOSG NMOS (LEVEL=1 VTO=0.7 KP=120u LAMBDA=0.02)
-.model PMOSG PMOS (LEVEL=1 VTO=-0.7 KP=40u LAMBDA=0.02)
+* Two-stage CMOS op-amp (Miller-compensated), SkyWater sky130 PDK.
+* PSR- testbench, redefined for a hard-grounded Vss: AC=1 injected directly
+* on the Vss (ground) node itself - a GND-bounce test, not a separate
+* negative-rail PSR test (the original +-2.5V split-supply benchmark's Vss
+* was a real rail to stimulate; here Vss=0V is hard ground, so there is no
+* separate rail - this measures how much ground noise/bounce couples to
+* vout). Same AC loop-break (Lfb) topology as the main AC testbench. The
+* OPAMP2STAGE subckt body below must stay byte-identical to netlist.cir,
+* netlist_psr_plus.cir, and netlist_settling.cir - tuning changes are
+* applied to all four files independently and rely on that.
+.include "pdk_corner.inc"
 
 .subckt OPAMP2STAGE vinp vinn vout vdd vss
-Iref nb1 vdd 100u
-M9 nb1 nb1 vdd vdd PMOSG W=20u L=1u
+Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
+Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
+Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rdeg degn vss 20k
+Rstart vdd nbias 3Meg
 
-M1 n1   vinn tail vdd PMOSG W=40u L=1u
-M2 outA vinp tail vdd PMOSG W=40u L=1u
+X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+X3   n1   n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X4   outA n1   vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=4
+X5   tail pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=15
 
-M3 n1   n1   vss vss NMOSG W=20u L=1u
-M4 outA n1   vss vss NMOSG W=20u L=1u
+X6   vout outA vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+X7   vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=30
 
-M5 tail nb1 vdd vdd PMOSG W=40u L=1u
-
-M6 vout outA vss vss NMOSG W=40u L=1u
-M7 vout nb1  vdd vdd PMOSG W=60u L=1u
-
-Cc outA vout 2p
-Ca outA 0 0.3p
+Xcc outA vout sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1
+Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
 .ends OPAMP2STAGE
 
-Vdd vdd 0 DC 2.5
-Vss vss 0 DC -2.5 AC 1
+Vdd vdd 0 DC 1.8
+Vss vss 0 DC 0 AC 1
 
-Vinp vinp 0 DC 0
+Vinp vinp 0 DC 0.55
 Lfb vout vinn 1e6
 Cin vstim vinn 1
 Vstim vstim 0 DC 0
