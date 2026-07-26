@@ -88,7 +88,12 @@ def strip_inline_comment(line: str) -> tuple[str, str]:
 
     분리해서 돌려주는 이유는 apply_changes 때문이다. 그쪽은 코드를 토큰으로
     쪼개 다시 합치는데, 주석을 코드에 남겨두면 param="value"가 마지막 위치
-    토큰(주석의 마지막 단어)을 소자 값으로 착각해 교체한다."""
+    토큰(주석의 마지막 단어)을 소자 값으로 착각해 교체한다.
+
+    이 함수는 `*` 줄 전체 주석을 모른다 - 그냥 첫 `$`/`;` 위치에서 자를
+    뿐이다. 벤치마크 넷리스트의 `*` 주석 줄은 대부분 `$`나 `;`를 포함하므로,
+    호출자가 `*` 줄을 먼저 걸러내지 않고 이 함수에 그대로 넘기면 주석
+    내용이 코드부로 오인되어 잘못 잘린다."""
     positions = [line.find(marker) for marker in _COMMENT_MARKERS]
     positions = [p for p in positions if p != -1]
     if not positions:

@@ -44,6 +44,17 @@ def test_applying_a_value_change_edits_the_device_not_the_comment():
     assert "$ feedback resistor" in out
 
 
+def test_applying_a_named_param_change_edits_the_device_not_the_comment():
+    # 위 테스트는 param="value"(마지막 위치 토큰) 경로만 확인한다. name=value
+    # 토큰을 찾아 교체하는 분기도 재조립 시 주석을 되붙이는지 별도로 확인한다.
+    deck = "* t\nM1 d g 0 0 nch W=1 L=1 $ feedback resistor\n.end\n"
+
+    out = apply_changes(deck, [{"refdes": "M1", "param": "W", "new_value": "2"}])
+
+    assert "W=2" in out
+    assert "$ feedback resistor" in out
+
+
 def test_macro_and_eom_are_accepted_as_subckt_and_ends():
     deck = "* t\n.macro AMP a b\nM1 a b 0 0 nch W=1\n.eom\n.end\n"
 
