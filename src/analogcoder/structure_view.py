@@ -1,0 +1,206 @@
+"""파생된 구조를 LLM 프롬프트로 좁혀 렌더링한다: 초점 선정 + 두 가지 뷰.
+
+실제 프로덕션 넷리스트는 수백~수천 줄이라 원문을 그대로 넘기면 컨텍스트에
+안 들어간다. 그렇다고 블록을 걸러 숨기면 답이 있는 블록을 지워버릴 위험이
+있으므로, 대신 "계층화된 상세도"를 쓴다: 모든 블록은 항상 한 줄 요약으로
+보이고, 초점(focus)에 든 블록만 전체 상세가 붙는다. 넷리스트 원문 뷰도 같은
+원칙 - 모든 `.subckt` 헤더는 남기되 초점 밖 블록은 본문만 접는다. 초점이
+틀려도 대가는 "관련성 저하"이지 "정답이 안 보임"이 아니다."""
+
+from analogcoder.netlist import logical_lines, split_tokens
+from analogcoder.signal_path import SignalPaths
+from analogcoder.structure import NetlistStructure
+
+
+def _definition_name(path: str) -> str:
+    """정의 경로의 마지막 조각. signal_path.net_blocks가 정의를 이 이름으로
+    (경로가 아니라) 색인하기 때문에, structure.blocks의 경로 키와 잇는
+    다리 역할을 이 헬퍼가 한다."""
+    return path.rpartition(".")[2]
+
+
+def select_focus(
+    structure: NetlistStructure,
+    paths: SignalPaths,
+    failing_nets: set[str],
+    touched_refdes: set[str],
+) -> set[str]:
+    """상세히 렌더링할 정의 경로의 집합.
+
+    최상위 스코프(None)는 반환값에 담지 않는다 - 테스트벤치의 자극원과 DUT
+    인스턴스가 거기 있어 언제나 초점이므로, 렌더러가 무조건 포함한다.
+
+    씨앗은 세 갈래로 모은다:
+      1) 실패한 넷을 직접 건드리는(구동/감지) 블록.
+      2) 그 씨앗이 "감지"하는 넷을 누가 "구동"하는가 - 역방향 1홉. 씨앗
+         블록이 잘못된 값을 감지하고 있다면 그 값을 만든 상류 블록을 봐야
+         튜너가 원인 쪽을 고칠 수 있다.
+      3) 이번 실행에서 이미 값이 바뀐 refdes가 속한 블록 - 방금 건드린
+         블록을 다음 반복에서 시야 밖으로 내보내면 그 변경의 효과를 이어서
+         판단할 수 없다.
+    씨앗이 하나도 안 잡히면(예: failing_nets가 measurement_nets에 없는
+    이름이라 넷으로 못 옮겨졌을 때) 조용히 아무것도 안 보여주는 대신
+    전 블록을 노출한다 - "모르면 침묵"의 예외로, 안전한 쪽이 더 넓게
+    보여주는 쪽이기 때문이다."""
+    definitions = {path for path in structure.blocks if path is not None}
+    by_name = {_definition_name(path): path for path in definitions}
+
+    seeds: set[str] = set()
+    for net in failing_nets:
+        for name, role in paths.net_blocks.get(net, {}).items():
+            if name in by_name:
+                seeds.add(by_name[name])
+
+    # 역방향 1홉: 씨앗 블록이 감지(sense)하는 넷을, 다른 블록이 구동(drive)
+    # 하고 있으면 그 구동 블록도 초점에 넣는다.
+    sensed_nets = {
+        net
+        for net, blocks in paths.net_blocks.items()
+        if any(by_name.get(name) in seeds and role == "sense" for name, role in blocks.items())
+    }
+    upstream = {
+        by_name[name]
+        for net in sensed_nets
+        for name, role in paths.net_blocks.get(net, {}).items()
+        if role == "drive" and name in by_name
+    }
+
+    touched = {
+        path
+        for path in definitions
+        if any(refdes.startswith(f"{path}.") for refdes in touched_refdes)
+    }
+
+    focus = seeds | upstream | touched
+    return focus or definitions
+
+
+def render_structure(
+    structure: NetlistStructure, paths: SignalPaths, patterns: list, focus: set[str]
+) -> str:
+    """계층화된 구조 뷰: 레벨 0에는 모든 블록이 한 줄씩, 그 아래에는 초점에
+    든 블록(과 언제나 초점인 최상위)만 부품 주소록이 붙는다. 주소록은
+    참조부호와 파라미터 "이름"만 낸다 - 값은 넷리스트 원문에만 산다."""
+    lines = [f"circuit: {structure.circuit_name}", "", "blocks:"]
+
+    # 정의 이름별 drive/sense 넷 목록. net_blocks가 이름으로 색인되어 있으므로
+    # 레벨 0 요약도 이름 기준으로 뒤집어 만든다.
+    drives: dict[str, list[str]] = {}
+    senses: dict[str, list[str]] = {}
+    for net, blocks in sorted(paths.net_blocks.items()):
+        for name, role in sorted(blocks.items()):
+            (drives if role == "drive" else senses).setdefault(name, []).append(net)
+
+    for path in sorted(p for p in structure.blocks if p is not None):
+        block = structure.blocks[path]
+        name = _definition_name(path)
+        lines.append(
+            f"  {path}  {block.instance_count} instance(s)  "
+            f"{len(block.components)} comps  "
+            f"drives {','.join(drives.get(name, [])) or '-'}  "
+            f"senses {','.join(senses.get(name, [])) or '-'}"
+        )
+
+    for path in sorted(focus | {None}, key=lambda p: (p is not None, p or "")):
+        block = structure.blocks.get(path)
+        if block is None:
+            continue
+        label = path or "<top level>"
+        lines += ["", f"{label}  ports: {' '.join(block.ports) or '-'}"]
+        for fact in block.components:
+            terminals = " ".join(
+                f"{t.name}={net}{'(sense)' if t.role == 'sense' else ''}"
+                for t, net in zip(fact.terminals, fact.nodes)
+            )
+            lines.append(
+                f"  {fact.refdes} {fact.model or fact.ctype}  {terminals or ' '.join(fact.nodes)}"
+            )
+        matched = [p for p in patterns if getattr(p, "block", None) == path]
+        if matched:
+            lines.append(
+                "  patterns: " + "  ".join(f"{p.kind}({','.join(p.members)})" for p in matched)
+            )
+        addresses = [
+            f"{e.refdes}.{e.param}"
+            for e in structure.tunable
+            if (e.refdes.rpartition(".")[0] or None) == path
+        ]
+        if addresses:
+            lines.append("  tunable: " + " ".join(addresses) + "   (값은 넷리스트 원문에서 읽을 것)")
+
+    # 인스턴스-정의 포트 수 불일치는 유일하게 "모르면 침묵"의 예외다 - 넷리스트
+    # 버그이므로 초점과 무관하게 항상 드러낸다.
+    for edge in paths.instances:
+        if edge.mismatch:
+            lines.append(f"WARNING: {edge.mismatch}")
+
+    return "\n".join(lines)
+
+
+def render_netlist(netlist_text: str, focus: set[str]) -> str:
+    """초점 블록은 본문 전문, 비초점 블록은 헤더만 남기고 본문을 접는다.
+    최상위 줄(자극원, DUT 인스턴스, 지시문)은 전부 남긴다.
+
+    축약 단위는 정의다: 중첩된 정의는 바깥이 접히면 함께 접힌다 - 접힌 본문
+    안에 헤더만 남기면 그 헤더가 어디에 속하는지 알 수 없는 조각이 되기
+    때문이다. 그래서 fold_start는 "몇 번째 깊이에서 접힘이 시작됐는가"만
+    기억한다: 그 깊이로 돌아오는 .ends를 만날 때까지, 그 사이의 모든 중첩
+    헤더/본문은 개별 초점 여부와 무관하게 통째로 묻힌다."""
+    names = {_definition_name(path) for path in focus}
+    out: list[str] = []
+    stack: list[str] = []
+    fold_start: int | None = None  # None이면 현재 안 접는 중
+    elided = 0
+
+    for raw_line in netlist_text.splitlines():
+        stripped = raw_line.strip()
+        lowered = stripped.lower()
+
+        if lowered.startswith((".subckt", ".macro")):
+            name = split_tokens(stripped)[1]
+            stack.append(name)
+            if fold_start is None:
+                # 지금 접는 중이 아니므로 이 헤더는 보인다 - 초점 여부와
+                # 무관하게 헤더는 항상 남긴다.
+                out.append(raw_line)
+                if name not in names:
+                    fold_start = len(stack)
+            continue
+
+        if lowered.startswith((".ends", ".eom")):
+            depth = len(stack)
+            if stack:
+                stack.pop()
+            if fold_start == depth:
+                # `*` 주석으로 쓴다 - 이 텍스트는 프롬프트 전용이고 절대
+                # ngspice로 가지 않지만, SPICE로 읽어도 무해한 형태여야
+                # 사람이 붙여 넣어 볼 때 오해가 없다.
+                out.append(f"* ... ({elided} components elided)")
+                out.append(raw_line)
+                elided = 0
+                fold_start = None
+            elif fold_start is None:
+                out.append(raw_line)
+            continue
+
+        if fold_start is not None:
+            if stripped and not stripped.startswith("*"):
+                elided += 1
+            continue
+
+        out.append(raw_line)
+
+    return "\n".join(out)
+
+
+def focus_misses(focus: set[str], changes: list[dict]) -> list[str]:
+    """초점 밖 블록을 지목한 제안의 refdes 목록. 그런 일이 일어났다는 것은
+    초점 규칙이 원인 블록을 놓쳤다는 증거이므로 기록해 둔다 - 제안 자체는
+    이 함수와 무관하게 정상 적용된다."""
+    misses = []
+    for change in changes:
+        refdes = change["refdes"]
+        scope = refdes.rpartition(".")[0]
+        if scope and scope not in focus:
+            misses.append(refdes)
+    return misses
