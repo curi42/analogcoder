@@ -1,5 +1,34 @@
+import os
 import re
 from dataclasses import dataclass, field
+
+_INCLUDE_RE = re.compile(r'^(\s*\.include\s+)"?([^"\s]+)"?\s*$', re.IGNORECASE | re.MULTILINE)
+
+
+def resolve_includes(text: str, base_dir: str) -> str:
+    """Rewrites every top-level relative `.include` path in text to an
+    absolute path anchored at base_dir, making the netlist text relocatable.
+
+    Necessary because the pipeline moves netlist TEXT away from the directory
+    it was read from: RunState stages each version into the run dir and
+    NgspiceBackend then stages that into its own temp dir. ngspice resolves a
+    top-level .include against the process CWD (which NgspiceBackend sets to
+    the netlist's own directory), so a bare relative include silently stops
+    resolving the moment the text is written anywhere else.
+
+    Only applies to the top-level deck. A nested .include inside an already-
+    included file (e.g. pdk_corner.inc's own "../../third_party/..." lines)
+    resolves against THAT file's directory, not the CWD, so those must be
+    left alone - and are, since this never rewrites the included files
+    themselves."""
+
+    def _absolutize(match: re.Match) -> str:
+        prefix, path = match.group(1), match.group(2)
+        if os.path.isabs(path):
+            return match.group(0)
+        return f'{prefix}"{os.path.join(base_dir, path)}"'
+
+    return _INCLUDE_RE.sub(_absolutize, text)
 
 
 @dataclass
