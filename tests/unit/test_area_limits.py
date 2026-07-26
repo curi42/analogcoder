@@ -131,3 +131,58 @@ def test_check_area_growth_skips_unparseable_baseline_value_on_subckt_instance()
     approved, feedback = check_area_growth(baseline, changes)
     assert approved is True
     assert feedback is None
+
+
+SKY130_NETLIST = (
+    "* sky130-style test\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "X6 vout outA vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8\n"
+    "Xcc outA vout sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1\n"
+    "Xdut vinp vinn vout vdd vss OPAMP2STAGE\n"
+    ".ends AMP\n"
+    ".end\n"
+)
+
+
+def test_check_area_growth_classifies_sky130_fet_by_subckt_name():
+    baseline = index_baseline_components(SKY130_NETLIST)
+    # sky130 netlists write W/L as bare microns with no unit suffix (relying
+    # on pdk_corner.inc's ".option scale=1.0u"), so both old_value and
+    # new_value here are unitless too, matching what a real tuner proposal
+    # against this netlist would emit - mixing in a "u" suffix on only one
+    # side would silently corrupt the ratio (30e-6 / 8 instead of 30 / 8).
+    # X6's baseline W=8 is far above every TRANSISTOR_TIERS boundary (those
+    # are expressed in meters, e.g. 30e-6) once misread as unitless, so it
+    # always lands in the strictest (1.5x) tier - 8->30 is 3.75x, which
+    # exceeds even that. This only rejects if X6 is correctly classified as
+    # a transistor (ctype "M") from its sky130_fd_pr__nfet_01v8 subckt name,
+    # not its "X" refdes prefix.
+    changes = [{"refdes": "X6", "param": "W", "old_value": "8", "new_value": "30"}]
+    approved, feedback = check_area_growth(baseline, changes)
+    assert approved is False
+    assert "X6" in feedback
+
+
+def test_check_area_growth_classifies_sky130_mim_cap_by_subckt_name():
+    baseline = index_baseline_components(SKY130_NETLIST)
+    # Xcc's "value" positional token is the subckt name
+    # ("sky130_fd_pr__cap_mim_m3_1"), not a numeric literal - area growth
+    # must be judged on its w= param instead, the same way a transistor's
+    # is judged on W=. w: 12.05->50 is a real ~4.1x growth, which must be
+    # rejected once Xcc is correctly classified as a capacitor (ctype "C").
+    changes = [{"refdes": "Xcc", "param": "w", "old_value": "12.05", "new_value": "50"}]
+    approved, feedback = check_area_growth(baseline, changes)
+    assert approved is False
+    assert "Xcc" in feedback
+
+
+def test_check_area_growth_still_treats_subckt_instantiation_as_unconstrained():
+    # Xdut instantiates a whole op-amp subckt (OPAMP2STAGE), not a sky130
+    # PDK primitive - its "value" doesn't contain "fet" or "cap", so it must
+    # remain unconstrained, exactly like today's behavior for any X-prefixed
+    # non-PDK-primitive instance.
+    baseline = index_baseline_components(SKY130_NETLIST)
+    changes = [{"refdes": "Xdut", "param": "value", "old_value": "OPAMP2STAGE", "new_value": "OTHERAMP"}]
+    approved, feedback = check_area_growth(baseline, changes)
+    assert approved is True
+    assert feedback is None

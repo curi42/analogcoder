@@ -3,6 +3,13 @@ from dataclasses import dataclass
 from analogcoder.netlist import Component, parse_netlist, parse_spice_value
 
 
+_SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
+    ("fet", "M"),
+    ("cap", "C"),
+    ("res", "R"),
+]
+
+
 @dataclass(frozen=True)
 class SizeTier:
     max_value: float | None  # None = this is the top/unbounded tier
@@ -31,6 +38,23 @@ TIERS_BY_CTYPE: dict[str, list[SizeTier]] = {
 }
 
 
+def _classify_ctype(component: Component) -> str:
+    """Effective device-type for tiering. Generic-device refdes prefixes
+    (M/C/R) pass through unchanged. An X-prefixed sky130 PDK primitive
+    instantiation carries its subckt/model name as component.value (the
+    last positional token on the line) - classify by that name instead,
+    since sky130 transistors and MiM caps are both X-prefixed and would
+    otherwise be indistinguishable from an unconstrained subckt
+    instantiation like "Xdut ... OPAMP2STAGE"."""
+    if component.ctype != "X" or component.value is None:
+        return component.ctype
+    lowered = component.value.lower()
+    for marker, ctype in _SKY130_CTYPE_MARKERS:
+        if marker in lowered:
+            return ctype
+    return component.ctype
+
+
 def allowed_multiplier_for(ctype: str, baseline_value: float) -> float | None:
     tiers = TIERS_BY_CTYPE.get(ctype)
     if tiers is None:
@@ -57,9 +81,16 @@ def _baseline_value_for(component: Component, param: str) -> str | None:
 
 def _tier_baseline_value(component: Component) -> float | None:
     """The dimension used to pick a size tier: baseline W for transistors
-    (L rarely varies in this project), the component's own value for C/R."""
-    if component.ctype == "M":
+    (L rarely varies in this project); for a sky130 MiM cap (X-prefixed,
+    classified as "C"), baseline w= (its "value" is a subckt name, not a
+    numeric literal, so it can't be used directly); the component's own
+    value for every other C/R."""
+    ctype = _classify_ctype(component)
+    if ctype == "M":
         w = component.params.get("W")
+        return parse_spice_value(w) if w is not None else None
+    if component.ctype == "X" and ctype == "C":
+        w = component.params.get("w")
         return parse_spice_value(w) if w is not None else None
     if component.value is not None:
         return parse_spice_value(component.value)
@@ -104,10 +135,13 @@ def check_area_growth(
         if combined_ratio <= 1.0:
             continue
 
-        tier_baseline = _tier_baseline_value(component)
+        try:
+            tier_baseline = _tier_baseline_value(component)
+        except ValueError:
+            continue
         if tier_baseline is None:
             continue
-        allowed = allowed_multiplier_for(component.ctype, tier_baseline)
+        allowed = allowed_multiplier_for(_classify_ctype(component), tier_baseline)
         if allowed is not None and combined_ratio > allowed:
             violations.append(
                 f"{refdes}: proposed change grows area by {combined_ratio:.2f}x, "
