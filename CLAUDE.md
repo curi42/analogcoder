@@ -513,7 +513,46 @@ worth reading before assuming a weak-model failure is a code bug:
   entirely). Without this, one proposal growing `w` 3× (allowed) and `m` 2×
   (allowed) grew total width **6×** and nobody looked. Grouping is per *device*,
   so a wrapper cell's `wn` reaching both `ma1` and `mb1` is checked against
-  each one's own baseline.
+  each one's own baseline. The tier is a **per-device growth ratio, not a
+  total-area budget**, so a group must identify one *physical* device. The key
+  therefore carries the intermediate instance chain (`TracedTarget.chain`), not
+  just the definition component: a wrapper instantiating the same unit cell
+  twice (`xl1`/`xl2` → `LEAF.ma1`) returns two targets holding the **same
+  `Component` object**, and without the chain their one shared ratio was
+  multiplied twice — a legitimate 2.5× was reported and fed back to the tuner
+  as 6.25×. Growing one knob that sizes two devices does grow total area more,
+  but each device still only grows 2.5×, and 2.5× per device is what the tier
+  table bounds.
+- **`m` multiplies the tier baseline for every device class except `Q`.** It
+  is a count of parallel devices, so a MiM cap with `m=4` occupies four times
+  the area of one — tiering it on the single-unit `w` handed it the loosest
+  tier. `Q` is the exception because its `m` *is* the tier key (emitter-area
+  ratio); multiplying there would double-count.
+- **An instance parameter can also reach a device's positional value.** `R`/`C`
+  size knobs are positional (`R1 a b rv`), not `name=value`, which is why
+  `RESISTOR_TIERS`/`CAPACITOR_TIERS` are keyed on the value. Tracing only
+  `device.params` left a *wrapped* resistor unbounded while the identical bare
+  one was blocked — the same 1000× growth decided by whether the designer
+  wrapped it. `params._positional_target` accepts the positional value only
+  when it is a **bare identifier** matching the parameter name; an expression
+  like `{rv*2}` is refused, because assuming the parameter's ratio equals the
+  device's is exactly the guess this layer forbids.
+- **The trace needs the wrapper cell's definition *in the deck*, and an
+  wrapper cell library normally arrives as an `.include`.** `parse_netlist`
+  never follows includes (deliberate — see the `.option scale` note above), so
+  `xwrap1 … WRAP_PAIR_TN33_LVT wn=2e-6` against an include-only definition has no
+  traceable target at all and the gate is fully inert for it: `wn` 2 µm → 2 mm
+  passes. This is *not* fixed by making the parser follow includes. Instead the
+  blindness is recorded: `check_area_growth`'s richer sibling
+  `evaluate_area_growth` returns a per-change **visibility state**, logged in
+  `history.jsonl`'s `area_check` event as `states`. The four states are
+  different facts and must stay distinguishable — `bounded` (a tier applied),
+  `neutral` (nothing to bound: `nf`), `blind` (the component instantiates a
+  subckt this deck does not define, so no trace is possible;
+  `Component.undefined_subckt`), `unjudged` (a value could not be resolved).
+  This gate has been silently inert twice in this repo's history and neither
+  time was visible in a run log. A sky130 primitive is `bounded`, not `blind` —
+  it is classified by its model name and tiered on geometry.
 - **Per-instance parameter resolution is a different tool from
   `build_param_envs`.** The latter resolves per subckt *definition* and
   deliberately drops any name the instances disagree on — and in wrapper-cell
@@ -521,7 +560,15 @@ worth reading before assuming a weak-model failure is a code bug:
   `ma1=4/1/2`), so it returns `None` exactly where a number is needed.
   `params._instance_env` resolves for one instance: that instance's own
   override → the `.subckt` line default → a literal in the body, with the
-  override's own expression evaluated in the *outer* scope. Tracing follows a
+  override's own expression evaluated in the *outer* scope. It **applies the
+  same shadowing rule** as `build_param_envs`: a name declared both in the
+  subckt body and on the `.subckt` line resolves to nothing. Narrowing to one
+  instance removes the "which instance?" ambiguity but not the dialect
+  ambiguity, so the two resolvers must not disagree — they did, and the gate
+  acted on the one that guessed (it picked the `.subckt`-line 10 µm over the
+  body's 60 µm, which chose a 3.0× tier instead of 1.5×). An explicit instance
+  override still wins over a contested name, matching
+  `build_param_envs`' `shadowed -= set(agreed)`. Tracing follows a
   body token into a nested instance, bounded by `_MAX_TRACE_DEPTH`, and falls
   back to "cannot judge, do not block" rather than guessing. A subckt the deck
   does not define (any PDK primitive — `parse_netlist` never follows includes)

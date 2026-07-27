@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
-from analogcoder.area_limits import check_area_growth, index_baseline_components
+from analogcoder.area_limits import evaluate_area_growth, index_baseline_components
 from analogcoder.control_block import measurement_nets
 from analogcoder.netlist import (
     apply_changes,
@@ -221,10 +221,22 @@ async def run_orchestration(
                 )
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
 
-                area_ok, area_feedback = check_area_growth(baseline_components, proposal["proposed_changes"])
+                area = evaluate_area_growth(baseline_components, proposal["proposed_changes"])
+                area_ok, area_feedback = area.approved, area.feedback
+                # states는 승인 여부와 별개로 **게이트가 무엇을 볼 수 있었는지**를
+                # 남긴다. 이것 없이는 "볼 것이 없어서 통과"(nf)와 "정의가 include
+                # 안에만 있어 볼 수 없어서 통과"(blind)가 로그에서 구별되지
+                # 않는다 - 면적 게이트가 조용히 무력해진 두 번의 전례가 모두
+                # 실행 로그로는 알아챌 수 없었던 이유다.
                 state.log_event(
                     "area_check",
-                    {"outer_iter": outer_iter, "retry": retry, "approved": area_ok, "feedback": area_feedback},
+                    {
+                        "outer_iter": outer_iter,
+                        "retry": retry,
+                        "approved": area_ok,
+                        "feedback": area_feedback,
+                        "states": area.states,
+                    },
                 )
                 if not area_ok:
                     rejection_feedback = area_feedback

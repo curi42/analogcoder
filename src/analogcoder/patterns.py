@@ -17,6 +17,10 @@ class PatternMatch:
         # 소자 클래스를 시사) 하나를 고치는 것으로는 다음 매처가 같은
         # 실수를 반복하지 않는다는 보장이 안 된다. 여기서 생성 자체를
         # 막아 개별 매처의 조건 목록에 의존하지 않게 한다.
+        # 여기서 던지는 ValueError는 **의도적으로 치명적**이다: 파생이
+        # 거짓말을 하기 시작한 것이므로 그 회로를 계속 튜닝하는 것은
+        # 무의미하다. run_orchestration의 `except ValueError`가 이것을 받아
+        # 크래시가 아니라 깨끗한 FAIL로 끝낸다 - 삼켜서 계속 가면 안 된다.
         if len(set(self.members)) != len(self.members):
             raise ValueError(
                 f"PatternMatch members must not repeat a refdes: {self.members} ({self.kind})"

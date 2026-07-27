@@ -7,6 +7,7 @@ import pytest
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.state import RunState
+from tests.unit.wrapper_decks import INCLUDE_ONLY_DECK
 
 PASS_JUDGE = {"overall_pass": True, "criteria": [{"name": "gain", "target": ">=19.5", "actual": 20.0, "pass": True, "margin": 0.5}]}
 FAIL_JUDGE = {"overall_pass": False, "criteria": [{"name": "gain", "target": ">=19.5", "actual": 18.0, "pass": False, "margin": -1.5}]}
@@ -780,3 +781,35 @@ async def test_verify_pre_sees_the_full_body_of_an_out_of_focus_block_the_propos
     assert focus_events[0]["blocks"] == ["AMP"]  # BIAS starts out of focus
     assert "elided" not in seen["netlist_view"]
     assert "Rb vdd iref 1k" in seen["netlist_view"]
+
+
+@pytest.mark.asyncio
+async def test_area_check_event_records_what_the_gate_could_see(tmp_path):
+    # M1/I1. approved/feedback만 남기면 "nf라서 볼 것이 없었다"와 "정의가
+    # include에만 있어 볼 수 없었다"가 로그에서 바이트 단위로 똑같다. 이
+    # 저장소에서 면적 게이트가 조용히 무력해진 적이 두 번 있었고, 둘 다
+    # 실행 로그로는 알아챌 수 없었다.
+    async def blind_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return {
+            "proposed_changes": [
+                {"refdes": "xwrap1", "param": "wn", "old_value": "2e-6", "new_value": "2e-3",
+                 "reasoning": "x"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=blind_tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration(
+        {"ac_loop_gain": INCLUDE_ONLY_DECK}, FAKE_SPEC, state, agents
+    )
+
+    with open(state.history_path) as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    area_events = [e for e in events if e["step"] == "area_check"]
+
+    assert area_events
+    assert all(e["approved"] is True for e in area_events)
+    assert all(e["states"] == {"xwrap1.wn": "blind"} for e in area_events)
