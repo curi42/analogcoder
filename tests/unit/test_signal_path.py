@@ -88,6 +88,57 @@ def test_a_top_level_source_net_is_reported_as_supply_or_stimulus():
     assert paths.supply_nets == {"vdd", "0"}
 
 
+def test_a_block_may_sense_a_supply_net_but_can_never_be_its_driver():
+    # 최상위 독립 소스가 그 넷을 구동한다 - 따라서 어떤 블록도 그 넷의
+    # 드라이버일 수 없고, "이 증폭기가 vdd를 구동한다"는 거짓이다. 그러나
+    # 그 넷을 감지하는 블록은 실제 사실이고, 테스트벤치에서 자극 입력 넷은
+    # 독자가 가장 보고 싶어 하는 "감지" 대상이다. 그래서 넷 전체가 아니라
+    # drive 역할만 지운다.
+    deck = (
+        "* t\n"
+        ".subckt AMP vin vout vdd vss\n"
+        "M1 vout vin vss vss NMOS W=10 L=1\n"
+        # 게이트가 vdd에 앉은 소자(벌크는 vss라 벌크 제외 규칙에 안 걸린다).
+        "Mn vout vdd vss vss NMOS W=10 L=1\n"
+        "Rd vout vdd 1k\n"
+        ".ends AMP\n"
+        "Xa nstim nout vdd 0 AMP\n"
+        "Vs nstim 0 AC 1\n"
+        "Vdd vdd 0 DC 1.8\n"
+        ".end\n"
+    )
+
+    paths = build_signal_paths(derive_structure(deck, "demo"))
+
+    # 원본 사실은 그대로 남는다 - 지우는 것은 보고 시점이다.
+    assert paths.net_blocks["vdd"] == {"AMP": {"drive", "sense"}}
+    # 보고용 시야에서는 drive만 사라진다.
+    assert paths.roles_on("vdd") == {"AMP": {"sense"}}
+    assert paths.roles_on("nstim") == {"AMP": {"sense"}}
+    # 전원/자극이 아닌 넷은 손대지 않는다.
+    assert paths.roles_on("nout") == {"AMP": {"drive"}}
+
+
+def test_a_supply_net_with_only_drivers_reports_no_block_at_all():
+    # 2단자 소자가 레일을 무는 것뿐이라면 남는 역할이 없다 - 빈 항목을
+    # 남기면 "이 블록이 이 넷에 관계있다"는 잔상이 그대로 남는다.
+    deck = (
+        "* t\n"
+        ".subckt AMP vin vout vdd vss\n"
+        "M1 vout vin vss vss NMOS W=10 L=1\n"
+        "Rd vout vdd 1k\n"
+        ".ends AMP\n"
+        "Xa nin nout vdd 0 AMP\n"
+        "Vdd vdd 0 DC 1.8\n"
+        ".end\n"
+    )
+
+    paths = build_signal_paths(derive_structure(deck, "demo"))
+
+    assert paths.net_blocks["vdd"] == {"AMP": {"drive"}}
+    assert paths.roles_on("vdd") == {}
+
+
 def test_a_port_count_mismatch_is_reported_as_a_fact_not_silently_dropped():
     # 노드 수가 포트 수와 다른 것은 넷리스트 버그다. 감추면 사용자가
     # 시뮬레이션 실패의 원인을 영원히 못 찾는다.

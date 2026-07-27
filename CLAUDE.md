@@ -84,12 +84,29 @@ against a fixed schema (`schemas.py`).
   for a feedback amplifier, and it printed `BUF_P … drives vbg0 senses -` -
   affirmatively denying the loop on a feedback buffer, and disabling
   `select_focus`'s reverse 1-hop from exactly the blocks the design doc's
-  worked example starts from. `paths.supply_nets` (nets a **top-level** `V`/`I`
-  touches) is excluded from the level-0 summary and from focus seeding: rails
-  are inputs, so `OPAMP2STAGE drives vdd,vss` was a false structural claim, and
-  a measurement resolving to a rail seeded every block at once. Recognising a
-  rail by *name* (`vdd`/`vss`/`gnd`/`0`) would be the forbidden guess; "a
-  top-level independent source connects here" is a parsed fact.
+  worked example starts from. `paths.supply_nets` holds the nets a **top-level**
+  `V`/`I` touches, and `paths.roles_on(net)` is the reporting view over
+  `net_blocks`: on a supply/stimulus net it drops the **`drive` role only**.
+  The source drives that net, so no block can be its driver -
+  `OPAMP2STAGE drives vdd,vss` was a false structural claim produced by
+  two-terminal devices whose rail end is a `drive` terminal. A block *sensing*
+  such a net is true and useful, so it stays: `OPAMP2STAGE senses vinn,vinp`.
+  Level-0 rendering and focus seeding both go through `roles_on`, so a rail
+  cannot seed a block that merely hangs a resistor on it, while a criterion
+  measured on the stimulus net can still seed the block that senses it.
+  Recognising a rail by *name* (`vdd`/`vss`/`gnd`/`0`) would be the forbidden
+  guess; "a top-level independent source connects here" is a parsed fact.
+- **`net_blocks` holds top-level nets only, and that bounds the reverse hop.**
+  `signal_path.walk` drops a net that stops being a port at an intermediate
+  definition, because pushing it outward under its local name would attach
+  roles to an unrelated same-named top-level net. The consequence, documented
+  in `select_focus`'s docstring: a seed block whose *input* comes from a net
+  internal to a parent definition produces no upstream hop. On `benchmarks/
+  bandgap` that is exactly `BUF_P` - its input `vt05` lives inside `BANDGAP`,
+  so the design doc's worked example `vbg0 → BUF_P → upstream` does not reach
+  the resistor ladder on that deck. The hop itself is correct and pinned
+  synthetically; the deck offers no hop. What keeps `XRl1`/`XRl2` reachable
+  there is the tuner prompt saying a folded block may still be named.
   `patterns.py` matches differential pairs, current mirrors, **stacked
   pairs** and Miller compensation. **Patterns never guess** - a match is a
   fact, a non-match is silence, and the acceptance bar is zero false

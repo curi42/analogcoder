@@ -62,8 +62,27 @@ def select_focus(
     전 블록을 노출한다 - "모르면 침묵"의 예외로, 안전한 쪽이 더 넓게
     보여주는 쪽이기 때문이다.
 
-    전원/자극 넷(paths.supply_nets)은 씨앗으로도 홉으로도 쓰지 않는다 -
-    레일에는 거의 모든 블록이 붙어 있어 씨앗 하나가 전 블록으로 번진다.
+    넷별 역할은 paths.roles_on으로 읽는다 - 전원/자극 넷에서는 drive 주장이
+    빠지므로, 레일을 무는 2단자 소자밖에 없는 블록이 그 레일 하나로 씨앗이
+    되어 초점을 번지게 하지 않는다. 그러나 그 넷을 **감지**하는 블록은
+    씨앗이 된다: 자극 입력 넷에서 측정한 기준은 그 입력을 받는 블록을 봐야
+    한다. 같은 이유로 역방향 홉은 레일에서 상류를 찾지 않는다 - 그 넷의
+    드라이버는 블록이 아니라 소스다.
+
+    **알려진 한계: 씨앗 블록의 입력이 중간 정의 내부의 넷이면 역방향 홉이
+    발화하지 않는다.** paths.net_blocks는 최상위 좌표계의 넷만 담는다
+    (signal_path.walk가 매 깊이 좌표를 부모 넷 이름으로 바꾸다가, 부모의
+    포트가 아닌 넷은 밀어올릴 좌표가 없어 버린다 - 그렇게 안 하면 이름이
+    같을 뿐인 무관한 최상위 넷에 역할을 잘못 붙이게 된다). 그래서 실제
+    bandgap에서 BUF_P의 입력 vt05는 BANDGAP 내부 넷이라 net_blocks에 아예
+    없고, BUF_P가 최상위에서 닿는 유일한 넷 vbg0은 자기가 구동하는 넷이다 -
+    결과적으로 `vbg0 -> BUF_P -> 상류(저항 사다리)`라는 설계 문서의 예시는
+    이 덱에서 성립하지 않는다. 홉 자체는 정확하고 합성 덱으로 고정되어
+    있지만(test_the_reverse_hop_fires_from_a_block_that_both_drives_and_senses_its_net),
+    이 덱이 홉을 제공하지 않는다. 그 경우 정답 노브에 닿게 하는 것은 초점이
+    아니라 튜너 프롬프트다 - 접힌 블록도 전체 경로로 지목할 수 있다고
+    명시되어 있다. 중간 정의 내부 넷까지 다루려면 net_blocks가 스코프 한정
+    좌표를 함께 담아야 하고, 그건 이 계층의 설계 변경이다.
 
     netlist_text가 필요한 이유는 touched_refdes 때문이다: 언스코프
     refdes("M9")가 어느 서브회로 소속인지는 문자열만 봐서는 알 수 없고,
@@ -73,8 +92,7 @@ def select_focus(
     definitions = {path for path in structure.blocks if path is not None}
     by_name = {_definition_name(path): path for path in definitions}
 
-    def blocks_on(net: str) -> dict[str, set[str]]:
-        return {} if net in paths.supply_nets else paths.net_blocks.get(net, {})
+    blocks_on = paths.roles_on
 
     seeds: set[str] = set()
     for net in failing_nets:
@@ -115,15 +133,12 @@ def render_structure(
 
     # 정의 이름별 drive/sense 넷 목록. net_blocks가 이름으로 색인되어 있으므로
     # 레벨 0 요약도 이름 기준으로 뒤집어 만든다.
-    # 전원/자극 넷은 요약에서 뺀다 - 레일은 블록의 입력이지 출력이 아니므로
-    # "이 증폭기가 vdd를 구동한다"는 구조적으로 거짓인 주장이다. 이름으로
-    # 알아보지 않는 이유는 signal_path.SignalPaths.supply_nets 참고.
+    # paths.roles_on을 거친다 - 전원/자극 넷에서는 drive 주장만 사라지고
+    # sense 주장은 남는다. 이유는 SignalPaths.roles_on 참고.
     drives: dict[str, list[str]] = {}
     senses: dict[str, list[str]] = {}
-    for net, blocks in sorted(paths.net_blocks.items()):
-        if net in paths.supply_nets:
-            continue
-        for name, roles in sorted(blocks.items()):
+    for net in sorted(paths.net_blocks):
+        for name, roles in sorted(paths.roles_on(net).items()):
             for role in sorted(roles):
                 (drives if role == "drive" else senses).setdefault(name, []).append(net)
 

@@ -1,3 +1,5 @@
+import os
+
 from analogcoder.signal_path import build_signal_paths
 from analogcoder.structure import derive_structure
 from analogcoder.structure_view import (
@@ -6,6 +8,8 @@ from analogcoder.structure_view import (
     render_structure,
     select_focus,
 )
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 CHAIN = (
     "* t\n"
@@ -100,21 +104,24 @@ def test_the_reverse_hop_fires_from_a_block_that_both_drives_and_senses_its_net(
     assert select_focus(s, paths, {"meas"}, set(), FEEDBACK) == {"FB", "SRC"}
 
 
-def test_a_supply_or_stimulus_net_is_not_summarised_as_a_block_output():
-    # 실측: OPAMP2STAGE drives vdd,vss / BANDGAP drives vss / BGR_CORE
-    # senses vss. 레일은 입력이지 블록의 출력이 아니다 - "연산증폭기가
-    # vdd를 구동한다"는 구조적 거짓 주장이다.
-    deck = (
-        "* t\n"
-        ".subckt AMP vin vout vdd vss\n"
-        "M1 vout vin vss vss NMOS W=10 L=1\n"
-        "Rdeg vout vdd 1k\n"
-        ".ends AMP\n"
-        "Xa nin nout vdd 0 AMP\n"
-        "Vdd vdd 0 DC 1.8\n"
-        ".end\n"
-    )
-    s = derive_structure(deck, "demo")
+SUPPLY_DECK = (
+    "* t\n"
+    ".subckt AMP vin vout vdd vss\n"
+    "M1 vout vin vss vss NMOS W=10 L=1\n"
+    "Rdeg vout vdd 1k\n"
+    ".ends AMP\n"
+    "Xa nstim nout vdd 0 AMP\n"
+    "Vstim nstim 0 AC 1\n"
+    "Vdd vdd 0 DC 1.8\n"
+    ".end\n"
+)
+
+
+def test_a_supply_net_is_not_summarised_as_a_block_output():
+    # 실측: OPAMP2STAGE drives vdd,vss / BANDGAP drives vss. 레일은 입력이지
+    # 블록의 출력이 아니다 - 최상위 독립 소스가 그 넷을 구동하므로 어떤
+    # 블록도 드라이버일 수 없다. "연산증폭기가 vdd를 구동한다"는 거짓이다.
+    s = derive_structure(SUPPLY_DECK, "demo")
     paths = build_signal_paths(s)
 
     line = next(l for l in render_structure(s, paths, [], set()).splitlines() if "AMP " in l)
@@ -123,9 +130,37 @@ def test_a_supply_or_stimulus_net_is_not_summarised_as_a_block_output():
     assert "vdd" not in line
 
 
-def test_a_supply_net_among_the_failing_nets_does_not_seed_every_block():
-    # 레일로 씨앗을 잡으면 그 레일에 붙은 모든 블록이 초점이 되어 초점
-    # 자체가 무의미해진다.
+def test_a_block_sensing_the_stimulus_net_is_still_summarised_as_sensing_it():
+    # 거짓이었던 것은 drive 주장뿐이다. 넷을 통째로 빼면 참이면서 유용한
+    # "이 블록이 자극 입력을 감지한다"까지 함께 사라진다 - 테스트벤치에서
+    # 독자가 가장 보고 싶어 하는 바로 그 사실이다.
+    s = derive_structure(SUPPLY_DECK, "demo")
+    paths = build_signal_paths(s)
+
+    line = next(l for l in render_structure(s, paths, [], set()).splitlines() if "AMP " in l)
+
+    assert "senses nstim" in line
+
+
+def test_the_real_two_stage_deck_senses_its_stimulus_and_drives_no_rail():
+    # 리뷰가 인용한 실제 줄: "OPAMP2STAGE drives vout,vdd,vss senses vinn,vinp".
+    # vdd/vss 구동은 거짓이라 사라져야 하고, vinp 감지는 참이라 남아야 한다.
+    text = open(os.path.join(REPO, "benchmarks", "two_stage_opamp", "netlist.cir")).read()
+    s = derive_structure(text, "two_stage")
+    paths = build_signal_paths(s)
+
+    line = next(
+        l for l in render_structure(s, paths, [], set()).splitlines() if "OPAMP2STAGE" in l
+    )
+
+    assert "drives vout " in line
+    assert "senses vinn,vinp" in line
+    assert "vdd" not in line and "vss" not in line
+
+
+def test_a_block_that_only_drives_a_rail_is_not_seeded_by_that_rail():
+    # 레일을 무는 2단자 소자밖에 없는 블록은 그 레일의 드라이버가 아니다.
+    # 그런 블록까지 씨앗으로 잡으면 레일 하나가 초점을 통째로 번지게 한다.
     deck = (
         "* t\n"
         ".subckt A vin vout vss\n"
@@ -133,17 +168,29 @@ def test_a_supply_net_among_the_failing_nets_does_not_seed_every_block():
         ".ends A\n"
         ".subckt B vin vout vss\n"
         "M1 vout vin vss vss NMOS W=10 L=1\n"
+        "Rp vout vss 1k\n"
         ".ends B\n"
         "Xa n1 n2 0 A\n"
         "Xb n3 n4 0 B\n"
-        "Rb n4 0 1k\n"
-        "V0 0 nx DC 0\n"
+        "V0 0 nz DC 0\n"
         ".end\n"
     )
     s = derive_structure(deck, "demo")
     paths = build_signal_paths(s)
 
+    # B는 Rp로 0을 "구동"하는 것처럼 보이지만 0의 드라이버는 V0다.
+    assert "drive" in paths.net_blocks["0"]["B"]
     assert select_focus(s, paths, {"n2", "0"}, set(), deck) == {"A"}
+
+
+def test_a_criterion_measured_on_the_stimulus_net_seeds_the_block_that_senses_it():
+    # 반대 방향으로 망가지지 않았는지 확인한다: 자극 넷을 감지하는 것은
+    # 정당한 사실이므로, 그 넷에서 측정한 기준은 감지 블록을 씨앗으로
+    # 잡을 수 있어야 한다.
+    s = derive_structure(SUPPLY_DECK, "demo")
+    paths = build_signal_paths(s)
+
+    assert select_focus(s, paths, {"nstim"}, set(), SUPPLY_DECK) == {"AMP"}
 
 
 def test_no_seed_falls_back_to_every_block_rather_than_to_nothing():

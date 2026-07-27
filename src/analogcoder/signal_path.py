@@ -35,10 +35,33 @@ class SignalPaths:
     # 최상위 독립 소스(V/I)가 무는 넷. 이름(vdd/vss/gnd/0)으로 알아보는 것은
     # 이 모듈이 금지하는 추측이지만 - 넷 이름은 설계자가 아무렇게나 붙일 수
     # 있다 - "최상위 V/I의 단자가 이 넷에 붙어 있다"는 것은 파서가 아는
-    # 사실이라 정확하다. 전원/자극은 블록의 출력이 아니므로 레벨 0 요약과
-    # 초점 씨앗에서 뺀다("연산증폭기가 vdd를 구동한다"는 거짓 주장이고,
-    # 레일로 씨앗을 잡으면 모든 블록이 초점이 되어 초점이 무의미해진다).
+    # 사실이라 정확하다. 쓰임은 roles_on 참고.
     supply_nets: set[str] = field(default_factory=set)
+
+    def roles_on(self, net: str) -> dict[str, set[str]]:
+        """보고용 시야: 이 넷에 대해 각 정의가 갖는 역할.
+
+        전원/자극 넷에서는 **drive만** 지운다. 그 넷을 구동하는 것은 최상위
+        독립 소스이므로 어떤 블록도 그 넷의 드라이버일 수 없다 - 실측된
+        `OPAMP2STAGE drives vdd,vss`, `BANDGAP drives vss`는 2단자 소자의
+        레일 쪽 단자가 drive로 표시된 데서 나온 구조적 거짓 주장이었다.
+
+        반면 그 넷을 **감지**하는 블록은 참이고 유용하다. 테스트벤치에서
+        자극 입력 넷은 독자가 가장 보고 싶어 하는 감지 대상이고
+        (`OPAMP2STAGE senses vinp`), PSR처럼 레일 감지 자체가 관심사인
+        경우도 있다. 그래서 넷을 통째로 빼지 않는다.
+
+        남는 역할이 없으면 그 정의는 아예 뺀다 - 빈 항목을 남기면 "이 블록이
+        이 넷에 관계있다"는 잔상만 남는다.
+
+        net_blocks 원본은 손대지 않는다: 사실은 사실대로 두고, 무엇을
+        보고하고 무엇으로 초점을 잡을지만 여기서 정한다."""
+        blocks = self.net_blocks.get(net, {})
+        if net not in self.supply_nets:
+            return blocks
+        return {
+            name: roles - {"drive"} for name, roles in blocks.items() if roles - {"drive"}
+        }
 
 
 def _definition_of(structure: NetlistStructure, model: str | None) -> str | None:
