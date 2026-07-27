@@ -1,5 +1,7 @@
 import types
 
+import pytest
+
 from analogcoder.corner_selection import NOMINAL, CornerSet
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.pvt import CornerPoint
@@ -8,11 +10,20 @@ from analogcoder.spec import CornerReduction, Criterion
 from analogcoder.state import RunState
 
 FS = CornerPoint(process="fs", voltage=1.98, temperature=125.0)
+SS = CornerPoint(process="ss", voltage=1.62, temperature=-40.0)
 
 DECK = """\
 * deck
 .include "pdk_corner.inc"
 Vdd vdd 0 DC 1.8
+.end
+"""
+
+DECK2 = """\
+* second testbench deck
+.include "pdk_corner.inc"
+Vdd vdd 0 DC 1.8
+Vin in 0 DC 0 AC 1
 .end
 """
 
@@ -23,6 +34,42 @@ def _state(tmp_path, texts=None):
     state = RunState(run_dir=str(tmp_path / "run"), testbench_names=["tb"])
     state.push_netlist_version(texts or {"tb": DECK})
     return state
+
+
+def _two_tb_state(tmp_path):
+    state = RunState(run_dir=str(tmp_path / "run"), testbench_names=["tb1", "tb2"])
+    state.push_netlist_version({"tb1": DECK, "tb2": DECK2})
+    return state
+
+
+def _two_tb_texts():
+    return {"tb1": DECK, "tb2": DECK2}
+
+
+def _spec_two_testbenches():
+    """두 테스트벤치, 각각 자기 기준. all_criteria가 둘을 합치므로 탐침이
+    테스트벤치 하나 분량의 측정값으로 판정되면 나머지 기준이 "측정값 없음"으로
+    실패한다 - 테스트벤치가 하나뿐인 스펙으로는 그 차이가 아예 안 보인다."""
+    tb1 = types.SimpleNamespace(
+        name="tb1",
+        netlist_path="/benchmarks/x/netlist.cir",
+        control_block=SPEC_CONTROL_BLOCK,
+        criteria=[Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)],
+    )
+    tb2 = types.SimpleNamespace(
+        name="tb2",
+        netlist_path="/benchmarks/x/netlist_psr.cir",
+        control_block=".ac dec 10 1 1meg",
+        criteria=[Criterion(name="psr", measurement="h", operator=">=", threshold=10.0)],
+    )
+    return types.SimpleNamespace(
+        circuit_name="x",
+        testbenches=[tb1, tb2],
+        canonical=tb1,
+        all_criteria=[*tb1.criteria, *tb2.criteria],
+        corner_reduction=None,
+        pvt_corners=None,
+    )
 
 
 def _spec_ge_40(criteria=None, corner_reduction=None):
@@ -63,9 +110,36 @@ def _agent(measurements=None, control_block=None, status="success"):
     return fake
 
 
+def _agent_sequence(results, seen_paths=None):
+    """호출 순서대로 결과를 주는 에이전트 대역. 테스트벤치마다 다른 status를
+    돌려주려면 하나의 고정 결과로는 부족하다."""
+    queue = list(results)
+
+    async def fake(netlist_path, control_block_arg):
+        if seen_paths is not None:
+            seen_paths.append(netlist_path)
+        result = dict(queue.pop(0))
+        result.setdefault("status", "success")
+        result.setdefault("measurements", {})
+        result.setdefault("warnings", [])
+        result.setdefault("control_block", control_block_arg)
+        return result
+
+    return fake
+
+
 class _FakeBackend:
     """Returns the queued measurement dicts in call order and records every
-    call, so a test can assert both what came back and what went in."""
+    call, so a test can assert both what came back and what went in.
+
+    It reads the deck **at call time** and keeps the text. A double that only
+    records the path cannot tell a corner-rendered deck from the nominal one -
+    and the corner file lives in a TemporaryDirectory that is gone before the
+    assertions run, so reading it later is not an option either. Replacing
+    render_corner_netlist with `rendered = netlist_text` (i.e. every corner
+    silently simulating the unrendered deck, which makes this whole
+    sub-project a no-op) was invisible to the path-only version of this
+    double."""
 
     def __init__(self, results, raise_on_call=None, statuses=None):
         self._results = [dict(r) for r in results]
@@ -74,7 +148,9 @@ class _FakeBackend:
         self.calls: list[dict] = []
 
     def run(self, netlist_path, testbench_config):
-        self.calls.append({"netlist_path": netlist_path, **testbench_config})
+        with open(netlist_path) as f:
+            deck = f.read()
+        self.calls.append({"netlist_path": netlist_path, "deck": deck, **testbench_config})
         if self._raise_on_call is not None and len(self.calls) == self._raise_on_call:
             raise RuntimeError("ngspice exploded")
         status = self._statuses.pop(0) if self._statuses else "success"
@@ -276,7 +352,7 @@ async def test_a_passing_probe_is_not_promoted(tmp_path):
 async def test_a_probe_that_raises_does_not_stop_the_iteration(tmp_path):
     # 탐침은 판정에 참여하지 않으므로 실패가 루프를 멈출 이유가 없다.
     state = _state(tmp_path)
-    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)))
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS, SS)))
     events: list = []
     sim = build_corner_simulate(
         _agent(),
@@ -292,7 +368,20 @@ async def test_a_probe_that_raises_does_not_stop_the_iteration(tmp_path):
     assert FS not in holder.corner_set.corners
     # 조용히 삼키면 탐침이 매 반복 터지고 있어도 아무 데도 안 남는다 -
     # 이 저장소가 반복해서 당한 "조용히 무력한 게이트"와 같은 모양이다.
-    assert [d for step, d in events if step == "corner_probe" and d.get("error")]
+    probe_events = [d for step, d in events if step == "corner_probe"]
+    assert len(probe_events) == 1
+    # 터진 탐침의 기록은 정상 기록과 **같은 모양**이어야 한다. failed/promoted가
+    # 없으면 record["failed"]를 읽는 소비자는 KeyError, record.get("failed")를
+    # 읽는 소비자는 터진 탐침을 "통과한 탐침"으로 읽는다.
+    assert set(probe_events[0]) == {"corner", "failed", "promoted", "error"}
+    assert probe_events[0]["failed"] is False
+    assert probe_events[0]["promoted"] is False
+    assert probe_events[0]["error"].startswith("RuntimeError:")
+    assert result["probe"] == probe_events[0]
+    # 터진 탐침도 **회전은 진행된 채 커밋된다** - 그래야 매 반복 같은 코너에서
+    # 계속 터지지 않고 한 바퀴 뒤에 다시 온다. 결과만 없던 것으로 한다.
+    assert holder.corner_set.probe_index == 1
+    assert holder.corner_set.probe_order == (FS, SS)
 
 
 async def test_the_probe_is_logged_with_its_corner_and_outcome(tmp_path):
@@ -330,20 +419,128 @@ async def test_the_probe_is_skipped_when_the_spec_turns_it_off(tmp_path):
 # --- 기존 simulate_fn 계약 ---------------------------------------------------
 
 
-async def test_the_status_folds_every_testbench_and_every_corner(tmp_path):
+async def test_a_non_success_corner_status_folds_in_and_names_the_corner(tmp_path):
     # 전부 성공했을 때만 성공이다. 코너의 status를 무시하는 변형은 수렴하지
     # 못한 코너의 결과를 성공으로 보고하고, optimizer가 그 측정값으로 마진을
-    # 태운다.
-    state = _state(tmp_path)
+    # 태운다. optimizer._run_simulation은 이 문자열을 그대로 사유에 적으므로
+    # 좌표가 실려 있지 않으면 어느 코너였는지가 사라진다.
+    state = _two_tb_state(tmp_path)
     cs = CornerSet(corners=(NOMINAL, FS), probe_order=())
     backend = _backend(
-        [{"g": 50.0}, {"g": 41.0}], statuses=["success", "convergence_failure"]
+        [{"g": 50.0}, {"g": 41.0}, {"h": 20.0}, {"h": 15.0}],
+        statuses=["success", "convergence_failure", "success", "success"],
     )
-    sim = build_corner_simulate(_agent(), backend, state, CornerState(cs), _noop_log)
+    sim = build_corner_simulate(
+        _agent_sequence([{}, {}]), backend, state, CornerState(cs), _noop_log
+    )
 
-    result = await sim({"tb": DECK}, _spec_ge_40())
+    result = await sim(_two_tb_texts(), _spec_two_testbenches())
 
-    assert result["status"] == "convergence_failure"
+    assert result["status"] == "convergence_failure at fs/1.98/125.0 in testbench tb1"
+
+
+async def test_a_non_success_agent_status_folds_across_testbenches(tmp_path):
+    # 두 번째 테스트벤치의 **에이전트**가 실패를 보고한 경우. 테스트벤치가
+    # 하나뿐인 스펙에서는 이 접기가 코너 쪽 접기와 구분되지 않아, 에이전트
+    # 쪽을 통째로 지우는 변형(`if False and ...`)이 그대로 통과한다.
+    state = _two_tb_state(tmp_path)
+    seen_paths: list = []
+    backend = _backend([{"g": 50.0}, {"h": 20.0}])
+    sim = build_corner_simulate(
+        _agent_sequence([{"status": "success"}, {"status": "error"}], seen_paths),
+        backend,
+        state,
+        CornerState(CornerSet(corners=(NOMINAL,), probe_order=())),
+        _noop_log,
+    )
+
+    result = await sim(_two_tb_texts(), _spec_two_testbenches())
+
+    assert result["status"] == "error"
+    # 에이전트 쪽 값은 cli.py의 기존 simulate_fn과 글자 그대로 같다 - 좌표가
+    # 붙어 있다는 것 자체가 "코너가 낸 실패"라는 표시이므로, 여기 붙이면 그
+    # 구분이 사라진다.
+    assert seen_paths == [state.current_netlist_paths()[n] for n in ("tb1", "tb2")]
+
+
+# --- 여러 테스트벤치를 가로지르는 탐침 ----------------------------------------
+
+
+async def test_the_probe_is_judged_once_after_every_testbench_has_run(tmp_path):
+    # 탐침 시뮬레이션은 테스트벤치마다 돌지만, 판정·승격·기록은 **전부 돈 뒤
+    # 한 번**이다. 판정 블록을 테스트벤치 루프 안으로 옮기는 변형은 tb1만 돈
+    # 시점에 tb2의 기준을 "측정값 없음"으로 실패시켜, 크래시가 아니라 절반짜리
+    # 측정값을 근거로 코너를 승격시킨다 - 기록도 두 번 남는다.
+    state = _two_tb_state(tmp_path)
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)))
+    events: list = []
+    backend = _backend([{"g": 50.0}, {"g": 45.0}, {"h": 20.0}, {"h": 15.0}])
+    sim = build_corner_simulate(
+        _agent_sequence([{}, {}]), backend, state, holder, _recording_log(events)
+    )
+
+    result = await sim(_two_tb_texts(), _spec_two_testbenches())
+
+    assert len(backend.calls) == 4  # 테스트벤치마다 nominal + 탐침
+    probe_events = [d for step, d in events if step == "corner_probe"]
+    assert probe_events == [{"corner": "fs/1.98/125.0", "failed": False, "promoted": False}]
+    assert FS not in holder.corner_set.corners
+    assert result["measurements"] == {"g": 50.0, "h": 20.0}
+
+
+async def test_a_probe_that_raises_skips_the_remaining_testbenches(tmp_path):
+    # 한 테스트벤치의 탐침이 터진 뒤 나머지 테스트벤치의 탐침을 계속 돌면,
+    # 판정에 들어가는 측정값이 절반짜리가 되어 나머지 기준이 "측정값 없음"으로
+    # 실패한다 - 크래시를 근거로 코너가 승격된다.
+    state = _two_tb_state(tmp_path)
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)))
+    events: list = []
+    backend = _backend_raising_on_call(2, [{"g": 50.0}, {"h": 20.0}])
+    sim = build_corner_simulate(
+        _agent_sequence([{}, {}]), backend, state, holder, _recording_log(events)
+    )
+
+    result = await sim(_two_tb_texts(), _spec_two_testbenches())
+
+    assert len(backend.calls) == 3  # tb1 nominal, tb1 탐침(터짐), tb2 nominal
+    assert FS not in holder.corner_set.corners
+    assert result["measurements"] == {"g": 50.0, "h": 20.0}
+    assert [d for step, d in events if step == "corner_probe"] == [result["probe"]]
+    assert result["probe"]["error"].startswith("RuntimeError:")
+
+
+# --- 넷리스트 출처의 불변식 --------------------------------------------------
+
+
+async def test_a_netlist_argument_that_lags_the_run_state_is_rejected(tmp_path):
+    # nominal은 state의 **파일**을 돌고 코너는 **인자**를 렌더링한다. 둘이
+    # 어긋나면 nominal은 새 덱을, 코너는 옛 덱을 도는데 키 집합은 여전히 같아
+    # 아무 데서도 티가 나지 않는다. 검사를 지우는 변형은 이 실행을 조용히
+    # 통과시킨다.
+    state = _state(tmp_path)
+    cs = CornerSet(corners=(NOMINAL, FS), probe_order=())
+    sim = build_corner_simulate(
+        _agent(), _backend([{"g": 50.0}, {"g": 41.0}]), state, CornerState(cs), _noop_log
+    )
+
+    with pytest.raises(ValueError, match="'tb'"):
+        await sim({"tb": DECK + "* tuned\n"}, _spec_ge_40())
+
+
+async def test_the_rotation_is_committed_even_when_a_selected_corner_raises(tmp_path):
+    # 선택 코너의 실패는 판정 경로라 삼킬 수 없고 그대로 올라간다. 그런데
+    # optimizer._run_simulation이 그 예외를 삼키고 계속 돌기 때문에, 회전을
+    # 성공 경로에서만 커밋하면 상자는 조용히 같은 탐침 코너에 영원히 머문다.
+    state = _state(tmp_path)
+    holder = CornerState(CornerSet(corners=(NOMINAL, FS), probe_order=(SS,)))
+    sim = build_corner_simulate(
+        _agent(), _backend_raising_on_call(2, [{"g": 50.0}]), state, holder, _noop_log
+    )
+
+    with pytest.raises(RuntimeError):
+        await sim({"tb": DECK}, _spec_ge_40())
+
+    assert holder.corner_set.probe_index == 1
 
 
 async def test_by_testbench_carries_the_agent_result(tmp_path):
@@ -363,8 +560,11 @@ async def test_by_testbench_carries_the_agent_result(tmp_path):
 
 
 async def test_a_corner_run_gets_the_corner_rendered_deck_and_nominal_the_deck_itself(tmp_path):
-    # nominal은 덱 그대로여야 한다 - 코너 렌더링을 거치면 그것은 더 이상
-    # "덱 그대로"가 아니고, 임계값이 정해진 기준점이 사라진다.
+    # 코너가 렌더링되지 않으면 축소 집합은 **똑같은 덱 여러 개**가 되고 이
+    # 하위 프로젝트 전체가 조용히 아무 일도 하지 않는다. 경로만 비교하는
+    # 단언은 `rendered = netlist_text` 변형을 통과시킨다 - 덱 본문을 본다.
+    # nominal은 반대로 덱 그대로여야 한다: 렌더링을 거치면 그것은 더 이상
+    # 임계값이 정해진 그 덱이 아니다.
     state = _state(tmp_path)
     cs = CornerSet(corners=(NOMINAL, FS), probe_order=())
     backend = _backend([{"g": 50.0}, {"g": 41.0}])
@@ -374,6 +574,13 @@ async def test_a_corner_run_gets_the_corner_rendered_deck_and_nominal_the_deck_i
 
     nominal_call, corner_call = backend.calls
     assert nominal_call["netlist_path"] == state.current_netlist_paths()["tb"]
-    with open(nominal_call["netlist_path"]) as f:
-        assert ".temp" not in f.read()
+    assert nominal_call["deck"] == DECK
+    assert ".temp" not in nominal_call["deck"]
+    assert "pdk_corner_fs.inc" not in nominal_call["deck"]
+
+    # fs/1.98/125.0의 세 축이 전부 덱에 실려야 한다 - 하나만 보면 공정만
+    # 갈아끼우고 온도를 빼먹는 변형을 놓친다.
+    assert "pdk_corner_fs.inc" in corner_call["deck"]
+    assert ".temp 125.0" in corner_call["deck"]
+    assert "Vdd vdd 0 DC 1.98" in corner_call["deck"]
     assert corner_call["netlist_path"] != nominal_call["netlist_path"]
