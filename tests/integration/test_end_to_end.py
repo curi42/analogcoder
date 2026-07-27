@@ -38,9 +38,6 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
     async def judge_fn(measurements, spec_arg):
         return await judge_measurements(measurements, spec_arg.all_criteria)
 
-    async def fake_analyze(netlist_text_arg):
-        return {"circuit_type": "inverting amplifier", "stages": [], "component_roles": {}, "tunable_params": []}
-
     # This benchmark is designed to pass on the first simulation, so tune/verify
     # should never be invoked; make that an explicit assertion by failing loudly
     # if they are.
@@ -48,7 +45,6 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
         raise AssertionError("tuning/verification should not run for a passing benchmark")
 
     agents = OrchestratorAgents(
-        analyze=fake_analyze,
         simulate=simulate_fn,
         judge=judge_fn,
         tune=fail_if_called,

@@ -280,7 +280,7 @@ def test_claude_backend_defaults_to_sonnet():
 
     backends = _build_agent_backends(args)
 
-    assert set(backends) == {"analyzer", "simulator", "judge", "tuner", "verifier"}
+    assert set(backends) == {"simulator", "judge", "tuner", "verifier"}
     assert all(b.model == "sonnet" for b in backends.values())
 
 

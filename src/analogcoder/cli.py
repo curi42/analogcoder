@@ -4,7 +4,6 @@ import os
 import sys
 import uuid
 
-from analogcoder.agents.analyzer import analyze_netlist
 from analogcoder.agents.backend import AgentBackend
 from analogcoder.agents.backends.claude_sdk import DEFAULT_CLAUDE_MODEL, ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
@@ -40,7 +39,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-AGENT_NAMES = ("analyzer", "simulator", "judge", "tuner", "verifier")
+AGENT_NAMES = ("simulator", "judge", "tuner", "verifier")
 
 
 def _build_agent_backend(args, model: str | None = None) -> AgentBackend:
@@ -95,27 +94,23 @@ async def _run(args) -> dict:
     async def judge_fn(measurements, spec_arg):
         return await judge_measurements(measurements, spec_arg.all_criteria, agent_backends["judge"])
 
-    async def analyze_fn(netlist_text_arg):
-        return await analyze_netlist(netlist_text_arg, agent_backends["analyzer"])
-
-    async def tune_fn(analysis, judge_result, history, rejection_feedback, netlist_text_arg):
+    async def tune_fn(structure_view, judge_result, history, rejection_feedback, netlist_text_arg):
         return await propose_tuning(
-            analysis, judge_result, history, rejection_feedback, netlist_text_arg, agent_backends["tuner"]
+            structure_view, judge_result, history, rejection_feedback, netlist_text_arg, agent_backends["tuner"]
         )
 
-    async def verify_pre_fn(analysis, judge_result, proposal, netlist_text_arg):
-        return await verify_pre(analysis, judge_result, proposal, netlist_text_arg, agent_backends["verifier"])
+    async def verify_pre_fn(structure_view, judge_result, proposal, netlist_text_arg):
+        return await verify_pre(structure_view, judge_result, proposal, netlist_text_arg, agent_backends["verifier"])
 
     async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
         return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backends["verifier"])
 
-    async def propose_topology_fn(analysis, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_fn(structure_view, judge_result, available_topologies, rejection_feedback):
         return await propose_topology_swap(
-            analysis, judge_result, available_topologies, rejection_feedback, agent_backends["tuner"]
+            structure_view, judge_result, available_topologies, rejection_feedback, agent_backends["tuner"]
         )
 
     agents = OrchestratorAgents(
-        analyze=analyze_fn,
         simulate=simulate_fn,
         judge=judge_fn,
         tune=tune_fn,

@@ -4,7 +4,6 @@ import jsonschema
 import pytest
 
 from analogcoder.schemas import (
-    ANALYZER_SCHEMA,
     JUDGE_SCHEMA,
     SIMULATION_SCHEMA,
     TOPOLOGY_SCHEMA,
@@ -16,16 +15,6 @@ from analogcoder.schemas import (
 REFDES_PATTERN = TUNER_SCHEMA["properties"]["proposed_changes"]["items"]["properties"][
     "refdes"
 ]["pattern"]
-
-
-def test_analyzer_schema_accepts_valid_payload():
-    payload = {
-        "circuit_type": "inverting amplifier",
-        "stages": [{"name": "feedback stage", "role": "sets closed-loop gain", "components": ["Rin", "Rf"]}],
-        "component_roles": {"Rin": "input resistor", "Rf": "feedback resistor"},
-        "tunable_params": [{"refdes": "Rf", "param": "value", "role_in_circuit": "sets gain magnitude"}],
-    }
-    jsonschema.validate(payload, ANALYZER_SCHEMA)
 
 
 def test_simulation_schema_accepts_valid_payload():

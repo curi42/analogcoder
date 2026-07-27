@@ -51,6 +51,23 @@ def netlist_scale(text: str) -> float:
         return 1.0
 
 
+# 최상위 스코프의 독립 소스는 구조상 테스트벤치의 자극/전원이지 DUT가 아니다.
+# 이 판정에는 PDK 지식도 이름 규칙도 필요 없다 - refdes 접두 V/I는 SPICE의
+# 보장이고, "최상위에 놓였다"는 것은 파서가 아는 사실이다. 서브회로 안의
+# 소스는 DUT의 일부(내부 바이어스)일 수 있으므로 여기 해당하지 않는다.
+INDEPENDENT_SOURCE_CTYPES = frozenset({"V", "I"})
+
+
+def is_top_level_stimulus(scope: str | None, ctype: str) -> bool:
+    """최상위 스코프에 직접 놓인 독립 소스(V/I)인가.
+
+    한 판정을 세 곳이 공유한다: structure.py(주소록에서 제외),
+    structure_view.py("stimulus (not tunable)" 줄), check_stimulus_untouched
+    (적용 거부). 셋이 갈라지면 "광고하지 않는데 적용은 된다" 또는 그 반대가
+    생긴다."""
+    return scope is None and ctype in INDEPENDENT_SOURCE_CTYPES
+
+
 @dataclass
 class Component:
     refdes: str
@@ -357,6 +374,177 @@ def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str |
     if violations:
         return False, "; ".join(violations)
     return True, None
+
+
+def _numeric_or_none(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        return parse_spice_value(raw)
+    except ValueError:
+        return None
+
+
+def _peer_key(component: Component) -> str:
+    """동료 판정에 쓸 정체성 키. X 인스턴스는 마지막 위치 토큰이 모델/서브회로
+    이름이라 그대로 쓸 수 있지만, 일반 R/C/L은 같은 자리가 리터럴 값
+    ("10k")이다 - 그걸 키로 쓰면 값이 다른 두 저항(R1=10k, R2=5k)이 다른
+    그룹으로 갈라져 Xq1.m이 도달 불가능해지는 것과 똑같은 실패가 제네릭
+    소자에서 재현되고, 반대로 값이 우연히 같은 저항과 커패시터(둘 다
+    "10k")는 서로 무관한데 동료로 오인된다. 위치 값이 숫자로 파싱되면
+    그건 모델명이 아니라 소자 값이므로 ctype으로 떨어뜨린다."""
+    if component.value is not None and _numeric_or_none(component.value) is None:
+        return component.value
+    return component.ctype
+
+
+def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """결정론적 사전 게이트: 제안된 param이 그 소자에 실제로 적용될 수 있는가.
+
+    오케스트레이터의 튜닝 재시도 루프에서 check_refdes_resolution 직후,
+    verify_pre 직전에 돈다 - 에어리어/refdes 게이트와 같은 자리이자 같은
+    철학이다. 적용 불가능한 제안은 LLM 호출을 쓰지 않는다.
+
+    잡는 결함은 실측된 것이다: param="width"인 제안이 refdes 게이트를 통과해
+    `X6 ... L=1 W=20 width=55`를 만들고, 넷리스트는 바뀌었는데 소자는 그대로라
+    시뮬레이션에 변화가 없고 verify_post가 롤백한다 - 아무도 볼 수 없는
+    이유로 iteration 하나를 태운다.
+
+    줄에 없는 param을 무조건 거부하지는 않는다. bandgap의 Xq1에는 m=이
+    없지만 같은 모델의 Xq8이 m=8을 쓰고, m은 이 회로의 이미터 면적비를 정하는
+    유일한 노브다. 동료 인스턴스가 쓰는 이름은 정당한 것으로 본다 - 하드코딩된
+    PDK 표 없이 덱만 보고 판정하므로 정확하고, width 같은 헛소리는 여전히
+    걸린다.
+
+    refdes가 아예 매칭되지 않는 경우는 이 게이트가 말하지 않는다 - 그건
+    check_refdes_resolution의 몫이고, 이 게이트 바로 앞에서 이미 걸렀어야
+    한다. 같은 결함을 두 게이트가 다른 말로 보고하면 하나만 보고하는 것보다
+    나쁘다."""
+    parsed = parse_netlist(text)
+    everything = list(parsed.top_components) + [
+        c for subckt in parsed.subckts.values() for c in subckt.components
+    ]
+    by_refdes: dict[str, Component] = {}
+    for component in everything:
+        by_refdes[component.refdes] = component
+        if component.scope:
+            by_refdes[f"{component.scope}.{component.refdes}"] = component
+
+    # 같은 모델명(없으면 같은 ctype)을 쓰는 소자들이 실제로 쓰는 param 이름.
+    peers: dict[str, set[str]] = {}
+    for component in everything:
+        peers.setdefault(_peer_key(component), set()).update(component.params)
+
+    violations: list[str] = []
+    for change in changes:
+        scoped_refdes = change["refdes"]
+        param = change["param"]
+        component = by_refdes.get(scoped_refdes)
+        if component is None:
+            # refdes 게이트가 앞서 걸렀어야 한다. 여기서는 판단하지 않는다.
+            continue
+
+        if param == "value":
+            if _numeric_or_none(component.value) is None:
+                violations.append(
+                    f"{scoped_refdes!r}: param=\"value\" would overwrite the positional token "
+                    f"{component.value!r}, which is not a number - it is this component's model "
+                    f"or subckt name. Change a named parameter instead."
+                )
+            continue
+
+        if param in component.params:
+            continue
+
+        key = _peer_key(component)
+        if param in peers.get(key, set()):
+            continue
+
+        available = sorted(component.params) or ["<none>"]
+        peer_names = sorted(peers.get(key, set()) - set(component.params))
+        violations.append(
+            f"{scoped_refdes!r}: {param!r} is not a parameter of this component. It writes "
+            f"{available}; other {key!r} instances in this netlist write {peer_names or ['<none>']}. "
+            f"Adding an unknown name changes the netlist text without changing the device."
+        )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
+def check_stimulus_untouched(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """결정론적 사전 게이트: 최상위 테스트벤치의 독립 소스(V/I)를 건드리는가.
+
+    다른 게이트들과 같은 자리(튜닝 재시도 루프, verify_pre 앞)에서 돌고, 같은
+    방식으로 재시도 가능한 피드백을 낸다.
+
+    리뷰어가 실측한 시나리오를 막는다: `Vin in 0 AC 1`을 `AC 100`으로 바꾸면
+    `gain_db = vdb(vout)`가 20dB에서 60dB로 뛴다. 면적 게이트는 V/I 티어가
+    없어 통과시키고, refdes/param 게이트는 적용 가능성만 보므로 역시
+    통과시키며, judge는 모든 기준이 좋아졌으니 PASS를 내고 verify_post는
+    롤백할 이유를 못 찾는다 - **회로를 하나도 안 고친 채로 PASS가 난다.**
+
+    structure.py가 같은 판정으로 이 소자들을 주소록에서 빼지만, 주소록은
+    LLM에게 하는 권고일 뿐이라 약한 모델이 그대로 제안할 수 있다. 결과가
+    "안 고친 회로에 PASS"인 이상 권고만으로는 부족하다.
+
+    이름(vdd/vss/gnd)으로 알아보지 않는다 - 그건 추측이다. refdes 접두 V/I는
+    SPICE의 보장이고 "최상위에 놓였다"는 것은 파서가 아는 사실이므로, 이
+    판정은 정확하다. 서브회로 안의 소스는 DUT의 내부 바이어스일 수 있으므로
+    건드리지 않는다."""
+    parsed = parse_netlist(text)
+    top_sources = {
+        c.refdes for c in parsed.top_components if is_top_level_stimulus(None, c.ctype)
+    }
+
+    violations: list[str] = []
+    for change in changes:
+        scope, refdes = split_scoped_refdes(change["refdes"])
+        if scope is not None or refdes not in top_sources:
+            continue
+        violations.append(
+            f"{change['refdes']!r} is a top-level independent source - it is the testbench "
+            f"stimulus or supply, not part of the circuit under test. Changing it changes "
+            f"what is measured rather than the design. Propose a change to a component "
+            f"inside the circuit instead."
+        )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
+def resolve_change_scopes(text: str, changes: list[dict]) -> set[str]:
+    """제안된 변경들이 실제로 위치한 서브회로 정의 경로의 집합(최상위 스코프는
+    담지 않는다 - 최상위는 언제나 초점이므로 호출자가 신경 쓸 필요가 없다).
+
+    check_refdes_resolution/apply_changes와 같은 조회(_find_matches +
+    _line_scopes)를 그대로 써서 판정한다 - refdes 앞의 점만 잘라 스코프로
+    읽으면(문자열 분리) 언스코프 refdes("M6")가 실제로는 비초점 서브회로
+    안에 있어도 그 사실을 알 수 없다. 이미 스코프가 붙은 refdes
+    ("AMP.M6")는 그 서브회로가 실제로 존재하는지만 확인한다.
+
+    이 함수를 부르는 시점에는 보통 check_refdes_resolution이 이미 통과한
+    뒤라(따라서 각 refdes가 유일하게 해석된다) 결과가 스코프 하나뿐이지만,
+    방어적으로 여러 매치가 와도 전부의 스코프를 모아 돌려준다 - 판단은
+    호출자의 몫이다."""
+    parsed = parse_netlist(text)
+    lines = text.splitlines()
+    scopes = _line_scopes(lines)
+
+    resolved: set[str] = set()
+    for change in changes:
+        scope, refdes = split_scoped_refdes(change["refdes"])
+        if scope is not None:
+            if scope in parsed.subckts:
+                resolved.add(scope)
+            continue
+        for indices, _tokens in _find_matches(lines, scopes, None, refdes):
+            line_scope = scopes[indices[0]]
+            if line_scope is not None:
+                resolved.add(line_scope)
+    return resolved
 
 
 def _rewrite_line(lines: list[str], index: int, mutate) -> bool:

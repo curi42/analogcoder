@@ -4,11 +4,26 @@ from analogcoder.schemas import TOPOLOGY_SCHEMA, TUNER_SCHEMA
 from analogcoder.topologies import Topology
 
 TUNER_SYSTEM_PROMPT = """You are an analog circuit tuning specialist. Given the
-current netlist, the circuit's structural analysis, the judge's pass/fail verdict,
+current netlist, the circuit's structure, the judge's pass/fail verdict,
 the history of past tuning attempts in this run, and (if present) feedback on why
 your last proposal was rejected, propose specific component parameter changes to
-fix the failing criteria. Only propose changes to parameters listed in
-tunable_params.
+fix the failing criteria.
+
+The structure view lists every block, but only the blocks currently in focus are
+expanded. An expanded block carries a "tunable" line of addresses written as
+"refdes=<R> param=<P>" - those two are SEPARATE schema fields, never one dotted
+string. That line is the set of addresses visible in this view, NOT the set of
+legal changes: blocks whose bodies are folded away in the netlist below (shown as
+"* ... (N components elided)") have their own addresses, and you may propose a
+change to any component in the netlist, including one inside a folded block, by
+naming it with its full "<PATH>.<refdes>" path. The focus is a relevance hint and
+can be wrong; if the fix for a failing criterion lives in a block that is not
+expanded, propose it anyway.
+
+The one exception is the top level's "stimulus (not tunable)" line: those are the
+testbench's own independent sources. Changing them changes the measurement rather
+than the circuit (scaling an AC source scales every gain measurement), so they are
+never a fix and a deterministic gate rejects them.
 
 old_value and new_value MUST be concrete, literal SPICE values taken from and
 written in the same form as the current netlist (e.g. "10k", "4.7u", "100n") -
@@ -39,7 +54,7 @@ Respond via the structured output schema."""
 
 
 async def propose_tuning(
-    analysis: dict,
+    structure_view: str,
     judge_result: dict,
     history: list[dict],
     rejection_feedback: str | None,
@@ -48,7 +63,7 @@ async def propose_tuning(
 ) -> dict:
     user_prompt = (
         f"Current netlist:\n{netlist_text}\n"
-        f"Circuit analysis: {analysis}\n"
+        f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result: {judge_result}\n"
         f"Past attempts this run: {history}\n"
         f"Rejection feedback (if retrying): {rejection_feedback}"
@@ -75,7 +90,7 @@ Respond via the structured output schema."""
 
 
 async def propose_topology_swap(
-    analysis: dict,
+    structure_view: str,
     judge_result: dict,
     available_topologies: list[Topology],
     rejection_feedback: str | None,
@@ -85,7 +100,7 @@ async def propose_topology_swap(
         f"- {t.id}: {t.description} (addresses: {t.addresses})" for t in available_topologies
     )
     user_prompt = (
-        f"Circuit analysis: {analysis}\n"
+        f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result: {judge_result}\n"
         f"Available topologies:\n{topology_descriptions}\n"
         f"Rejection feedback (if retrying): {rejection_feedback}"

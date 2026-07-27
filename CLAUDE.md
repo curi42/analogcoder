@@ -7,8 +7,8 @@ until it passes or hits iteration/retry limits.
 
 ## Architecture
 
-Five independent LLM agents (netlist analyzer, simulator, judge, tuner, verifier)
-coordinated by a deterministic (non-LLM) Python orchestrator in `orchestrator.py`.
+Four independent LLM agents (simulator, judge, tuner, verifier) coordinated by
+a deterministic (non-LLM) Python orchestrator in `orchestrator.py`.
 The orchestrator never parses free text — every agent call returns JSON validated
 against a fixed schema (`schemas.py`).
 
@@ -27,8 +27,8 @@ against a fixed schema (`schemas.py`).
 - `simulators/base.py` / `simulators/ngspice.py` — `SimulatorBackend` adapter,
   same pattern, for swapping the SPICE engine (only ngspice implemented; HSPICE
   is a documented future backend).
-- `agents/*.py` (analyzer, judge, simulator_agent, tuner, verifier) — one file
-  per agent: system prompt + schema + tool declarations (`ToolSpec`, not
+- `agents/*.py` (judge, simulator_agent, tuner, verifier) — one file per agent:
+  system prompt + schema + tool declarations (`ToolSpec`, not
   provider-specific). Every public function takes a required `backend:
   AgentBackend` as its last positional arg.
 - `topologies.py` — a small curated library of pre-verified amplifier
@@ -68,6 +68,98 @@ against a fixed schema (`schemas.py`).
   always in lockstep (`push_netlist_version`/`rollback` operate on the whole
   set atomically — never partially applied across testbenches). See
   `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
+- `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
+  `structure_view.py` — the deterministic replacement for what used to be an
+  LLM `analyzer` agent. That agent contributed nothing measurable: a run
+  passed in 4 iterations on an analysis that was `{"circuit_type": "test",
+  "component_roles": {"a": "b"}, ...}`, and across runs on one bandgap
+  netlist it produced 93, 26 and 1 component roles. The tuner succeeds by
+  reading `netlist_text`, which it still receives. `structure.py` derives
+  flat per-scope facts (inventory, device classes, the tunable
+  `(refdes, param)` index); `signal_path.py` maps
+  ports to nets across hierarchy and labels each net's drivers and sensors
+  by *definition* name, since a definition is what the tuner can address.
+  A net's entry holds a **set** of roles per definition, not one winning role:
+  collapsing to "drive wins" is right for a diode-connected device but wrong
+  for a feedback amplifier, and it printed `BUF_P … drives vbg0 senses -` -
+  affirmatively denying the loop on a feedback buffer, and disabling
+  `select_focus`'s reverse 1-hop from exactly the blocks the design doc's
+  worked example starts from. `paths.supply_nets` holds the nets a **top-level**
+  `V`/`I` touches, and `paths.roles_on(net)` is the reporting view over
+  `net_blocks`: on a supply/stimulus net it drops the **`drive` role only**.
+  The source drives that net, so no block can be its driver -
+  `OPAMP2STAGE drives vdd,vss` was a false structural claim produced by
+  two-terminal devices whose rail end is a `drive` terminal. A block *sensing*
+  such a net is true and useful, so it stays: `OPAMP2STAGE senses vinn,vinp`.
+  Level-0 rendering and focus seeding both go through `roles_on`, so a rail
+  cannot seed a block that merely hangs a resistor on it, while a criterion
+  measured on the stimulus net can still seed the block that senses it.
+  Recognising a rail by *name* (`vdd`/`vss`/`gnd`/`0`) would be the forbidden
+  guess; "a top-level independent source connects here" is a parsed fact.
+- **`net_blocks` holds top-level nets only, and that bounds the reverse hop.**
+  `signal_path.walk` drops a net that stops being a port at an intermediate
+  definition, because pushing it outward under its local name would attach
+  roles to an unrelated same-named top-level net. The consequence, documented
+  in `select_focus`'s docstring: a seed block whose *input* comes from a net
+  internal to a parent definition produces no upstream hop. On `benchmarks/
+  bandgap` that is exactly `BUF_P` - its input `vt05` lives inside `BANDGAP`,
+  so the design doc's worked example `vbg0 → BUF_P → upstream` does not reach
+  the resistor ladder on that deck. The hop itself is correct and pinned
+  synthetically; the deck offers no hop. What keeps `XRl1`/`XRl2` reachable
+  there is the tuner prompt saying a folded block may still be named.
+  `patterns.py` matches differential pairs, current mirrors, **stacked
+  pairs** and Miller compensation. **Patterns never guess** - a match is a
+  fact, a non-match is silence, and the acceptance bar is zero false
+  positives, not recall. `stacked_pair` is deliberately not called `cascode`:
+  a cascode, a source follower over a current sink and a power-gating switch
+  have an identical local subgraph, and telling them apart means reading net
+  names, which is the forbidden guess. Under a zero-false-positive bar the
+  answer is silence or a truthful label, never a wrong label with a footnote -
+  so the matcher states the connection (`M2.s == M1.d at mid, M2.g on ncas`)
+  and leaves the naming to the LLM, which has the netlist. It is the only one
+  of the three modules that can be wrong, which is why it is separate. See
+  `docs/superpowers/specs/2026-07-27-netlist-structure-derivation-design.md`.
+- **The prompt is focused; the gates never are.** `structure_view.py` picks
+  the blocks reachable from the failing criteria's nets (via
+  `control_block.py`, which resolves a measurement name to the nets its
+  `meas`/`let` lines observe) and renders every block at one line, focused
+  blocks in full, and the netlist itself with unfocused `.subckt` bodies
+  folded away. `check_area_growth`, `check_refdes_resolution`,
+  `check_param_applicability` and `check_stimulus_untouched` always read the
+  whole deck, so a wrong focus costs relevance, never correctness. A proposal
+  naming a block outside focus is logged as `focus_miss` - that is the signal
+  the focus rule missed something. Benchmark decks are small enough that this
+  path barely fires; it exists for real production decks of hundreds of lines,
+  where the raw netlist no longer fits a context-limited model.
+  **The tuner prompt must never restate the focus as a restriction.** Saying
+  "only propose changes to parameters listed under tunable" turns the layered
+  view back into a filter and deletes the answer whenever focus is wrong -
+  e.g. `bandgap`'s `vbg0_min`/`vbg0_max` focus on `{BUF_P}` while the only fix
+  (`XRl1`/`XRl2`) lives in the folded `BANDGAP` block. The prompt says the
+  `tunable` line is what is *visible*, and that a folded block may still be
+  named by its full path.
+- **The testbench's own sources are not tunable, and it takes a gate to say
+  so.** A top-level `V`/`I` is stimulus or supply by construction (an exact
+  test - refdes prefix plus top-level scope - never a name heuristic like
+  "vdd"). `structure.py` omits them from the tunable index, `structure_view.py`
+  renders them under `stimulus (not tunable):` so the omission is visible, and
+  `netlist.check_stimulus_untouched` rejects a change to one. All three share
+  `netlist.is_top_level_stimulus`. The gate is not redundant with the address
+  book: found by review, `{"refdes":"Vin","param":"value","new_value":"100"}`
+  on `inverting_amp` passes area, refdes and param checks, rewrites the deck to
+  `Vin in 0 AC 100`, lifts `gain_db` from ~20 dB to ~60 dB, and reports **PASS
+  on an unmodified circuit** - `verify_post` has no reason to roll back a change
+  that improved every criterion.
+- **A tuning `param` must be able to apply.** `check_param_applicability`
+  (in `netlist.py`, run right after `check_refdes_resolution`) rejects
+  `param="value"` when the positional token is a model or subckt name, and
+  rejects a named parameter that appears neither on the component's own line
+  nor on any same-model peer in the deck. The peer rule is what keeps
+  `Xq1.m` reachable in `benchmarks/bandgap` - `Xq1` writes no `m=` but
+  `Xq8` writes `m=8`, and `m` is the only knob that sets the emitter-area
+  ratio. Without this gate a proposal like `param="width"` appends
+  `width=55`, changes the netlist, does not change the device, and burns an
+  iteration on a rollback nobody can explain.
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -171,7 +263,10 @@ LOCAL_LLM_API_KEY=<token-or-dummy> .venv/bin/analogcoder \
 
 Verified working against a real local Ollama server (`qwen2.5:7b-instruct`) —
 full pipeline (analyze → simulate → judge → tune → verify → re-simulate → pass)
-including real tool calls, not just the no-tuning-needed happy path.
+including real tool calls, not just the no-tuning-needed happy path. (`analyze`
+was the LLM analyzer agent at the time; it no longer exists — see
+`structure.py` above — so a re-run today has one fewer LLM call in that
+chain, not a different pipeline.)
 
 On the harder `two_stage_opamp` benchmark, Claude converges to PASS in 3
 iterations (correctly identifies that increasing `Cc` improves phase margin).
@@ -211,6 +306,11 @@ worth reading before assuming a weak-model failure is a code bug:
   explicitly instructed to reject anything that doesn't match an existing
   netlist token — but a weak model can still get this wrong, so don't assume
   a proposal that passed schema validation is actually applicable.
+  `check_param_applicability` (`netlist.py`) now blocks the `param="width"`
+  silent no-op deterministically, before the proposal is ever applied — but
+  the `verify_pre` instruction above is deliberately left in place as
+  belt-and-braces, matching this file's existing pattern for
+  `check_refdes_resolution`/`ValueError` (see below).
 - **`netlist.py` tracks subckt scope.** A component inside a `.subckt` is
   addressable as `<SUBCKT>.<refdes>`; an unqualified refdes still works when
   it matches exactly one component netlist-wide, and raises `ValueError` when
@@ -275,7 +375,10 @@ worth reading before assuming a weak-model failure is a code bug:
   exactly how the area gate's size tiers came to be inert on every PDK-backed
   benchmark.
 - Local models are noticeably more reliable at agents with **no tool calls**
-  (analyzer, tuner, verifier) than at tool-calling agents (simulator, judge).
+  (tuner, verifier) than at tool-calling agents (simulator, judge). (Observed
+  when the analyzer agent still existed; it's since been replaced by
+  deterministic derivation — see `structure.py` above — so this comparison no
+  longer has a third no-tool-call agent to include.)
   If a weak-model run fails, check which agent failed before assuming the
   whole pipeline is unreliable.
 - If an agent's structured output still doesn't validate after retries,

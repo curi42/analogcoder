@@ -4,16 +4,16 @@ from analogcoder.schemas import VERIFIER_POST_SCHEMA, VERIFIER_PRE_SCHEMA
 
 VERIFIER_SYSTEM_PROMPT = """You are a skeptical senior reviewer for analog circuit
 tuning decisions. You check whether a proposed or applied change is justified by
-the circuit analysis and simulation results, and whether it could cause unintended
-side effects on other criteria."""
+the derived circuit structure, the netlist and the simulation results, and whether
+it could cause unintended side effects on other criteria."""
 
 
 async def verify_pre(
-    analysis: dict, judge_result: dict, proposal: dict, netlist_text: str, backend: AgentBackend
+    structure_view: str, judge_result: dict, proposal: dict, netlist_text: str, backend: AgentBackend
 ) -> dict:
     user_prompt = (
         f"Current netlist:\n{netlist_text}\n"
-        f"Circuit analysis: {analysis}\n"
+        f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result before tuning: {judge_result}\n"
         f"Proposed changes: {proposal}\n"
         "Decide whether to approve this proposal before it is applied. A refdes "
@@ -30,7 +30,12 @@ async def verify_pre(
         '"value" (for a component whose value is a plain positional token in the '
         'netlist above) and is not an existing "name=" parameter already present '
         "on that component's own line in the netlist above - such a param would "
-        "silently fail to update the component when applied."
+        "silently fail to update the component when applied. Do NOT reject a "
+        "param merely because that component's own line omits it, if other "
+        "instances of the same model in this netlist write it as \"name=\": that "
+        "is a legitimate change (it is the only way to reach, for example, the "
+        "emitter-area multiplier of a BJT whose siblings declare it), and a "
+        "deterministic gate has already checked applicability before this review."
     )
     return await run_agent(
         system_prompt=VERIFIER_SYSTEM_PROMPT,

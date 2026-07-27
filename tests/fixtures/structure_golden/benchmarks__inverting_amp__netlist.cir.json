@@ -1,0 +1,115 @@
+{
+  "blocks": {
+    "<top>": {
+      "components": [
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "in",
+            "0",
+            "AC"
+          ],
+          "refdes": "Vin",
+          "terminals": []
+        },
+        {
+          "ctype": "R",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "in",
+            "vminus"
+          ],
+          "refdes": "Rin",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "R",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vminus",
+            "vout"
+          ],
+          "refdes": "Rf",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "E",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vout",
+            "0",
+            "0",
+            "vminus"
+          ],
+          "refdes": "Eopamp",
+          "terminals": []
+        }
+      ],
+      "instance_count": 1,
+      "ports": []
+    }
+  },
+  "mismatches": [],
+  "net_blocks": {
+    "in": {
+      "Rin": [
+        "drive"
+      ]
+    },
+    "vminus": {
+      "Rf": [
+        "drive"
+      ],
+      "Rin": [
+        "drive"
+      ]
+    },
+    "vout": {
+      "Rf": [
+        "drive"
+      ]
+    }
+  },
+  "patterns": [],
+  "supply_nets": [
+    "0",
+    "in"
+  ],
+  "tunable": [
+    [
+      "Eopamp",
+      "value"
+    ],
+    [
+      "Rf",
+      "value"
+    ],
+    [
+      "Rin",
+      "value"
+    ]
+  ]
+}
