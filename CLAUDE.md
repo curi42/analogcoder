@@ -107,7 +107,7 @@ against a fixed schema (`schemas.py`).
   the resistor ladder on that deck. The hop itself is correct and pinned
   synthetically; the deck offers no hop. What keeps `XRl1`/`XRl2` reachable
   there is the tuner prompt saying a folded block may still be named.
-  `patterns.py` matches differential pairs, current mirrors, **stacked
+- `patterns.py` matches differential pairs, current mirrors, **stacked
   pairs** and Miller compensation. **Patterns never guess** - a match is a
   fact, a non-match is silence, and the acceptance bar is zero false
   positives, not recall. `stacked_pair` is deliberately not called `cascode`:
@@ -138,6 +138,14 @@ against a fixed schema (`schemas.py`).
   (`XRl1`/`XRl2`) lives in the folded `BANDGAP` block. The prompt says the
   `tunable` line is what is *visible*, and that a folded block may still be
   named by its full path.
+  **Focusing a nested definition means focusing its ancestors too.**
+  `render_netlist` folds a nested definition together with its parent (a bare
+  header inside a folded body is a fragment whose parent is unknowable), so a
+  focus set holding `OUTER.INNER` but not `OUTER` elides the very block it
+  focused. `select_focus` runs every path that adds a scope - seeds, the
+  reverse hop, and already-touched refdes - through `_with_ancestors`. No
+  benchmark deck nests subckts, so this is dead on every deck here and live on
+  the first production one.
 - **The testbench's own sources are not tunable, and it takes a gate to say
   so.** A top-level `V`/`I` is stimulus or supply by construction (an exact
   test - refdes prefix plus top-level scope - never a name heuristic like
@@ -160,6 +168,18 @@ against a fixed schema (`schemas.py`).
   ratio. Without this gate a proposal like `param="width"` appends
   `width=55`, changes the netlist, does not change the device, and burns an
   iteration on a rollback nobody can explain.
+- **A deterministic gate and the LLM prompt behind it must agree, or the
+  belt-and-braces instruction becomes a trap.** `verify_pre`'s prompt keeps a
+  paragraph restating what the gates check - the same policy as when the refdes
+  gate landed. But the param gate was *widened* by the peer rule and the prompt
+  was not, so `verify_pre` was instructed to reject exactly the `Xq1.m` case the
+  gate exists to admit. Three such rejections set `verify_pre_rejected_any` and
+  hard-FAIL the run, skipping topology escalation - a wrong prompt is worse than
+  no prompt, because it converts an approved proposal into a run-ending one. The
+  same shape appeared at the netlist view: `verify_pre` was handed a folded deck
+  while told to reject anything absent from it, fixed by rendering its view with
+  the focus extended to the blocks the proposal names. **Whenever a gate's rule
+  changes, re-read the prompt that mirrors it.**
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
