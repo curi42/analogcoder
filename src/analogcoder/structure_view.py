@@ -145,19 +145,47 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
     안에 헤더만 남기면 그 헤더가 어디에 속하는지 알 수 없는 조각이 되기
     때문이다. 그래서 fold_start는 "몇 번째 깊이에서 접힘이 시작됐는가"만
     기억한다: 그 깊이로 돌아오는 .ends를 만날 때까지, 그 사이의 모든 중첩
-    헤더/본문은 개별 초점 여부와 무관하게 통째로 묻힌다."""
+    헤더/본문은 개별 초점 여부와 무관하게 통째로 묻힌다.
+
+    지시문/부품 판정은 logical_lines가 접어 준 코드로 한다 - `+` 연속 줄을
+    독립된 문장으로 보면 그 줄이 엉뚱하게 새 헤더나 별개의 "elided
+    component"로 잡혀, E1이 겪은 것과 같은 모양(연속 줄을 딴 소자로 착각)의
+    왜곡이 재발한다. 다만 화면에 실제로 내는 것은 원문 물리 줄이다 - 이
+    뷰는 프롬프트 텍스트일 뿐 재파싱될 구조가 아니므로 원래 서식을 그대로
+    보여주는 쪽이 사람이 읽기에도 맞다."""
     names = {_definition_name(path) for path in focus}
+    physical_lines = netlist_text.splitlines()
+
+    # 논리 줄의 첫 물리 줄(앵커)에서만 판정하고, 나머지 물리 줄(`+` 연속)은
+    # 앵커와 운명을 같이한다 - 별개의 지시문/부품으로 세지 않는다.
+    anchor_code: dict[int, str] = {}
+    continuation: set[int] = set()
+    for code, indices in logical_lines(physical_lines):
+        anchor_code[indices[0]] = code
+        continuation.update(indices[1:])
+
     out: list[str] = []
     stack: list[str] = []
     fold_start: int | None = None  # None이면 현재 안 접는 중
     elided = 0
 
-    for raw_line in netlist_text.splitlines():
-        stripped = raw_line.strip()
-        lowered = stripped.lower()
+    for idx, raw_line in enumerate(physical_lines):
+        if idx in continuation:
+            if fold_start is None:
+                out.append(raw_line)
+            continue
+
+        code = anchor_code.get(idx)
+        if code is None:
+            # 빈 줄이나 `*` 전체 주석 줄 - 지시문도 부품도 아니다.
+            if fold_start is None:
+                out.append(raw_line)
+            continue
+
+        lowered = code.lower()
 
         if lowered.startswith((".subckt", ".macro")):
-            name = split_tokens(stripped)[1]
+            name = split_tokens(code)[1]
             stack.append(name)
             if fold_start is None:
                 # 지금 접는 중이 아니므로 이 헤더는 보인다 - 초점 여부와
@@ -184,8 +212,7 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
             continue
 
         if fold_start is not None:
-            if stripped and not stripped.startswith("*"):
-                elided += 1
+            elided += 1
             continue
 
         out.append(raw_line)
