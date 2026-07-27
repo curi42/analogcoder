@@ -137,12 +137,79 @@ against a fixed schema (`schemas.py`).
   explicit current objective puts that degenerate answer far closer to hand
   than it ever was for repair tuning. All four addressing gates run on the
   optimization path, on the full deck rather than the folded prompt view.
+  **They do not close the degenerate-answer surface, and reading them as if
+  they did is the mistake.** The stimulus gate covers top-level `V`/`I` only,
+  because that is the part that can be decided by a *fact* (refdes prefix plus
+  top-level scope). `benchmarks/two_stage_opamp/netlist.cir` also has
+  top-level `Lfb` (the 1 MH loop-break inductor), `Cin` and `Cload` — pure
+  testbench apparatus that sits in the tunable index and is reachable by the
+  optimizer. Shrinking `Cload` improves phase margin and UGBW without touching
+  the DUT: manufactured margin the phase then spends on current, the same shape
+  as the `Vin AC 1 → AC 100` finding that motivated the gate. Widening the gate
+  to "top-level passive" is *not* the fix — on `benchmarks/inverting_amp` the
+  top-level `Rin`/`Rf`/`Eopamp` **are** the circuit, so that rule is the same
+  class of guess as recognising a rail by the name `vdd`. It is handled where a
+  judgement call belongs: a paragraph in `OPTIMIZER_SYSTEM_PROMPT`. Only the
+  bandgap specs declare `optimize:` today, so this is not currently
+  exploitable — but the next spec that does is where it becomes live.
 - **Area is derived, the objective is measured.** `area.total_area` sums
   `w × l × m` over resolvable devices — `m` multiplies area, `nf` does not,
   since finger splitting leaves total width unchanged — so an over-budget
   candidate is discarded before it spends a simulation. That asymmetry is why
   the loop is simulation-bound and why the agent ranks a few knobs instead of
-  sweeping.
+  sweeping. Two things it is *not*: it sums over subckt **definitions**, so a
+  definition instantiated N times is counted **once** — a per-definition sum,
+  not a physical total. No benchmark has `instance_count > 1`, but the
+  production wrapper flow instantiates the same unit cell repeatedly, and
+  `structure.blocks[path].instance_count` is what a weighted version would
+  read. And the budget compares `area / area_before`, so **`area_before == 0`
+  disables it entirely** — reachable, because `total_area` resolves via
+  `build_param_envs`, which drops any name the instances disagree on, and on a
+  wrapper-cell deck that is every device (`tests/unit/test_area_total.py` pins
+  `counted == 0, skipped == 2`). That silence is now recorded rather than
+  merely true: `AreaTotal.counted`/`skipped`, the enforced flag and an explicit
+  reason go into the `optimize_baseline` event and `result["area_coverage"]`.
+  This gate has been silently inert three times in this repo and no run log
+  ever showed it.
+- **The optimization phase has no FAIL outcome, and that has to include
+  crashing.** `_run_simulation` and `_run_sweep` each swallow a bare
+  `Exception` for that reason; the module's one LLM call (`agents.propose`) did
+  not, and `ClaudeSDKBackend.run` raises `AgentExecutionError` on any error
+  `ResultMessage` — rate limit, transport error, `structured_output is None`,
+  or a weak local model missing the schema (documented below as an *expected*
+  case). It escaped `asyncio.run` in `main()`, so `write_result_json` and
+  `write_report_md` never ran: a run that had already PASSed ended as a
+  traceback with no `result.json` and no `report.md`. `run_optimization` is now
+  a guard wrapping `_optimize` in `except (AgentExecutionError, ValueError)` —
+  the same pair as `run_orchestration`, `ValueError` for an `apply_changes`
+  failure on a *non-canonical* deck, which the addressing gates cannot see
+  because they only read the canonical text. It rolls back to the version the
+  phase started from, logs `optimize_failed`, and returns a well-formed
+  `UNCHANGED`.
+- **The guard band can be infeasible at the baseline, and then no candidate can
+  ever be accepted.** `benchmarks/bandgap/spec.yaml` is the measured case (see
+  the ratio-fallback entry above). The condition is *not* "`pvt_corners` is
+  absent" — the measured path reaches it too, whenever nominal is worse than
+  every corner for some criterion, since `allowance = |worst − nominal|` then
+  makes the guarded limit stricter than nominal itself.
+  `guard_band_violations` runs on the baseline right after the allowances are
+  built and is logged **unconditionally** as `optimize_guard_infeasible`
+  (logging only on violation makes "checked, fine" and "the check is gone"
+  identical in `history.jsonl`) plus `result["guard_infeasible"]`. It
+  deliberately does **not** early-return: a step can in principle push the
+  violating criterion back inside, the cost ceiling is already one simulation
+  per candidate (a rejection exhausts its candidate), and the failure this repo
+  keeps repeating is doing nothing silently, not doing too much.
+- **The result must describe the deck it returns.** `result["final_criteria"]`
+  is the main loop's judge output — the deck *before* optimization — and
+  `cli.py` updated only `final_netlist_paths`, so the measured bandgap run
+  printed `iq_ua` 212.99 µA beside a netlist that measures 212.25 µA and never
+  said the phase ran. `_search` now stores each version's `evaluate_criteria`
+  verdict in `records`, so what is reported is the version **bisection landed
+  on**, not the last accepted step, and `report.md` carries an Optimization
+  section (objective/area before→after, steps, corner confirmation, and the
+  guard-infeasible / area-coverage / phase-failure reasons — without those the
+  run still says PASS while the phase did nothing).
 - `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
   `structure_view.py` — the deterministic replacement for what used to be an
   LLM `analyzer` agent. That agent contributed nothing measurable: a run

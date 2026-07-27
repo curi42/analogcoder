@@ -27,6 +27,17 @@ drives or senses each net; use them.
 Do not propose a change to the testbench's own sources. Lowering a supply reduces
 current without improving the circuit, and it will be rejected by a deterministic gate.
 
+That gate covers independent sources (V/I) at the top level and nothing else. The
+testbench's other parts are not fenced off and no gate can tell them apart from the
+circuit: a top-level resistor IS the circuit in an inverting-amplifier testbench, and is
+pure measurement apparatus in a transistor-level one. So it is on you. A top-level load
+(a `Cload` on the output), a coupling element (a `Cin` in series with the input) or a
+loop-break element (an `Lfb`/`Cfb` pair opening a feedback loop for an AC measurement)
+belongs to the measurement, not to the design. Shrinking a load capacitor improves phase
+margin and bandwidth without improving anything you would tape out - it manufactures
+margin, which this phase then spends on the objective. Do not propose one; propose knobs
+inside the device under test.
+
 refdes must identify exactly one component, qualified by its full subckt path when it
 sits inside one (e.g. "BUF_N.Xcc"). param must be exactly a parameter name as it
 appears on that component's line in the netlist below.

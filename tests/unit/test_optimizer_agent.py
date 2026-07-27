@@ -95,3 +95,22 @@ def test_the_schema_structurally_rejects_an_extra_field_like_new_value():
 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(payload, OPTIMIZER_SCHEMA)
+
+
+def test_the_prompt_warns_about_testbench_passives_the_gate_cannot_see():
+    # 최종 리뷰 Finding 4. check_stimulus_untouched와 structure.py의 주소록
+    # 생략은 **최상위 V/I만** 덮는다. benchmarks/two_stage_opamp/netlist.cir의
+    # 최상위 Lfb(1MH 루프 차단 인덕터), Cin, Cload는 순수한 테스트벤치 부속인데
+    # 주소록에 들어 있고 최적화가 건드릴 수 있다 - Cload를 줄이면 DUT를 하나도
+    # 안 건드리고 phase margin과 UGBW가 좋아지고, 최적화는 그 조작된 마진을
+    # 전류로 바꾼다. `Vin AC 1 -> AC 100`과 같은 모양이다.
+    #
+    # 게이트를 넓히는 것은 답이 아니다: benchmarks/inverting_amp에서는 최상위
+    # Rin/Rf/Eopamp가 **회로 그 자체**라 "최상위 수동소자"라는 규칙은 이
+    # 프로젝트가 금하는 추측이 된다. 고칠 자리는 프롬프트다.
+    from analogcoder.agents.optimizer import OPTIMIZER_SYSTEM_PROMPT
+
+    prompt = OPTIMIZER_SYSTEM_PROMPT.lower()
+    assert "load" in prompt and "loop-break" in prompt
+    # 게이트가 막아 준다고 말하면 안 된다 - 막지 못한다.
+    assert "no gate" in prompt or "not blocked" in prompt or "cannot" in prompt
