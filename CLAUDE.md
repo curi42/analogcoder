@@ -230,6 +230,179 @@ that number was measured.
   guard-infeasible / area-coverage / phase-failure reasons — without those the
   run still says PASS while the phase did nothing).
 
+### Corner reduction and re-entry
+
+- `corner_selection.py` / `corner_sim.py` — the tuning loop no longer simulates
+  one nominal point. `seed_from_sweep` takes the *entry* corner sweep (already
+  paid for, see the optimization phase's measured-allowance entry) and seeds a
+  `CornerSet` with the union of each criterion's worst-case corner; `corner_sim.
+  build_corner_simulate` wraps the existing `simulate_fn` contract so `judge`
+  sees the **worst value across that set** plus `corner_worst`/`probe`, and
+  `cli.py` re-enters the whole loop when the final sweep fails, having first
+  grown the set with the corners that failed. Declared per spec via
+  `corner_reduction: {enabled, retry_budget, probe}`; absent block means today's
+  behaviour, and *why* it is off is logged (`corner_reduction_inactive`) because
+  silently doing nothing is this repo's recurring failure shape.
+- **The reduced set is always optimistic, and that is the locked constraint.**
+  A mid-loop FAIL is real — some corner in the set genuinely violates a
+  criterion, and a corner is a corner whether or not you looked at the other 40.
+  A mid-loop PASS can be wrong, because a corner outside the set may fail. The
+  asymmetry is what makes the reduction safe: the full sweep still runs before
+  anything is reported, so the only cost of a wrong PASS is an iteration, never
+  a wrong verdict. Every design decision here defends that direction — which is
+  also why the probe does not vote (below).
+- **Nominal is the deck itself, not a name.** `corner_selection.NOMINAL is None`
+  and `_run_point` simulates the file on disk unrendered. `tt/27` is a real
+  corner and is *not* nominal: rendering the deck through `tt` rewrites its
+  include and injects a `.temp`, so it is no longer the deck whose thresholds
+  were set. `pvt._corner_fields` reports it as `"(deck)"` with no numbers, and
+  `corner_selection._as_point` **rejects** that shape — detected by the *absence*
+  of voltage/temperature coordinates, never by matching the string `"(deck)"`.
+  Without the rejection a `CornerPoint(process="(deck)", ...)` reaches
+  `render_corner_netlist`, which writes `.include ".../pdk_corner_(deck).inc"`
+  and hands ngspice a file that does not exist: "this point has no coordinates"
+  silently becoming a coordinate.
+- **Never put a NaN in a `CornerPoint`.** It is a frozen dataclass, so it
+  compares and hashes by field, and `NaN != NaN` — such a value is not equal to
+  *itself*. Every set operation in this module then breaks silently:
+  `point not in cs.corners` is true for a corner that is already there, so
+  `grown_with` re-adds it and `CornerSet.__post_init__`'s duplicate check turns
+  a diagnosis into a `ValueError`; `next_probe` can hand back a corner that is in
+  the selected set. Nothing constructs one today (coordinates come from the
+  spec's `pvt_corners`), so this is a rule for whoever first derives a corner
+  from a *measurement*.
+- **The probe does not vote. It only promotes.** Each iteration also simulates
+  one corner from outside the set (`next_probe`, rotating in ascending severity
+  so the tightest goes first), and if it fails, `promote` moves it into the set
+  permanently. Its measurements are deliberately **not** merged into the judged
+  worst case — mixing them would destroy the optimism argument above, since a
+  probe result is one sample of a rotation and the set would then be judged on
+  a corner it will not see next iteration. A probe that crashes is recorded
+  (`error` in the `corner_probe` event) and judges nothing; the rotation is
+  committed in a `finally` so a raised judge-path exception cannot pin the box
+  on one probe corner forever.
+- **A verdict failure that can add no new corner is a path disagreement, and it
+  is not retried.** If every failing criterion's worst corner is *already* in
+  the mid-loop set, then the two execution paths judged the same deck at the
+  same corner differently, and retrying re-runs identical information. `cli.py`
+  reports that (`corner_path_disagreement`) instead of looping. The diagnosis is
+  not vacuous — there are three real channels for it. Two are stochastic: the
+  mid-loop uses the control block the **simulator agent converged on** while
+  `run_full_pvt_sweep` uses the spec's text, and the mid-loop's judge is an
+  **LLM** while the sweep calls `evaluate_criteria` directly. The third is
+  **deterministic and always present**: on any criterion that shares a
+  measurement name with another (a two-sided window), the mid loop is
+  structurally blind to one side — see the collapse entry below. **Check that
+  one first.** If the disagreeing criterion is one half of a `_min`/`_max` pair,
+  the cause is the collapse, not the LLM, and no amount of re-reading agent logs
+  will show it. A failing criterion with no worst corner at
+  all is a *different* fact (`corner_unattributed_failure`): the circuit produced
+  no measurement anywhere, so there is nothing to add. Calling that a path
+  disagreement would be an unsupported structural claim, the same error shape as
+  `OPAMP2STAGE drives vdd,vss`.
+- **The allowance baseline moved from nominal to whatever the search actually
+  measures.** `judge_tools.corner_allowances`' first argument is now `reference`,
+  not `nominal`, and `optimizer.py` passes `baseline_measurements` — the value
+  `_search` really sees. Once the search reads the reduced set's worst case,
+  re-measuring nominal separately would count the same corner spread twice and
+  over-tighten the guard, since the reduced-set worst is already near the
+  extreme. The function does not decide what the reference is; the caller does.
+- **Measured on `benchmarks/bandgap/spec_corner_reduction.yaml` (9 corners:
+  tt/ss/ff × 1.62/1.8/1.98 V × 27 °C), and the numbers are unflattering.**
+  Seed = **6 corners + the deck = 7 selected points**, and the mid loop also
+  runs **1 probe**, so an iteration costs **8 simulated points out of a 9-corner
+  grid — per testbench**. That per-testbench qualifier is the whole cost story:
+  the loop in `corner_sim` is testbenches-outside, corners-inside, so this spec's
+  5 testbenches make it **40 direct simulations per iteration** (~250 s) against
+  5 before the branch, not the ~4 the design's cost table reads as. LLM calls per
+  iteration are unchanged. The saving against the full grid is one point per
+  testbench, not two. It compounds with criteria count: the seed is bounded by
+  `min(#criteria, #corners)`, so enabling this block on `spec_pvt.yaml` (45
+  corners, 22 criteria) projects to ~125 direct sims per iteration — which can
+  cost *more* than the 286 s full sweep it is meant to pre-empt. A `max_corners`
+  ceiling is out of scope here and is a prerequisite for that spec. The 3 corners
+  left outside the set are all `tt`. Re-entry fired **zero** times. argmax drift
+  between the entry sweep and the verdict sweep of a moved deck
+  (`TRIMAMP.Xt.W`/`BUF_P.Xt.W` 8 → 4, which does fail `buf1_loop_gain` and
+  `buf1_phase_margin`): **5 of 22 criteria moved**, and **all 5 landed on corners
+  already inside the set**, so `grown_with` added nothing. Pinned in
+  `tests/unit/test_corner_reduction_bandgap_ngspice.py`.
+  **Those 6 corners do not cover all 22 criteria.** This spec carries three
+  two-sided windows — `vbgout_min`/`vbgout_max`, `vbg0_min`/`vbg0_max`,
+  `vbg1_min`/`vbg1_max` — and on each pair the mid loop can see only the `_max`
+  half (collapse entry below), so **`vbgout_min`, `vbg0_min` and `vbg1_min` are
+  never actually judged in the mid loop** no matter which corners are selected.
+  Two of the five drifting criteria (`vbg1_min`, `vbg1_max`) are the two halves
+  of one such window. Read "the mid loop watches these 6 corners" as covering
+  19 of 22 criteria, not 22.
+- **The seed is bounded by `min(#criteria, #corners)`, which is why the first
+  grid reduced nothing.** The planned grid was process-only (tt/ss/ff, 3
+  corners); measured, the seed was **all 3** — `ff` for the voltages/PSRR/loop
+  gains, `ss` for TC/startup/droop, `tt` for `vbg1_residual`. Tightening a
+  criterion does **not** fix that: `seed_from_sweep` reads neither `overall_pass`
+  nor any threshold, only each criterion's argmax. With 22 criteria the union
+  saturates any small grid, so the only lever is a bigger grid — hence the
+  voltage axis came back. Expect real reduction only where corners ≫ criteria.
+- **Re-entry is not dead code, but this benchmark cannot reach it.** Growth
+  requires a *failing* criterion whose argmax sits **outside** the set — and if
+  a criterion's argmax is inside, the mid loop measured that same corner and
+  would have failed there first. On this deck the only outside corners are `tt`,
+  the typical corner, which is nobody's worst case. That is structure, not luck.
+  The mechanism does fire in principle: a smaller move (`TRIMAMP.Xt.W` 8 →
+  5.2488, the value the optimizer's bisection landed on) drifted exactly one
+  argmax — `vbg1_residual`, `ff/1.98` → **`tt/1.62`, outside the set**. It just
+  was not a failing criterion. Re-entry needs an argmax to leave the set *and*
+  that criterion to fail.
+- **A two-sided window shares one judge slot, so the slot is resolved rather
+  than overwritten — and the corner path is what exposed it.**
+  `worst_case_measurements` returns a dict keyed by *measurement* name, so
+  `vbgout_min` (`>=`) and `vbgout_max` (`<=`) — two criteria over one
+  measurement — cannot both be represented. It used to write per criterion, so
+  the later-declared one simply won: the mid loop handed the judge
+  `vbgout_v = 1.24512` (the ss/1.62 **maximum**) while the value `vbgout_min`
+  should be judged against was 1.233753 at ff/1.98. That is the **third** time
+  this file records `pvt.py` losing one side of a two-sided window.
+  The cost was not one iteration but the whole `retry_budget`: a low-side
+  violation left the judge holding the maximum, which satisfies both `>= 1.20`
+  and `<= 1.28`, so the mid loop reported PASS; the verdict sweep failed,
+  `grown_with` added the offending corner, and the enlarged set's **maximum**
+  overwrote the slot again — the loop **cannot converge on the blind half of a
+  two-sided window**, it re-derives the same PASS until the budget is gone.
+- **The fix keeps the judge's contract and does not fabricate a value.** The
+  dict is still exactly one float per measurement name — `judge`,
+  `evaluate_criteria`, `guard_band_violations`, `optimizer._search` and
+  `run_full_pvt_sweep` are all untouched (the last one reads
+  `combined_worst_corners`, not `measurements`, and evaluates one criterion at
+  a time against its own worst value; that is where the trap was already
+  solved 70 lines away). Candidates are accumulated per measurement name and
+  the collision is resolved by **preferring a value that violates one of the
+  criteria sharing that name**, falling back to the old last-writer when they
+  all pass. Every candidate is a real measurement at a real corner of the
+  selected set, so nothing is synthesised, and because every candidate lies in
+  `[min, max]` while a threshold comparison is monotone, substituting one
+  criterion's worst case for another's **can only reveal a violation, never
+  invent one**: if a `<=` criterion's own max passes, every candidate below it
+  passes too, and symmetrically for `>=` against the min. So this branch's
+  claim 2 still holds in the direction it is claimed — a mid-loop FAIL is
+  genuine, a mid-loop PASS is still merely optimistic — and the loop can now
+  converge on the previously blind half. The corner-less single-criterion case
+  (every other spec here) takes the same code path with one entry and is
+  unchanged. Pinned in
+  `test_a_violated_side_of_a_two_sided_window_wins_the_shared_measurement_slot`
+  (violating side wins) and
+  `test_a_two_sided_window_with_both_sides_passing_keeps_the_last_writer`
+  (fallback), with the measured bandgap case — where *both* sides pass, so the
+  fallback is what runs — in `test_corner_reduction_bandgap_ngspice.py`.
+  `corner_worst` still carries both sides per criterion either way.
+- **Best-arm identification was considered and rejected.** Pure-exploration
+  bandits (successive halving, LUCB, racing) exist to spend a sampling budget
+  well when each evaluation is *noisy* — their entire gain structure comes from
+  needing repeated samples to separate arms whose means are close. SPICE is
+  deterministic: one evaluation of a corner is that corner's exact value, there
+  is no confidence interval to shrink, and re-sampling is pure waste. What
+  remains is a covering problem over a known finite grid, which is what
+  `seed_from_sweep` (union of argmaxes) plus a rotating probe already is.
+
 ### Deterministic netlist derivation, and what the tuner is shown
 
 - `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
@@ -469,7 +642,16 @@ and criteria — there's no separate `--netlist` flag.
   run costs **1790 s** — six 45-corner sweeps, because the confirmation fails
   and bisection runs — which makes
   `tests/unit/test_optimizer_bandgap_ngspice.py::test_the_optimizer_lowers_iq_while_every_criterion_still_passes`
-  by far the longest test in the suite; the rest of `pytest -q` is ~45 s.
+  by far the longest test in the suite.
+  `spec_corner_reduction.yaml` is the third corner-carrying copy: same
+  testbenches and thresholds, a **9-corner** grid (tt/ss/ff × 1.62/1.8/1.98 V ×
+  27 °C), a `corner_reduction:` block, and **no** `optimize:` block — it measures
+  reduction and re-entry, and an optimizer search would make its runtime
+  unpredictable. The 9-corner choice is measured, not arbitrary: a process-only
+  3-corner grid seeded all 3 and reduced nothing, because the seed is bounded by
+  `min(#criteria, #corners)` and this spec has 22 criteria (see "Corner
+  reduction and re-entry" under Architecture). `spec_pvt.yaml`'s 45-corner grid
+  is untouched.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -760,9 +942,19 @@ assuming a weak-model failure is a code bug.
   for Claude, `LOCAL_LLM_BASE_URL` for local) — skipped by default, meant to be
   run manually when you have real credentials/a real server available.
 - `tests/unit/*_ngspice.py` assume `ngspice` is on PATH rather than skipping,
-  and all but one finish in seconds. The exception is
+  and all but two finish in seconds. The long one is
   `test_optimizer_bandgap_ngspice.py`'s corner-anchored case at ~30 min (six
-  45-corner sweeps), so `pytest -q` is ~45 s without it and ~31 min with it.
-  Deselect it (`--deselect …::test_the_optimizer_lowers_iq_while_every_criterion_still_passes`)
+  45-corner sweeps); deselect it
+  (`--deselect …::test_the_optimizer_lowers_iq_while_every_criterion_still_passes`)
   for a normal TDD cycle and run it before merging anything under
-  `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`.
+  `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`. The other is
+  `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
+  two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
+  fixtures.
+- **`pytest -m "not slow"` is the normal TDD cycle (~45 s).** Both files above
+  carry the `slow` marker, registered in `pyproject.toml` — per-test on the
+  optimizer case (the rest of that file is fast) and file-wide via `pytestmark`
+  on the corner-reduction one. A plain `pytest -q` is ~3 min (corner reduction
+  included, optimizer case still deselected by node id) and ~33 min with
+  everything. Before this marker existed `pytest -q` had silently gone 45 s →
+  3 min with no documented way to opt out.

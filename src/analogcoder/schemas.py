@@ -4,6 +4,23 @@ SIMULATION_SCHEMA = {
         "measurements": {"type": "object", "additionalProperties": {"type": "number"}},
         "status": {"enum": ["success", "convergence_failure", "error"]},
         "warnings": {"type": "array", "items": {"type": "string"}},
+        # Corner simulations inherit this and run it directly. If a
+        # convergence retry adjusted .options, this must be the adjusted
+        # control block, not the one the caller originally supplied - that's
+        # the whole point of reporting it back.
+        #
+        # **Declared, deliberately not required.** A weak model that emits
+        # measurements/status/warnings but drops this field would otherwise
+        # fail validation, exhaust the repair loop, raise AgentExecutionError
+        # and end the whole run as FAIL - including on every spec with no
+        # pvt_corners and no corner_reduction, where nothing ever reads it.
+        # The simulator is the tool-calling agent this repo has documented as
+        # the fragile one on the local-model path, so the cost of requiring it
+        # falls exactly where the field is least likely to arrive.
+        # corner_sim.py already carries the right fallback
+        # (`agent_result.get("control_block") or tb.control_block`); listing it
+        # in `required` was the only thing making that fallback unreachable.
+        "control_block": {"type": "string"},
     },
     "required": ["measurements", "status", "warnings"],
 }

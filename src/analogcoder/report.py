@@ -57,6 +57,69 @@ def _optimization_lines(optimization: dict | None) -> list[str]:
     return lines
 
 
+def _corner_reduction_lines(reduction: dict | None) -> list[str]:
+    """코너 축소 단계를 설명하는 섹션. 키 자체가 없으면 빈 목록.
+
+    이 섹션이 있어야 하는 이유는 **`area_baselines`** 한 줄이다. 재진입할
+    때마다 orchestrator가 면적 게이트의 기준선을 자기가 받은 덱에서 다시
+    잡으므로, 한 소자가 원래 덱에 대해 허용받는 성장은 `tier^area_baselines`가
+    된다 - 기본값(재시도 2회, 1.5x 티어)에서 3.375배다. PASS로 끝난 실행에서
+    그 사실은 result.json을 열지 않으면 **어디에도 보이지 않았다**. 이
+    저장소에서 면적 게이트가 조용히 안 걸린 것이 네 번이고 네 번 다 실행
+    로그에 안 보였다는 것이 이 줄의 존재 이유다.
+
+    실패 사유(path_disagreement/reentry_skipped)는 **있을 때만** 적는다.
+    없는 것을 "없음"이라고 적으면 흔한 경우가 소음이 된다."""
+    if not reduction:
+        return []
+
+    lines = [
+        "",
+        "## Corner reduction",
+        "",
+        f"**Active:** {reduction.get('active')}",
+    ]
+    if reduction.get("reason"):
+        lines.append(f"**Inactive because:** {reduction['reason']}")
+
+    final_set = reduction.get("final_set") or []
+    lines.append(
+        f"**Mid-loop corner set:** {len(final_set)} corners"
+        + (f" ({', '.join(final_set)})" if final_set else "")
+    )
+    lines.append(f"**Re-entry attempts:** {reduction.get('attempts')}")
+
+    baselines = reduction.get("area_baselines")
+    line = f"**Area-gate baselines:** {baselines}"
+    if isinstance(baselines, int) and baselines > 1:
+        line += (
+            f" - the growth limit was re-anchored on each re-entry, so a component's "
+            f"allowed growth against the deck this run started from is tier^{baselines}"
+        )
+    lines.append(line)
+
+    disagreement = reduction.get("path_disagreement")
+    if disagreement:
+        pairs = ", ".join(
+            f"{name} at {corner}"
+            for name, corner in zip(
+                disagreement.get("criteria", []), disagreement.get("corners", [])
+            )
+        )
+        lines.append(f"**Path disagreement:** {pairs}")
+
+    skipped = reduction.get("reentry_skipped")
+    if skipped:
+        lines.append(
+            f"**Re-entry skipped:** the tuning loop returned "
+            f"{skipped.get('orchestration_status')} "
+            f"({skipped.get('orchestration_failure_reason')}), so no converged deck "
+            f"was available to carry forward"
+        )
+
+    return lines
+
+
 def write_report_md(run_dir: str, result: dict) -> str:
     lines = [
         "# Run Report",
@@ -76,6 +139,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
         mark = "PASS" if c["pass"] else "FAIL"
         lines.append(f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} (margin {c['margin']})")
     lines += _optimization_lines(result.get("optimization"))
+    lines += _corner_reduction_lines(result.get("corner_reduction"))
     if result.get("failure_reason"):
         lines.append("")
         lines.append(f"**Failure reason:** {result['failure_reason']}")

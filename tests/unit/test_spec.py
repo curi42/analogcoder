@@ -173,3 +173,217 @@ def test_an_optimize_block_is_loaded_with_its_three_fields(tmp_path):
     assert opt.objective == "iq_ua"
     assert opt.area_budget == 1.10
     assert opt.guard_band == 0.2
+
+
+def test_a_spec_can_declare_corner_reduction(tmp_path):
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: true
+  retry_budget: 3
+  probe: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is True
+    assert spec.corner_reduction.retry_budget == 3
+    assert spec.corner_reduction.probe is False
+
+
+def test_corner_reduction_defaults_are_on_with_a_budget_of_two(tmp_path):
+    # 블록만 있고 필드가 없으면 기본값. 기본을 끄는 쪽으로 두면 스펙에 블록을
+    # 적어 두고도 아무 일이 안 일어난다 - 이 저장소가 반복해서 당한 모양이다.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction: {}
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is True
+    assert spec.corner_reduction.retry_budget == 2
+    assert spec.corner_reduction.probe is True
+
+
+def test_a_spec_without_the_block_has_no_corner_reduction(tmp_path):
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    assert load_spec(str(path)).corner_reduction is None
+
+
+def test_corner_reduction_explicit_enabled_false_produces_false(tmp_path):
+    # Catches: the loader ignoring `enabled: false` (defaulting it to True, or
+    # dropping the field). It does NOT catch the bool("false") coercion bug -
+    # the comment here used to claim it did, and that was wrong: PyYAML parses
+    # an unquoted `false` into a Python bool before get_bool ever sees it, so
+    # this spec passes under the buggy loader too. The coercion bug is caught
+    # by test_corner_reduction_raises_on_quoted_false_string below, which is
+    # where a string actually reaches the loader.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is False
+
+
+def test_corner_reduction_explicit_probe_false_produces_false(tmp_path):
+    # Catches: the loader ignoring `probe: false`. As with the `enabled` test
+    # above, it does NOT catch the bool("false") coercion - PyYAML has already
+    # produced a Python bool by then. Legitimate coverage, corrected claim.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  probe: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.probe is False
+
+
+def test_corner_reduction_raises_on_quoted_false_string(tmp_path):
+    # Catches: bool("false") silently coercing to True instead of raising.
+    # Authors coming from other config formats may write "false" as a quoted string.
+    # int() and float() fail loud on bad input; bool fields must too.
+    import pytest
+
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: "false"
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    with pytest.raises(ValueError, match=r"corner_reduction\.enabled must be a boolean"):
+        load_spec(str(path))
+
+
+def test_corner_reduction_raises_on_integer_value_for_boolean(tmp_path):
+    # Catches: bool(1) silently coercing to True, or bool(0) to False.
+    # Some YAML authors might write 1/0 instead of true/false.
+    import pytest
+
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  probe: 1
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    with pytest.raises(ValueError, match=r"corner_reduction\.probe must be a boolean"):
+        load_spec(str(path))
+
+
+def _corner_reduction_spec(tmp_path, block: str):
+    path = tmp_path / "spec.yaml"
+    path.write_text(f"""
+circuit_name: t
+corner_reduction:
+{block}
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    return str(path)
+
+
+def test_a_negative_retry_budget_is_rejected(tmp_path):
+    # 음수 예산은 조용히 0처럼 동작한다 - 재진입을 켰다고 믿는 스펙에서
+    # 아무 일도 일어나지 않는다. get_bool을 같은 함수 안에서 시끄럽게 만든
+    # 것과 같은 이유로 여기서도 시끄럽게 실패한다.
+    import pytest
+
+    with pytest.raises(ValueError, match="retry_budget"):
+        load_spec(_corner_reduction_spec(tmp_path, "  retry_budget: -1"))
+
+
+def test_a_zero_retry_budget_is_allowed(tmp_path):
+    # 0은 "재진입하지 않는다"는 유효한 선언이다. 범위 검사를 `<= 0`으로
+    # 두는 변형이 이것을 막는다.
+    assert load_spec(_corner_reduction_spec(tmp_path, "  retry_budget: 0")).corner_reduction.retry_budget == 0
+
+
+def test_a_non_integer_retry_budget_is_rejected(tmp_path):
+    # int("two")는 이미 시끄럽게 실패한다 - 그 동작을 못박아 둔다.
+    import pytest
+
+    with pytest.raises(ValueError):
+        load_spec(_corner_reduction_spec(tmp_path, '  retry_budget: "two"'))

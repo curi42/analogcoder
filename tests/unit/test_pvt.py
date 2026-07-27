@@ -1,4 +1,8 @@
-from analogcoder.pvt import CornerPoint, all_corners, render_corner_netlist, worst_case_measurements
+import math
+
+import pytest
+
+from analogcoder.pvt import CornerPoint, all_corners, corner_severity, render_corner_netlist, worst_case_measurements
 from analogcoder.spec import Criterion, PVTCorners
 
 NETLIST = """\
@@ -153,6 +157,35 @@ def test_worst_case_measurements_fails_criterion_when_any_corner_is_missing_the_
     assert worst_corners["phase_margin"]["value"] is None
 
 
+def test_the_deck_itself_is_a_valid_point_and_is_never_reported_as_a_corner():
+    # The reduced-corner loop (corner_selection.NOMINAL) hands this function a
+    # list whose first entry is None - the deck as it is, rendered through no
+    # corner at all. Reading .process off it would crash; inventing "tt"/27 for
+    # it would be worse, because tt/27 is a real corner and this is not one.
+    corners = [None, CornerPoint(process="fs", voltage=1.98, temperature=125)]
+    per_corner_measurements = [{"gain_db": 41.0}, {"gain_db": 52.0}]
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements == {"gain_db": 41.0}
+    assert worst_corners["gain"]["process"] == "(deck)"
+    assert worst_corners["gain"]["voltage"] is None
+    assert worst_corners["gain"]["temperature"] is None
+    assert worst_corners["gain"]["value"] == 41.0
+
+
+def test_a_measurement_missing_at_the_deck_itself_names_the_deck():
+    corners = [None, CornerPoint(process="fs", voltage=1.98, temperature=125)]
+    per_corner_measurements = [{}, {"gain_db": 52.0}]
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert "gain_db" not in measurements
+    assert worst_corners["gain"]["process"] == "(deck)"
+
+
 def test_two_sided_window_keeps_both_worst_cases_separate():
     # A min/max window is two criteria over ONE measurement with opposite
     # operators. Keying the worst-case pool by measurement name lets the
@@ -177,6 +210,68 @@ def test_two_sided_window_keeps_both_worst_cases_separate():
     assert worst_corners["vbgout_min"]["process"] == "ff"
     assert worst_corners["vbgout_max"]["value"] == 1.30
     assert worst_corners["vbgout_max"]["process"] == "ss"
+
+
+def test_a_violated_side_of_a_two_sided_window_wins_the_shared_measurement_slot():
+    """양면 창의 **위배된 쪽**이 공유 슬롯을 가져간다.
+
+    `measurements`는 측정값 이름당 float 하나라는 판정자 계약을 그대로 지킨다.
+    바뀌는 것은 **어느 값을 싣는가**뿐이다: 이름을 공유하는 기준들 중 자기
+    최악값이 자기 임계값을 위배하는 것이 있으면 그 값을, 전부 통과하면 오늘처럼
+    마지막 기록자의 값을 싣는다.
+
+    **어떤 변형을 잡는가.** 충돌 해소를 지우고 `measurements[name] = value`를
+    기준마다 그대로 쓰는 변형(즉 이 분기 이전의 코드)을 잡는다. 그러면 나중에
+    선언된 `vbgout_max`의 최댓값 1.24가 실리고, 그 값은 `>= 1.20`도 `<= 1.28`도
+    만족하므로 중간 루프는 **PASS를 낸다** - 실제로는 ff에서 1.10으로 저쪽
+    창을 뚫었는데도. 그 PASS는 retry_budget을 통째로 태우고도 절대 수렴하지
+    않는다(코너를 더해도 최댓값이 다시 덮어쓴다).
+    """
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=27),
+    ]
+    per_corner_measurements = [{"vbgout_v": 1.24}, {"vbgout_v": 1.10}]
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+
+    measurements, worst_corners = worst_case_measurements(
+        corners, per_corner_measurements, criteria
+    )
+
+    # 실린 값은 지어낸 것이 아니라 선택 집합 안 **실제 코너의 실측값**이다.
+    assert measurements["vbgout_v"] == 1.10
+    assert measurements["vbgout_v"] == worst_corners["vbgout_min"]["value"]
+    # 그리고 그 값으로 판정하면 실제로 뚫린 쪽이 실패로 나온다.
+    from analogcoder.judge_tools import evaluate_criteria
+
+    verdict = evaluate_criteria(measurements, criteria)
+    assert not verdict["overall_pass"]
+    assert {c["name"] for c in verdict["criteria"] if not c["pass"]} == {"vbgout_min"}
+
+
+def test_a_two_sided_window_with_both_sides_passing_keeps_the_last_writer():
+    """양쪽 다 통과하면 오늘의 동작(마지막 기록자) 그대로다.
+
+    위배가 없을 때 값을 바꿀 근거가 없다 - 어느 값을 실어도 판정은 같고,
+    바꾸면 이 동작에 기대는 실측 고정(`test_corner_reduction_bandgap_ngspice`의
+    `vbgout_v == corner_worst["vbgout_max"]["value"]`)만 깨진다.
+    """
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=27),
+    ]
+    per_corner_measurements = [{"vbgout_v": 1.24}, {"vbgout_v": 1.22}]
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+
+    measurements, _ = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements["vbgout_v"] == 1.24  # vbgout_max(마지막 기준)의 최댓값
 
 
 def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
@@ -219,3 +314,162 @@ def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
 
     failed = {c["name"] for c in result["criteria"] if not c["pass"]}
     assert failed == {"vbgout_min"}
+
+
+GE = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)
+LE = Criterion(name="iq", measurement="i", operator="<=", threshold=300.0)
+
+
+def test_severity_is_the_tightest_normalised_margin():
+    # gain 44 vs >=40  -> +0.10
+    # iq   288 vs <=300 -> +0.04
+    # Made unequal on purpose (rather than both landing on the same margin) so
+    # that "take the min" is actually exercised: a mutation that takes the max
+    # (or just returns the last criterion's margin) would report 0.10, not
+    # 0.04.
+    assert corner_severity({"g": 44.0, "i": 288.0}, [GE, LE]) == pytest.approx(0.04)
+
+
+def test_a_failing_criterion_makes_severity_negative():
+    # If the sign rule were dropped (i.e. "<=" were not negated), iq=330
+    # would read as raw (330-300)/300 = +0.10 - a passing-looking margin for
+    # a criterion that has actually failed. This assertion catches that: with
+    # the correct sign correction the margin is -0.10, so the overall (min)
+    # severity is negative.
+    assert corner_severity({"g": 44.0, "i": 330.0}, [GE, LE]) < 0
+
+
+def test_a_missing_measurement_is_the_most_severe_possible():
+    # A mutation that skips a criterion with no measurement (instead of
+    # short-circuiting to -inf) would evaluate this corner using only GE
+    # (margin +0.10) and report the corner as comfortably passing, when in
+    # fact the circuit produced no "i" value at all here.
+    assert corner_severity({"g": 44.0}, [GE, LE]) == -math.inf
+
+
+def test_a_nan_measurement_is_the_most_severe_possible():
+    # ngspice really does hand back NaN (a .meas that found no crossing prints
+    # "failed" and the parser has produced nan for it), so this is not a
+    # hypothetical. Without the isnan guard the arithmetic below runs on NaN,
+    # every comparison against it is False, and `min` **keeps the incumbent**:
+    # with GE evaluated first the severity would come out as iq's +0.04 - a
+    # comfortable-looking corner where the circuit produced no gain at all.
+    # That is exactly the "missing measurement" case one line above, wearing a
+    # float.
+    assert corner_severity({"g": math.nan, "i": 288.0}, [GE, LE]) == -math.inf
+    # ...and in the other order, where a NaN-blind `min` would return NaN and
+    # every downstream `<` comparison against it would silently be False.
+    assert corner_severity({"g": 44.0, "i": math.nan}, [GE, LE]) == -math.inf
+
+
+def test_a_zero_threshold_falls_back_to_an_absolute_margin():
+    # Without the "denominator = abs(threshold) or 1.0" fallback this divides
+    # by zero and raises instead of returning the absolute margin 0.5.
+    zero = Criterion(name="off", measurement="o", operator=">=", threshold=0.0)
+    assert corner_severity({"o": 0.5}, [zero]) == pytest.approx(0.5)
+
+
+class _SequencedBackend:
+    """Returns one measurements dict per sim_backend.run() call, in order -
+    unlike _StubBackend above (which only ever varies one measurement key),
+    this lets a test control every measurement produced at each corner, for
+    each testbench, across the whole sweep."""
+
+    def __init__(self, measurements):
+        self.measurements = list(measurements)
+
+    def run(self, netlist_path, testbench_config):
+        from analogcoder.simulators.base import RawSimResult
+
+        return RawSimResult(
+            status="success", measurements=self.measurements.pop(0), raw_log="", warnings=[]
+        )
+
+
+def test_the_sweep_exposes_every_corner_s_own_measurements(tmp_path):
+    # The probe order (a later task) needs each corner's own severity, which
+    # needs each corner's own measurements - worst_case_measurements only
+    # keeps the single worst value per criterion and discards the rest. A
+    # mutation that drops "per_corner" from the return dict entirely is
+    # caught by the KeyError this test would raise; a mutation that reverses
+    # corner order is caught by the last two assertions.
+    from types import SimpleNamespace
+
+    from analogcoder.pvt import run_full_pvt_sweep
+
+    criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
+    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria)
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        canonical=tb,
+        all_criteria=criteria,
+        pvt_corners=PVTCorners(process=["tt", "ss"], voltage=[1.8], temperature=[27]),
+    )
+    backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}])
+
+    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend)
+
+    assert [e["measurements"]["g"] for e in sweep["per_corner"]] == [50.0, 41.0]
+    assert sweep["per_corner"][0]["corner"]["process"] == "tt"
+    assert sweep["per_corner"][1]["corner"]["process"] == "ss"
+
+
+def test_each_corner_entry_carries_its_own_severity(tmp_path):
+    # The probe order is sorted by this value. A mutation that omits severity
+    # or hardcodes a constant would make the probe run in arbitrary order,
+    # which surfaces staleness later rather than now - these exact expected
+    # values (0.25 and 0.025, both g>=40) pin the real computation.
+    from types import SimpleNamespace
+
+    from analogcoder.pvt import run_full_pvt_sweep
+
+    criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
+    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria)
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        canonical=tb,
+        all_criteria=criteria,
+        pvt_corners=PVTCorners(process=["tt", "ss"], voltage=[1.8], temperature=[27]),
+    )
+    backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}])  # criterion is g >= 40
+
+    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend)
+
+    assert sweep["per_corner"][0]["severity"] == pytest.approx(0.25)  # (50-40)/40
+    assert sweep["per_corner"][1]["severity"] == pytest.approx(0.025)  # (41-40)/40
+
+
+def test_per_corner_measurements_merge_across_testbenches(tmp_path):
+    # run_full_pvt_sweep loops testbenches on the outside and corners on the
+    # inside, so one corner's full measurement set arrives split across
+    # multiple testbench iterations (tb1 measures "g", tb2 measures "i"). A
+    # mutation that keeps per-testbench measurements separate (e.g.
+    # reinitialising the merge list inside the testbench loop, or only
+    # keeping the last testbench's dict) would leave "g" or "i" missing from
+    # a corner's merged entry - this test's exact equality on both keys
+    # catches that.
+    from types import SimpleNamespace
+
+    from analogcoder.pvt import run_full_pvt_sweep
+
+    gain_criterion = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)
+    iq_criterion = Criterion(name="iq", measurement="i", operator="<=", threshold=300.0)
+    tb1 = SimpleNamespace(
+        name="tb1", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[gain_criterion]
+    )
+    tb2 = SimpleNamespace(
+        name="tb2", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[iq_criterion]
+    )
+    spec = SimpleNamespace(
+        testbenches=[tb1, tb2],
+        canonical=tb1,
+        all_criteria=[gain_criterion, iq_criterion],
+        pvt_corners=PVTCorners(process=["tt", "ss"], voltage=[1.8], temperature=[27]),
+    )
+    # Outer loop is testbenches, inner is corners: tb1/tt, tb1/ss, tb2/tt, tb2/ss.
+    backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}, {"i": 100.0}, {"i": 90.0}])
+
+    sweep = run_full_pvt_sweep({"tb1": "* netlist\n.end\n", "tb2": "* netlist\n.end\n"}, spec, backend)
+
+    assert sweep["per_corner"][0]["measurements"] == {"g": 50.0, "i": 100.0}
+    assert sweep["per_corner"][1]["measurements"] == {"g": 41.0, "i": 90.0}

@@ -12,6 +12,8 @@ from analogcoder.agents.optimizer import propose_candidates
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
+from analogcoder.corner_selection import grown_with, label, seed_from_sweep
+from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
@@ -42,6 +44,88 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
+
+def _no_drift() -> dict:
+    """빈 argmax 기록. **매번 새로 만든다** - 모듈 수준 상수를 얕게 복사해
+    돌려주면 result에 실리는 "criteria" 리스트가 그 상수와 **같은 객체**가 되어,
+    거기에 append하는 소비자 하나가 프로세스 전역을 오염시킨다."""
+    return {"criteria": [], "moved_count": 0, "total": 0}
+
+
+def _corner_label(raw: dict | None) -> str | None:
+    """worst_case_corners 항목 하나의 사람이 읽는 이름.
+
+    corner_selection.label과 **같은 문자열**을 내야 한다 - 두 이름이 갈리면
+    final_set과 argmax_drift를 나란히 놓고 읽을 수 없다.
+
+    `(deck)` 갈래는 **오늘 두 호출부(진입 스윕·판정 스윕) 중 어느 쪽에서도
+    도달하지 않는다** - run_full_pvt_sweep은 항상 실제 좌표를 적는다. 미래의
+    호출부(예: corner_sim의 corner_worst, 실측에서 (deck) 항목 4개를 담고 있는
+    것을 확인했다)를 위한 벽이며, 판별은 좌표의 **부재**로 한다(이름 매칭이
+    아니다). 조건은 corner_selection._as_point의 거부 조건과 **같은 방향**이어야
+    한다("둘 중 하나라도 없으면") - 한쪽은 `or`, 다른 쪽은 `and`로 두면 반쪽짜리
+    좌표에서 둘이 서로 다른 말을 한다. 저쪽은 거부하고 이쪽은 적기만 하는데,
+    argmax 계측은 순수한 기록이고 기록이 실행을 멈출 수는 없기 때문이다."""
+    if raw is None:
+        return None
+    if raw.get("voltage") is None or raw.get("temperature") is None:
+        return "(deck)"
+    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
+
+
+def _argmax_drift(entry_sweep: dict, verdict_sweep: dict) -> dict:
+    """기준별 최악 코너가 진입 스윕과 판정 스윕 사이에서 움직였는가.
+
+    **설계가 움직일 때 최악 코너가 얼마나 움직이는가**는 아직 아무도 재지
+    않았다. 거의 안 움직이면 코너 지속성이 최적에 가깝고 어떤 적응형 기법도
+    이기지 못한다; 많이 움직이면 지속성이 나쁘고 적응이 필요하다. 다음 축소
+    기법을 고르는 근거가 이 숫자이며, 실행이 이미 만드는 데이터라 공짜다.
+
+    **판정에는 아무 영향을 주지 않는다 - 순수한 기록이다.**
+
+    한쪽 스윕에만 있는 기준은 moved=False다. 짝이 없으면 "움직였다"고 말할
+    근거가 없고, 없는 것을 이동으로 세면 이 숫자의 유일한 용도가 망가진다."""
+    entry_wc = entry_sweep.get("worst_case_corners", {})
+    final_wc = verdict_sweep.get("worst_case_corners", {})
+    names = list(entry_wc) + [name for name in final_wc if name not in entry_wc]
+
+    criteria = []
+    for name in names:
+        entry_label = _corner_label(entry_wc.get(name))
+        final_label = _corner_label(final_wc.get(name))
+        criteria.append({
+            "name": name,
+            "entry": entry_label,
+            "final": final_label,
+            "moved": (
+                entry_label is not None
+                and final_label is not None
+                and entry_label != final_label
+            ),
+        })
+
+    return {
+        "criteria": criteria,
+        "moved_count": sum(1 for c in criteria if c["moved"]),
+        "total": len(criteria),
+    }
+
+
+def _reduction_off_reason(corner_capable: bool, reduction) -> str:
+    """축소가 꺼진 **이유**. 조용히 아무것도 안 하는 것이 이 저장소가 반복해서
+    당한 실패 모양이므로, 꺼졌다는 사실만으로는 부족하고 왜 꺼졌는지가 결과와
+    이력 양쪽에 남아야 한다. 세 경우는 서로 다른 사실이고 고치는 방법도 다르다."""
+    if not corner_capable:
+        return (
+            "the spec declares no pvt_corners, so there are no corners to reduce - "
+            "the mid-loop simulates the deck as written, exactly as it does today"
+        )
+    if reduction is None:
+        return (
+            "the spec declares no corner_reduction block, so the mid-loop keeps "
+            "today's behaviour (the deck as written, one point)"
+        )
+    return "corner_reduction.enabled is false in the spec"
 
 
 def _build_agent_backend(args, model: str | None = None) -> AgentBackend:
@@ -140,8 +224,90 @@ async def _run(args) -> dict:
         # run_full_pvt_sweep 자체가 동기이고 LLM이 끼지 않으므로 감쌀 이유도 없다.
         return run_full_pvt_sweep(netlist_texts, spec, sim_backend)
 
+    async def agent_simulate_fn(netlist_path, control_block):
+        """corner_sim이 부르는 모양은 `(netlist_path, control_block)` 두 인자다.
+        시뮬레이터 백엔드와 에이전트 백엔드는 여기서 닫아 준다 - agent_simulate를
+        그대로 넘기면 그 두 인자가 빠져 판정 경로 한가운데서 TypeError가 난다."""
+        return await agent_simulate(
+            netlist_path, control_block, sim_backend, agent_backends["simulator"]
+        )
+
+    # "코너를 잴 수 있는가"를 한 번만 적는다. 세 군데에 같은 조건을 따로 쓰면
+    # 한 곳만 바뀌었을 때 baseline은 재는데 최적화에는 None이 가는 식으로
+    # 조용히 어긋난다. optimizer.py도 같은 이름(corner_capable)을 쓴다.
+    corner_capable = spec.pvt_corners is not None
+    reduction = spec.corner_reduction
+    # 블록이 없으면 축소는 켜지지 않는다 - CornerReduction의 기본값(enabled=True)은
+    # **블록이 선언됐을 때** 무엇이 기본인지를 말하는 것이지, 선언하지 않은
+    # 스펙의 동작을 바꾸라는 뜻이 아니다. 기존 스펙의 동작은 그대로 둔다.
+    reduction_active = corner_capable and reduction is not None and reduction.enabled
+    reduction_reason = (
+        None if reduction_active else _reduction_off_reason(corner_capable, reduction)
+    )
+
+    baseline_sweep = None
+    if corner_capable:
+        baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+        state.log_event("pvt_baseline_sweep", baseline_sweep)
+
+    corner_state = None
+    # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
+    simulate_for_run = simulate_fn
+    if reduction_active:
+        try:
+            corner_state = CornerState(seed_from_sweep(baseline_sweep, spec))
+        except ValueError as exc:
+            # 씨앗을 못 뽑으면 축소를 시작할 수 없다. 넷리스트 적용 경로의
+            # ValueError와 같은 취급 - 크래시가 아니라 **깨끗한 FAIL**로 끝낸다.
+            # 그래야 result.json과 report.md가 쓰이고 사유가 남는다.
+            # (오늘 도달하지 않는다: _as_point가 거부하는 (deck) 항목을
+            # run_full_pvt_sweep은 만들지 않는다. corner_sim의 corner_worst는
+            # 만든다 - 그것이 이 자리로 흘러드는 날의 벽이다.)
+            reason = f"{type(exc).__name__}: {exc}"
+            state.log_event("corner_set_seed_failed", {"reason": reason})
+            return {
+                "status": "FAIL",
+                "final_netlist_paths": state.current_netlist_paths(),
+                "run_dir": run_dir,
+                "iterations_used": 0,
+                "final_criteria": [],
+                "failure_reason": f"could not seed the mid-loop corner set: {reason}",
+                "corner_reduction": {
+                    "active": False,
+                    "reason": f"seeding the corner set from the entry sweep failed: {reason}",
+                    "final_set": [],
+                    "attempts": 0,
+                    "area_baselines": 0,
+                    "grown": [],
+                    "path_disagreement": None,
+                    "unattributed_failures": None,
+                    "reentry_skipped": None,
+                    "argmax_drift": _no_drift(),
+                },
+            }
+        state.log_event(
+            "corner_set_seeded",
+            {
+                "corners": [label(c) for c in corner_state.corner_set.corners],
+                "by_criterion": {
+                    name: _corner_label(raw)
+                    for name, raw in baseline_sweep.get("worst_case_corners", {}).items()
+                },
+                "outside": len(corner_state.corner_set.probe_order),
+            },
+        )
+        # **같은 콜러블이 오케스트레이터와 최적화기 양쪽에 간다.** 회전 탐침과
+        # 탐침 승격이 사는 상자(CornerState)는 하나여야 한다 - 배선을 한 곳만
+        # 바꾸면 회전이 갈라지고, 최적화 탐색은 메인 루프가 배운 코너를 보지
+        # 못한 채 nominal 기준의 여유분을 요구하게 된다.
+        simulate_for_run = build_corner_simulate(
+            agent_simulate_fn, sim_backend, state, corner_state, state.log_event
+        )
+    else:
+        state.log_event("corner_reduction_inactive", {"reason": reduction_reason})
+
     agents = OrchestratorAgents(
-        simulate=simulate_fn,
+        simulate=simulate_for_run,
         judge=judge_fn,
         tune=tune_fn,
         verify_pre=verify_pre_fn,
@@ -149,55 +315,120 @@ async def _run(args) -> dict:
         propose_topology=propose_topology_fn,
     )
 
-    # "코너를 잴 수 있는가"를 한 번만 적는다. 세 군데에 같은 조건을 따로 쓰면
-    # 한 곳만 바뀌었을 때 baseline은 재는데 최적화에는 None이 가는 식으로
-    # 조용히 어긋난다. optimizer.py도 같은 이름(corner_capable)을 쓴다.
-    corner_capable = spec.pvt_corners is not None
+    # 판정 스윕이 실패하면 그 실패가 지목한 코너를 중간 루프의 집합에 영구히
+    # 더하고 **수렴된 덱 그대로** 루프를 다시 돈다. 재진입마다
+    # MAX_OUTER_ITERATIONS 예산은 새로 받는다(run_orchestration이 호출마다
+    # 0에서 세므로 자동이다) - 예산이 소진된 채로 재진입하면 아무 일도 일어나지
+    # 않기 때문이다. 그 대가로 최악의 경우 비용은
+    # `(R+1) x MAX_OUTER_ITERATIONS x 반복당 비용`이 된다(R = retry_budget).
+    #
+    # 최적화와 판정 스윕은 이 루프 **안에** 남는다. 최적화기는 이미 "진입
+    # 스윕이 실패한 설계는 최적화하지 않는다"는 규칙이 있어 실패한 시도에서는
+    # 그 스윕 하나만 돌고 즉시 돌아오므로, 실패한 시도의 추가 비용은 어차피
+    # 필요했던 판정 스윕 하나뿐이다. 루프 밖에 두면 판정 스윕이 하나 더 든다.
+    #
+    # **재진입마다 면적 게이트의 기준선이 다시 잡힌다 - 알고 하는 것이다.**
+    # orchestrator.py:69-74는 `index_baseline_components`를 자기가 **받은**
+    # 넷리스트에서 호출마다 한 번 계산한다. 여기서 넘기는 것이 수렴된 덱이므로,
+    # 재진입한 루프의 성장 한도는 실행이 시작한 덱이 아니라 **직전 시도가 끝난
+    # 덱**을 기준으로 잰다. 결과적으로 retry_budget=R이면 한 소자가 원래 덱에
+    # 대해 허용받는 성장은 `tier^(R+1)`이다 - 기본값(R=2, 1.5x 티어)에서
+    # 1.5^3 = 3.375배. 이 하위 프로젝트의 전제가 "run_orchestration을 고치지
+    # 않는다"이므로 기준선을 고정하는 것은 별도 작업이고, 여기서는 **보이게**
+    # 한다: 이 저장소에서 게이트가 조용히 안 걸린 것이 네 번이고 네 번 다 실행
+    # 로그에 안 보였다. 재진입 시점마다 corner_set_grown에 남기고, 실행이 쓴
+    # 기준선 개수를 result["corner_reduction"]["area_baselines"]에 싣는다.
+    retry_budget = reduction.retry_budget if reduction_active else 0
+    attempt = 0
+    grown_labels: list[list[str]] = []
+    path_disagreement: dict | None = None
+    unattributed_failures: dict | None = None
+    reentry_skipped: dict | None = None
+    final_sweep: dict | None = None
 
-    if corner_capable:
-        baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
-        state.log_event("pvt_baseline_sweep", baseline_sweep)
-
-    result = await run_orchestration(initial_netlist_texts, spec, state, agents)
-
-    # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
-    # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된
-    # 넷리스트를 확정하는 역할을 그대로 하기 때문이다. 뒤에 두면 아무도
-    # 확인하지 않은 넷리스트로 실행이 끝난다.
-    if result["status"] == "PASS":
-        optimization = await run_optimization(
-            # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인 루프가
-            # 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면, run_optimization이
-            # 인자와 state가 어긋난 것을 보고 원본을 새 버전으로 밀어 넣어
-            # (optimizer.py:534) 튜닝 결과를 통째로 되돌린다 - 그리고 그 덱이
-            # 확정되고 보고된다.
-            state.current_netlist_texts(),
+    while True:
+        result = await run_orchestration(
+            # 재진입은 **수렴된 덱에서 시작한다** - 롤백하지 않는다. 되돌리면
+            # 방금 루프가 해낸 튜닝을 통째로 버리고 같은 실패를 다시 찾게 된다.
+            # (최적화 배선이 같은 이유로 같은 값을 넘긴다 - 아래 주석 참조.)
+            initial_netlist_texts if attempt == 0 else state.current_netlist_texts(),
             spec,
             state,
-            OptimizerAgents(
-                propose=propose_candidates_fn,
-                simulate=simulate_fn,
-                # 코너를 잴 수단이 없으면 None을 준다. run_optimization은 그때
-                # 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
-                verify_corners=verify_corners_fn if corner_capable else None,
-            ),
+            agents,
         )
-        result["optimization"] = optimization
-        # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로는 그것이
-        # 착지한 버전이어야 한다.
-        result["final_netlist_paths"] = state.current_netlist_paths()
-        # ...그리고 기준 판정도 같은 버전의 것이어야 한다. result["final_criteria"]는
-        # run_orchestration의 judge 결과라 최적화 **전** 덱을 설명한다. 경로만
-        # 갱신하고 이것을 두면 리포트가 서로 다른 두 회로를 나란히 적는다 -
-        # 실측 bandgap 실행에서 212.25uA를 재는 넷리스트 옆에 212.99uA가 적혔다.
-        #
-        # 최적화가 기준을 재지 못한 경로(기준선 시뮬레이션 실패, 이 단계 자체가
-        # 터짐)에서는 None이 오고, 그때는 메인 루프의 판정을 그대로 둔다 -
-        # 없는 값으로 덮으면 리포트가 통째로 빈다.
-        if optimization.get("final_criteria"):
-            result["final_criteria"] = optimization["final_criteria"]
 
-    if corner_capable:
+        # **이 시도의 오케스트레이션 결과는 여기서만 온전하다.** 아래에서
+        # result["status"]는 FAIL로 덮이고 failure_reason에는 스윕 사유가
+        # 덧붙는다. _final_result는 history.jsonl에 아무것도 쓰지 않으므로,
+        # 여기서 남기지 않으면 attempt 0의 "agent execution error: rate limited"는
+        # **어디에도** 흔적이 남지 않는다 - 재진입이 붙으면서 버려지는 결과가
+        # 하나에서 최대 세 개로 늘었다.
+        orch_status = result["status"]
+        state.log_event(
+            "orchestration_attempt",
+            {
+                "attempt": attempt,
+                "status": orch_status,
+                "iterations_used": result.get("iterations_used"),
+                "failure_reason": result.get("failure_reason"),
+            },
+        )
+
+        # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
+        # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된
+        # 넷리스트를 확정하는 역할을 그대로 하기 때문이다. 뒤에 두면 아무도
+        # 확인하지 않은 넷리스트로 실행이 끝난다.
+        if result["status"] == "PASS":
+            # **탐색이 도는 동안 탐침 회전을 얼린다.** 상자는 계속 공유한다 -
+            # 선택 집합이 갈라지면 탐색이 메인 루프가 배운 코너를 못 본 채
+            # 여유분을 요구한다. 얼리는 것은 회전뿐이고, 이유는
+            # CornerState.probe_frozen의 주석에 있다: 탐색 도중의 승격은
+            # 서로 다른 코너 집합에서 잰 목적값을 비교하게 만들고, 그 뒤의 모든
+            # 단계를 원인이 아닌 knob을 지목하는 사유로 거부시킨다.
+            #
+            # finally로 되돌리는 것은 재진입 때문이다 - 다음 시도의 메인 루프는
+            # 다시 탐침을 돌려야 한다.
+            if corner_state is not None:
+                corner_state.probe_frozen = True
+            try:
+                optimization = await run_optimization(
+                    # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인
+                    # 루프가 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면,
+                    # run_optimization이 인자와 state가 어긋난 것을 보고 원본을 새
+                    # 버전으로 밀어 넣어 (optimizer.py:534) 튜닝 결과를 통째로
+                    # 되돌린다 - 그리고 그 덱이 확정되고 보고된다.
+                    state.current_netlist_texts(),
+                    spec,
+                    state,
+                    OptimizerAgents(
+                        propose=propose_candidates_fn,
+                        simulate=simulate_for_run,
+                        # 코너를 잴 수단이 없으면 None을 준다. run_optimization은
+                        # 그때 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
+                        verify_corners=verify_corners_fn if corner_capable else None,
+                    ),
+                )
+            finally:
+                if corner_state is not None:
+                    corner_state.probe_frozen = False
+            result["optimization"] = optimization
+            # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로는 그것이
+            # 착지한 버전이어야 한다.
+            result["final_netlist_paths"] = state.current_netlist_paths()
+            # ...그리고 기준 판정도 같은 버전의 것이어야 한다. result["final_criteria"]는
+            # run_orchestration의 judge 결과라 최적화 **전** 덱을 설명한다. 경로만
+            # 갱신하고 이것을 두면 리포트가 서로 다른 두 회로를 나란히 적는다 -
+            # 실측 bandgap 실행에서 212.25uA를 재는 넷리스트 옆에 212.99uA가 적혔다.
+            #
+            # 최적화가 기준을 재지 못한 경로(기준선 시뮬레이션 실패, 이 단계 자체가
+            # 터짐)에서는 None이 오고, 그때는 메인 루프의 판정을 그대로 둔다 -
+            # 없는 값으로 덮으면 리포트가 통째로 빈다.
+            if optimization.get("final_criteria"):
+                result["final_criteria"] = optimization["final_criteria"]
+
+        if not corner_capable:
+            break
+
         # 최적화가 코너를 확인했으면 그 스윕이 곧 이 넷리스트의 최종 스윕이다.
         # 착지 지점은 정의상 스윕을 통과한 버전이므로(_bisect_last_passing은
         # 통과가 확인된 인덱스에만 착지한다) 다시 도는 것은 같은 덱에 같은
@@ -220,15 +451,155 @@ async def _run(args) -> dict:
             sweep_label = "final PVT sweep"
             state.log_event("pvt_final_sweep", {"reused_from_optimization": False, **final_sweep})
         result["pvt_sweep"] = final_sweep
+
+        if final_sweep["overall_pass"]:
+            break
+
         # 재사용 경로에서 이 판정이 FAIL로 뒤집히는 일은 사실상 없다(착지
         # 지점은 통과한 버전이다). 그래도 조건을 걸어 두는 것은, 최적화가
         # **진입** 스윕에서 이미 실패한 코너를 그대로 실어 보낼 수 있고 그때는
         # 최적화를 돌리지 않았을 때와 똑같이 FAIL이어야 하기 때문이다. 그
         # 경우 최종 스윕은 돌지 않았으므로 사유도 그렇게 적는다 - 돌지 않은
         # 스윕이 실패했다고 적으면 history.jsonl과 대조하는 사람이 헤맨다.
-        if not final_sweep["overall_pass"]:
-            result["status"] = "FAIL"
-            result["failure_reason"] = f"{sweep_label} failed: {final_sweep['summary']}"
+        result["status"] = "FAIL"
+        # **덧붙인다 - 덮지 않는다.** 여기 이미 들어 있는 것은 run_orchestration이
+        # 보고한 사유이고(예: "max iterations reached"), 그것이 곧 이 시도가
+        # 어떻게 끝났는지다. 덮어쓰면 리포트를 읽는 사람에게 남는 것은 스윕이
+        # 실패했다는 사실뿐이고, 그 앞에서 루프가 왜 멈췄는지는 사라진다.
+        sweep_reason = f"{sweep_label} failed: {final_sweep['summary']}"
+        prior = result.get("failure_reason")
+        result["failure_reason"] = f"{prior}; {sweep_reason}" if prior else sweep_reason
+
+        if not reduction_active or attempt >= retry_budget:
+            break
+
+        # **재진입은 수렴된 덱을 전제로 한다.** 설계 문서가 말하는 "수렴된 덱"은
+        # PASS로 끝난 덱이다. 10 반복을 소진하고 멈춘 덱은 그것이 아니고,
+        # "tuning proposal repeatedly rejected"는 이 저장소가 **일부러** 토폴로지
+        # 교체까지 건너뛰며 하드 FAIL로 만든 결말이며, "agent execution error"는
+        # 거의 확실히 재발한다. 셋 다 예산이 새로 채워진 완전한 튜닝 루프를 최대
+        # retry_budget번 더 돌게 된다 - 코너를 하나 더 봤다고 달라지는 실패가
+        # 아닌데도. 조용히 break하지 않고 사유를 남기는 것은, 재진입이 왜 안
+        # 일어났는지가 attempts==0과 구별되지 않으면 이 하위 프로젝트의 "전부
+        # 보인다"는 주장이 깨지기 때문이다.
+        if orch_status != "PASS":
+            skipped = {
+                "attempt": attempt,
+                "orchestration_status": orch_status,
+                "orchestration_failure_reason": prior,
+            }
+            state.log_event("corner_reentry_skipped", skipped)
+            reentry_skipped = skipped
+            result["failure_reason"] += (
+                f" - the corner set was not grown and the loop was not re-entered: "
+                f"the tuning loop itself returned {orch_status} "
+                f"({prior or 'no reason reported'}), so this run never converged; "
+                f"re-entry carries a converged deck forward and there is none"
+            )
+            break
+
+        failing_names = [
+            entry["name"] for entry in final_sweep.get("criteria", []) if not entry.get("pass")
+        ]
+        worst = final_sweep.get("worst_case_corners", {})
+        try:
+            grown, added = grown_with(corner_state.corner_set, final_sweep, failing_names)
+        except ValueError as exc:
+            # 넷리스트 적용 경로의 ValueError와 같은 취급 - 크래시가 아니라
+            # 깨끗한 FAIL이다. 판정 스윕이 이미 실패했으므로 status는 그대로
+            # 두고 사유만 덧붙인다.
+            reason = f"{type(exc).__name__}: {exc}"
+            state.log_event("corner_set_growth_failed", {"reason": reason})
+            result["failure_reason"] += f" - the corner set could not be grown: {reason}"
+            break
+
+        if not added:
+            # 여기서 두 사실이 갈린다. 실패한 기준에 **최악 코너가 붙어 있는가**로
+            # 나뉘며, 둘을 한 문장으로 뭉개면 데이터가 뒷받침하지 않는 구조적
+            # 주장을 하게 된다.
+            attributed = [(name, _corner_label(worst[name])) for name in failing_names if name in worst]
+            if attributed:
+                # **경로 불일치.** 실패한 코너가 전부 이미 중간 루프의 집합 안에
+                # 있다면, 두 실행 경로가 같은 덱의 같은 코너를 두고 서로 다른 말을
+                # 하고 있는 것이다. 재시도해 봐야 같은 정보로 같은 결과를 낼 뿐이니
+                # 무한 루프가 될 자리를 진단으로 바꾼다.
+                path_disagreement = {
+                    "criteria": [name for name, _ in attributed],
+                    "corners": [corner for _, corner in attributed],
+                }
+                state.log_event("corner_path_disagreement", path_disagreement)
+                pairs = ", ".join(f"{name} at {corner}" for name, corner in attributed)
+                result["failure_reason"] += (
+                    f" - path disagreement: every failing corner was already in the "
+                    f"mid-loop corner set ({pairs}), so the mid-loop and the verdict "
+                    f"sweep judged the same deck at the same corner differently; "
+                    f"retrying would re-run identical information"
+                )
+            else:
+                # 실패한 기준 어느 것에도 최악 코너가 붙지 않았다.
+                # worst_case_measurements는 어떤 코너에서도 측정값이 나오지 않은
+                # 기준을 worst_case_corners에서 **통째로 뺀다** - "회로가 어디서도
+                # 동작하지 않는다"는 경우다. 그것을 경로 불일치라고 적으면 두 실행
+                # 경로에 대해 데이터가 뒷받침하지 않는 주장을 하는 것이 된다
+                # (구조 쪽의 `OPAMP2STAGE drives vdd,vss`와 같은 모양의 오류).
+                # 재진입하지 않는 것은 양쪽 다 옳다 - 더할 코너가 없다는 사실은
+                # 같기 때문이다. 달라지는 것은 진단뿐이다.
+                unattributed_failures = {"criteria": failing_names}
+                state.log_event("corner_unattributed_failure", unattributed_failures)
+                result["failure_reason"] += (
+                    f" - no corner could be attributed to the failing criteria "
+                    f"({', '.join(failing_names) or 'none reported'}): the verdict "
+                    f"sweep produced no measurement for them at any corner, so there "
+                    f"is nothing to add to the mid-loop corner set"
+                )
+            break
+
+        corner_state.corner_set = grown
+        added_labels = [label(point) for point in added]
+        grown_labels.append(added_labels)
+        attempt += 1
+        state.log_event(
+            "corner_set_grown",
+            {
+                "attempt": attempt,
+                "added": added_labels,
+                "failing_criteria": failing_names,
+                "size": len(grown.corners),
+                # 이 재진입은 면적 게이트의 기준선을 다시 잡는다(루프 머리 주석).
+                # 재진입 순간에 이력에 남겨 두어야, 나중에 소자가 왜 원래 덱의
+                # 티어를 넘어 커져 있는지를 실행 로그에서 되짚을 수 있다.
+                "area_baseline_reanchored": True,
+                "area_baselines_so_far": attempt + 1,
+            },
+        )
+
+    # argmax 이동량은 **판정에 아무 영향을 주지 않는다** - 순수한 기록이다.
+    # 진입 스윕과 판정 스윕이 둘 다 있을 때만 잴 수 있으므로, 코너를 못 재는
+    # 스펙에서는 빈 기록이 된다.
+    drift = _no_drift()
+    if baseline_sweep is not None and final_sweep is not None:
+        drift = _argmax_drift(baseline_sweep, final_sweep)
+        state.log_event("corner_argmax_drift", drift)
+
+    result["corner_reduction"] = {
+        "active": reduction_active,
+        "reason": reduction_reason,
+        "final_set": [label(c) for c in corner_state.corner_set.corners] if corner_state else [],
+        "attempts": attempt,
+        # 면적 게이트가 이 실행에서 쓴 기준선의 **개수**. 1보다 크면 성장 한도가
+        # 실행 시작 덱이 아니라 중간 덱들에 대해 다시 잡혔다는 뜻이다(루프 머리
+        # 주석의 tier^(R+1)). 조용히 그러는 것이 이 저장소의 반복된 실패 모양이라
+        # 결과에 싣는다.
+        "area_baselines": attempt + 1,
+        "grown": grown_labels,
+        "path_disagreement": path_disagreement,
+        "unattributed_failures": unattributed_failures,
+        # 재진입을 건너뛴 **이유**. path_disagreement/unattributed_failures와
+        # 같은 부류의 사실이라 같은 자리에 싣는다 - attempts==0만 보고 "성장할
+        # 코너가 없었다"로 읽으면 틀린다.
+        "reentry_skipped": reentry_skipped,
+        "argmax_drift": drift,
+    }
 
     return result
 

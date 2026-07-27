@@ -125,6 +125,22 @@ def test_a_nan_nominal_value_yields_no_allowance_rather_than_zero():
     assert "iq" not in allowances
 
 
+def test_the_allowance_is_measured_from_whatever_reference_it_is_given():
+    # 같은 스윕에 대해, 기준점이 최악에 가까울수록 여유분이 작아야 한다.
+    # 기준점을 무시하고 nominal을 어딘가에서 다시 읽는 변형을 이 단언이 잡는다.
+    from analogcoder.judge_tools import corner_allowances
+
+    crit = [_c("gain", "g", ">=", 40.0)]
+    sweep = {"criteria": [{"name": "gain", "actual": 41.0}]}
+
+    from_nominal = corner_allowances({"g": 50.0}, sweep, crit)
+    from_reduced = corner_allowances({"g": 43.0}, sweep, crit)
+
+    assert from_nominal["gain"] == pytest.approx(9.0)
+    assert from_reduced["gain"] == pytest.approx(2.0)
+    assert from_reduced["gain"] < from_nominal["gain"]
+
+
 def test_ratio_allowances_are_the_fallback_when_corners_cannot_be_measured():
     from analogcoder.judge_tools import ratio_allowances
 

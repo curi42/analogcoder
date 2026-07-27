@@ -120,6 +120,37 @@ async def test_a_corner_sensitive_criterion_gets_less_room_than_the_ratio_guess(
     assert "m=4" in state.current_netlist_texts()["tb"]
 
 
+@pytest.mark.asyncio
+async def test_the_allowance_reference_is_the_measurement_the_search_actually_sees(tmp_path, monkeypatch):
+    # 탐색이 축소 집합 최악값을 보는데 여유분이 nominal 기준이면 같은 간격을
+    # 두 번 센다. run_optimization이 기준선 시뮬레이션의 측정값을 그대로
+    # 기준점으로 넘기는지 확인한다 - 그 측정값이 곧 탐색이 보는 값이다.
+    #
+    # corner_allowances를 스파이로 감싸 실제로 넘어오는 첫 인자를 잡는다.
+    # _run_simulation의 결과({"iq_ua": 235.0})와 다른 값(예: 별도로 다시 잰
+    # nominal, 또는 빈 dict)이 들어가는 변형을 이 단언이 잡는다.
+    import analogcoder.optimizer as optimizer_module
+
+    captured = {}
+    real_corner_allowances = optimizer_module.corner_allowances
+
+    def spy(reference, sweep, criteria):
+        captured["reference"] = reference
+        return real_corner_allowances(reference, sweep, criteria)
+
+    monkeypatch.setattr(optimizer_module, "corner_allowances", spy)
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+    agents.verify_corners = lambda texts: _sweep(True, 268.0)
+
+    await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert "reference" in captured
+    assert captured["reference"] == {"iq_ua": 235.0}
+
+
 TWO_CRITERIA = [
     Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0),
     Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0),

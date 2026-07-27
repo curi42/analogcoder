@@ -16,6 +16,8 @@ import os
 import tempfile
 import time
 
+import pytest
+
 from analogcoder.area import total_area
 from analogcoder.area_limits import index_baseline_components
 from analogcoder.netlist import (
@@ -154,6 +156,7 @@ def test_without_corners_the_ratio_guard_band_alone_admits_no_step(tmp_path):
     assert _knob_width(state.current_netlist_texts()[spec.canonical.name]) == "8"
 
 
+@pytest.mark.slow
 def test_the_optimizer_lowers_iq_while_every_criterion_still_passes(tmp_path):
     """The one place the whole phase meets real ngspice at once.
 

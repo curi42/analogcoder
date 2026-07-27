@@ -18,7 +18,12 @@ REFDES_PATTERN = TUNER_SCHEMA["properties"]["proposed_changes"]["items"]["proper
 
 
 def test_simulation_schema_accepts_valid_payload():
-    payload = {"measurements": {"gain_db": 20.0}, "status": "success", "warnings": []}
+    payload = {
+        "measurements": {"gain_db": 20.0},
+        "status": "success",
+        "warnings": [],
+        "control_block": ".control\nac dec 10 1 1meg\n.endc",
+    }
     jsonschema.validate(payload, SIMULATION_SCHEMA)
 
 
