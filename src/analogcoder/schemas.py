@@ -1,36 +1,3 @@
-ANALYZER_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "circuit_type": {"type": "string"},
-        "stages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "role": {"type": "string"},
-                    "components": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["name", "role", "components"],
-            },
-        },
-        "component_roles": {"type": "object", "additionalProperties": {"type": "string"}},
-        "tunable_params": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "refdes": {"type": "string"},
-                    "param": {"type": "string"},
-                    "role_in_circuit": {"type": "string"},
-                },
-                "required": ["refdes", "param", "role_in_circuit"],
-            },
-        },
-    },
-    "required": ["circuit_type", "stages", "component_roles", "tunable_params"],
-}
-
 SIMULATION_SCHEMA = {
     "type": "object",
     "properties": {

@@ -18,7 +18,7 @@ async def test_propose_tuning_includes_history_and_rejection_feedback_in_prompt(
     fake_backend = object()
     with patch("analogcoder.agents.tuner.run_agent", new=AsyncMock(return_value=fake_result)) as mock_run:
         result = await propose_tuning(
-            analysis={"circuit_type": "inverting amplifier"},
+            structure_view="circuit: inverting amplifier\n\nblocks:\n",
             judge_result={"overall_pass": False},
             history=[{"outer_iter": 1, "recommendation": "rollback"}],
             rejection_feedback="last proposal changed a fixed component",
@@ -31,6 +31,7 @@ async def test_propose_tuning_includes_history_and_rejection_feedback_in_prompt(
     assert "rollback" in kwargs["user_prompt"]
     assert "last proposal changed a fixed component" in kwargs["user_prompt"]
     assert "Rf vminus vout 10k" in kwargs["user_prompt"]
+    assert "circuit: inverting amplifier" in kwargs["user_prompt"]
     assert kwargs["backend"] is fake_backend
 
 
@@ -54,7 +55,7 @@ async def test_propose_topology_swap_calls_run_agent_with_available_topologies()
     ]
     with patch("analogcoder.agents.tuner.run_agent", new=AsyncMock(return_value=fake_result)) as mock_run:
         result = await propose_topology_swap(
-            analysis={"circuit_type": "two-stage op-amp"},
+            structure_view="circuit: two-stage op-amp\n\nblocks:\n",
             judge_result={"overall_pass": False},
             available_topologies=topologies,
             rejection_feedback=None,
@@ -79,7 +80,7 @@ async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
         new=AsyncMock(return_value={"topology_id": "miller_basic", "reasoning": "x", "confidence": 50}),
     ) as mock_run:
         await propose_topology_swap(
-            analysis={},
+            structure_view="",
             judge_result={},
             available_topologies=topologies,
             rejection_feedback="'bogus_id' is not an available untried topology.",

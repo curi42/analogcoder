@@ -11,7 +11,7 @@ async def test_verify_pre_calls_run_agent_with_proposal():
     fake_backend = object()
     with patch("analogcoder.agents.verifier.run_agent", new=AsyncMock(return_value=fake_result)) as mock_run:
         result = await verify_pre(
-            analysis={"circuit_type": "inverting amplifier"},
+            structure_view="circuit: inverting amplifier\n\nblocks:\n",
             judge_result={"overall_pass": False},
             proposal={"proposed_changes": [{"refdes": "Rf", "param": "value", "new_value": "11k"}]},
             netlist_text="Rin in vminus 1k\nRf vminus vout 10k\n.end\n",

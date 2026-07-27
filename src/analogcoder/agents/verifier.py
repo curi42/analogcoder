@@ -9,11 +9,11 @@ side effects on other criteria."""
 
 
 async def verify_pre(
-    analysis: dict, judge_result: dict, proposal: dict, netlist_text: str, backend: AgentBackend
+    structure_view: str, judge_result: dict, proposal: dict, netlist_text: str, backend: AgentBackend
 ) -> dict:
     user_prompt = (
         f"Current netlist:\n{netlist_text}\n"
-        f"Circuit analysis: {analysis}\n"
+        f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result before tuning: {judge_result}\n"
         f"Proposed changes: {proposal}\n"
         "Decide whether to approve this proposal before it is applied. A refdes "

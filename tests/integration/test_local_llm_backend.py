@@ -2,7 +2,6 @@ import os
 
 import pytest
 
-from analogcoder.agents.analyzer import analyze_netlist
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
@@ -47,22 +46,18 @@ async def test_inverting_amp_benchmark_with_local_llm_backend(tmp_path):
     async def judge_fn(measurements, spec_arg):
         return await judge_measurements(measurements, spec_arg.all_criteria, agent_backend)
 
-    async def analyze_fn(netlist_text):
-        return await analyze_netlist(netlist_text, agent_backend)
-
-    async def tune_fn(analysis, judge_result, history, rejection_feedback, netlist_text_arg):
+    async def tune_fn(structure_view, judge_result, history, rejection_feedback, netlist_text_arg):
         return await propose_tuning(
-            analysis, judge_result, history, rejection_feedback, netlist_text_arg, agent_backend
+            structure_view, judge_result, history, rejection_feedback, netlist_text_arg, agent_backend
         )
 
-    async def verify_pre_fn(analysis, judge_result, proposal, netlist_text_arg):
-        return await verify_pre(analysis, judge_result, proposal, netlist_text_arg, agent_backend)
+    async def verify_pre_fn(structure_view, judge_result, proposal, netlist_text_arg):
+        return await verify_pre(structure_view, judge_result, proposal, netlist_text_arg, agent_backend)
 
     async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
         return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backend)
 
     agents = OrchestratorAgents(
-        analyze=analyze_fn,
         simulate=simulate_fn,
         judge=judge_fn,
         tune=tune_fn,

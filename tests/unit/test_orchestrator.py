@@ -1,4 +1,5 @@
 # tests/unit/test_orchestrator.py
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -12,8 +13,16 @@ FAIL_JUDGE = {"overall_pass": False, "criteria": [{"name": "gain", "target": ">=
 
 
 def make_spec(*testbench_names):
-    testbenches = [SimpleNamespace(name=n, criteria=[]) for n in testbench_names]
-    return SimpleNamespace(testbenches=testbenches, canonical=testbenches[0])
+    # analyzer 제거 이후 오케스트레이터는 매 iteration derive_structure(...,
+    # spec.circuit_name)와 measurement_nets(tb.control_block)를 직접 호출하므로
+    # 가짜 spec도 이 필드들을 갖춰야 한다.
+    testbenches = [
+        SimpleNamespace(name=n, criteria=[], control_block=".control\n.endc\n")
+        for n in testbench_names
+    ]
+    return SimpleNamespace(
+        circuit_name="fake", testbenches=testbenches, canonical=testbenches[0]
+    )
 
 
 FAKE_SPEC = make_spec("ac_loop_gain")
@@ -51,29 +60,25 @@ AREA_TEST_NETLIST_WITH_SUBCKT = (
 
 
 def make_agents(**overrides):
-    async def default_analyze(netlist_text):
-        return {"circuit_type": "inverting amplifier"}
-
     async def default_simulate(netlist_texts, spec):
         return {"measurements": {"gain_db": 20.0}, "status": "success", "warnings": []}
 
     async def default_judge(measurements, spec):
         return PASS_JUDGE
 
-    async def default_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+    async def default_tune(structure_view, judge_result, history, rejection_feedback, netlist_text):
         return FAKE_PROPOSAL
 
-    async def default_verify_pre(analysis, judge_result, proposal, netlist_text):
+    async def default_verify_pre(structure_view, judge_result, proposal, netlist_text):
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
     async def default_verify_post(prev_judge, new_judge, applied_changes):
         return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "ok"}
 
-    async def default_propose_topology(analysis, judge_result, available_topologies, rejection_feedback):
+    async def default_propose_topology(structure_view, judge_result, available_topologies, rejection_feedback):
         return FAKE_TOPOLOGY_PROPOSAL
 
     defaults = dict(
-        analyze=default_analyze,
         simulate=default_simulate,
         judge=default_judge,
         tune=default_tune,
@@ -175,10 +180,13 @@ async def test_max_iterations_exhausted_fails_run(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_execution_error_before_loop_returns_fail_with_zero_iterations(tmp_path):
-    async def failing_analyze(netlist_text):
+    # analyzer가 사라진 이후로는 구조 파생이 결정론적 파이썬이라 예외를 낼 수
+    # 있는 첫 LLM 호출은 iteration 1의 agents.simulate다. 거기서 실패하면
+    # 이 iteration은 완결되지 못했으므로 iterations_used는 여전히 0이어야 한다.
+    async def failing_simulate(netlist_texts, spec):
         raise AgentExecutionError("boom")
 
-    agents = make_agents(analyze=failing_analyze)
+    agents = make_agents(simulate=failing_simulate)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
     result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
@@ -290,24 +298,24 @@ async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_topology_swap_rollback_restores_analysis_without_reanalyzing(tmp_path):
-    analyze_calls = {"count": 0}
-
-    async def counting_analyze(netlist_text):
-        analyze_calls["count"] += 1
-        return {"circuit_type": "amp", "call": analyze_calls["count"]}
-
+async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollback(tmp_path):
+    # A rollback of a swap resets consecutive_rollbacks to 0 (not to a
+    # "swap already tried" state), so parameter tuning resumes and can drive
+    # a second swap threshold later in the same run - and the second attempt
+    # must pick from the topologies not yet tried. This used to be entangled
+    # with an analyze-call-count assertion; that part no longer applies now
+    # that structure derivation isn't an LLM call, but the "can recur with a
+    # different topology" behavior itself still needs coverage.
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
         return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
 
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_once(analysis, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_once(structure_view, judge_result, available_topologies, rejection_feedback):
         propose_topology_calls["count"] += 1
         return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
 
     agents = make_agents(
-        analyze=counting_analyze,
         judge=lambda m, s: _async(FAIL_JUDGE),
         verify_post=verify_post_always_rollback,
         propose_topology=propose_topology_once,
@@ -318,7 +326,6 @@ async def test_topology_swap_rollback_restores_analysis_without_reanalyzing(tmp_
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
-    assert analyze_calls["count"] == 3
     assert propose_topology_calls["count"] == 2
 
 
@@ -515,12 +522,12 @@ async def test_multi_testbench_tuning_change_applied_to_every_testbench(tmp_path
 async def test_multi_testbench_tune_and_verify_pre_receive_only_canonical_text(tmp_path):
     seen_texts = {"tune": None, "verify_pre": None}
 
-    async def spying_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
-        seen_texts["tune"] = netlist_text
+    async def spying_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        seen_texts["tune"] = netlist_view
         return FAKE_PROPOSAL
 
-    async def spying_verify_pre(analysis, judge_result, proposal, netlist_text):
-        seen_texts["verify_pre"] = netlist_text
+    async def spying_verify_pre(structure_view, judge_result, proposal, netlist_view):
+        seen_texts["verify_pre"] = netlist_view
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
     agents = make_agents(
@@ -534,8 +541,13 @@ async def test_multi_testbench_tune_and_verify_pre_receive_only_canonical_text(t
     initial = {"ac_loop_gain": canonical_text, "psr_plus": "* other testbench text\n.end\n"}
     await run_orchestration(initial, MULTI_SPEC, state, agents)
 
-    assert seen_texts["tune"] == canonical_text
-    assert seen_texts["verify_pre"] == canonical_text
+    # tune/verify_pre now receive render_netlist's *view* of the canonical
+    # text (no subckts here, so nothing is folded - only the trailing
+    # newline is lost by the splitlines/join round trip), not the raw text
+    # verbatim, and never anything derived from the other testbench's text.
+    assert seen_texts["tune"] == canonical_text.rstrip("\n")
+    assert seen_texts["verify_pre"] == canonical_text.rstrip("\n")
+    assert "other testbench" not in seen_texts["tune"]
 
 
 @pytest.mark.asyncio
@@ -559,3 +571,74 @@ async def test_multi_testbench_rollback_restores_every_testbench(tmp_path):
     final_texts = state.current_netlist_texts()
     assert final_texts["ac_loop_gain"] == "* ac original\nRf vminus vout 10k\n.end\n"
     assert final_texts["psr_plus"] == "* psr original\nRf vminus vout 10k\n.end\n"
+
+
+def test_the_orchestrator_no_longer_calls_an_analyzer_agent():
+    # analyzer는 결정론적 파생으로 대체됐다. dataclass에 필드가 남아 있으면
+    # cli.py가 조용히 예전 배선을 유지할 수 있다.
+    import dataclasses
+
+    assert "analyze" not in {f.name for f in dataclasses.fields(OrchestratorAgents)}
+
+
+@pytest.mark.asyncio
+async def test_the_tuner_receives_a_rendered_structure_not_an_llm_analysis(tmp_path):
+    seen = {}
+    judge_calls = {"count": 0}
+
+    async def judge_fails_then_passes(measurements, spec):
+        judge_calls["count"] += 1
+        return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
+
+    async def capturing_tune(structure_view, judge_result, history, feedback, netlist_view):
+        seen["structure"] = structure_view
+        seen["netlist"] = netlist_view
+        return FAKE_PROPOSAL
+
+    agents = make_agents(tune=capturing_tune, judge=judge_fails_then_passes)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert isinstance(seen["structure"], str)
+    assert "circuit: fake" in seen["structure"]
+    assert "Rf" in seen["netlist"]
+
+
+@pytest.mark.asyncio
+async def test_an_inapplicable_param_is_rejected_before_verify_pre_is_called(tmp_path):
+    verify_pre_calls = {"count": 0}
+
+    async def counting_verify_pre(structure_view, judge_result, proposal, netlist_view):
+        verify_pre_calls["count"] += 1
+        return {"approved": True, "concerns": [], "feedback": ""}
+
+    async def bad_tune(structure_view, judge_result, history, feedback, netlist_view):
+        return {"proposed_changes": [{"refdes": "Rf", "param": "width",
+                                      "old_value": "10k", "new_value": "15k"}]}
+
+    agents = make_agents(
+        tune=bad_tune,
+        verify_pre=counting_verify_pre,
+        judge=lambda m, s: _async(FAIL_JUDGE),
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert verify_pre_calls["count"] == 0
+    events = [json.loads(line) for line in open(state.history_path)]
+    assert any(e["step"] == "param_check" and e["approved"] is False for e in events)
+
+
+@pytest.mark.asyncio
+async def test_the_focus_decision_is_logged_so_an_elision_is_never_invisible(tmp_path):
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    focus_events = [e for e in events if e["step"] == "focus"]
+    assert focus_events
+    assert focus_events[0]["blocks"] == ["AMP"]
