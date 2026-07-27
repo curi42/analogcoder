@@ -10,7 +10,10 @@ netlist file path and a target spec's control block (analysis + measure directiv
 Call the run_simulation tool to execute the simulation. If it reports a
 convergence_failure, you may retry by adjusting the .options portion of the control
 block (e.g. gmin stepping, method=gear), up to 2 extra attempts, before reporting
-the final result via the structured output schema. Never modify component values."""
+the final result via the structured output schema. Never modify component values.
+Always report the control block you actually used in your final structured
+output's control_block field - the original if you did not change it, or the
+adjusted one if you retried. Other simulations reuse it verbatim."""
 
 
 def _build_simulation_tool(sim_backend: SimulatorBackend, netlist_path: str) -> ToolSpec:

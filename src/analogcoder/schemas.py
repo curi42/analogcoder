@@ -4,8 +4,13 @@ SIMULATION_SCHEMA = {
         "measurements": {"type": "object", "additionalProperties": {"type": "number"}},
         "status": {"enum": ["success", "convergence_failure", "error"]},
         "warnings": {"type": "array", "items": {"type": "string"}},
+        # Corner simulations inherit this and run it directly. If a
+        # convergence retry adjusted .options, this must be the adjusted
+        # control block, not the one the caller originally supplied - that's
+        # the whole point of reporting it back.
+        "control_block": {"type": "string"},
     },
-    "required": ["measurements", "status", "warnings"],
+    "required": ["measurements", "status", "warnings", "control_block"],
 }
 
 JUDGE_SCHEMA = {
