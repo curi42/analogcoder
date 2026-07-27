@@ -7,7 +7,12 @@
 원칙 - 모든 `.subckt` 헤더는 남기되 초점 밖 블록은 본문만 접는다. 초점이
 틀려도 대가는 "관련성 저하"이지 "정답이 안 보임"이 아니다."""
 
-from analogcoder.netlist import logical_lines, resolve_change_scopes, split_tokens
+from analogcoder.netlist import (
+    is_top_level_stimulus,
+    logical_lines,
+    resolve_change_scopes,
+    split_tokens,
+)
 from analogcoder.signal_path import SignalPaths
 from analogcoder.structure import NetlistStructure
 
@@ -145,13 +150,22 @@ def render_structure(
             lines.append(
                 "  patterns: " + "  ".join(f"{p.kind}({','.join(p.members)})" for p in matched)
             )
+        # "BUF_P.X6.W"로 붙여 쓰면 점 하나가 스코프 구분자와 param 구분자를
+        # 겸하게 되어, 스키마의 두 칸(refdes/param)이 뷰에서는 한 덩어리로
+        # 보인다 - CLAUDE.md가 실제 실패로 기록한 "M1.W를 refdes 칸에 썼다"를
+        # 뷰 자신이 가르치는 셈이라 두 칸을 이름 붙여 떼어 놓는다.
         addresses = [
-            f"{e.refdes}.{e.param}"
+            f"refdes={e.refdes} param={e.param}"
             for e in structure.tunable
             if (e.refdes.rpartition(".")[0] or None) == path
         ]
         if addresses:
-            lines.append("  tunable: " + " ".join(addresses) + "   (값은 넷리스트 원문에서 읽을 것)")
+            lines.append("  tunable: " + "  ".join(addresses) + "   (값은 넷리스트 원문에서 읽을 것)")
+        # 최상위 독립 소스는 주소록에서 빠진다(structure.py). 조용히 빼면
+        # "왜 Vin이 없지"를 아무도 알 수 없으므로, 빠졌다는 사실을 낸다.
+        stimulus = [f.refdes for f in block.components if is_top_level_stimulus(path, f.ctype)]
+        if stimulus:
+            lines.append("  stimulus (not tunable): " + " ".join(stimulus))
 
     # 인스턴스-정의 포트 수 불일치는 유일하게 "모르면 침묵"의 예외다 - 넷리스트
     # 버그이므로 초점과 무관하게 항상 드러낸다.

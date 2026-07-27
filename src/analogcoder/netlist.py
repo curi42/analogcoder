@@ -51,6 +51,23 @@ def netlist_scale(text: str) -> float:
         return 1.0
 
 
+# 최상위 스코프의 독립 소스는 구조상 테스트벤치의 자극/전원이지 DUT가 아니다.
+# 이 판정에는 PDK 지식도 이름 규칙도 필요 없다 - refdes 접두 V/I는 SPICE의
+# 보장이고, "최상위에 놓였다"는 것은 파서가 아는 사실이다. 서브회로 안의
+# 소스는 DUT의 일부(내부 바이어스)일 수 있으므로 여기 해당하지 않는다.
+INDEPENDENT_SOURCE_CTYPES = frozenset({"V", "I"})
+
+
+def is_top_level_stimulus(scope: str | None, ctype: str) -> bool:
+    """최상위 스코프에 직접 놓인 독립 소스(V/I)인가.
+
+    한 판정을 세 곳이 공유한다: structure.py(주소록에서 제외),
+    structure_view.py("stimulus (not tunable)" 줄), check_stimulus_untouched
+    (적용 거부). 셋이 갈라지면 "광고하지 않는데 적용은 된다" 또는 그 반대가
+    생긴다."""
+    return scope is None and ctype in INDEPENDENT_SOURCE_CTYPES
+
+
 @dataclass
 class Component:
     refdes: str
@@ -449,6 +466,48 @@ def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str
             f"{scoped_refdes!r}: {param!r} is not a parameter of this component. It writes "
             f"{available}; other {key!r} instances in this netlist write {peer_names or ['<none>']}. "
             f"Adding an unknown name changes the netlist text without changing the device."
+        )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
+def check_stimulus_untouched(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """결정론적 사전 게이트: 최상위 테스트벤치의 독립 소스(V/I)를 건드리는가.
+
+    다른 게이트들과 같은 자리(튜닝 재시도 루프, verify_pre 앞)에서 돌고, 같은
+    방식으로 재시도 가능한 피드백을 낸다.
+
+    리뷰어가 실측한 시나리오를 막는다: `Vin in 0 AC 1`을 `AC 100`으로 바꾸면
+    `gain_db = vdb(vout)`가 20dB에서 60dB로 뛴다. 면적 게이트는 V/I 티어가
+    없어 통과시키고, refdes/param 게이트는 적용 가능성만 보므로 역시
+    통과시키며, judge는 모든 기준이 좋아졌으니 PASS를 내고 verify_post는
+    롤백할 이유를 못 찾는다 - **회로를 하나도 안 고친 채로 PASS가 난다.**
+
+    structure.py가 같은 판정으로 이 소자들을 주소록에서 빼지만, 주소록은
+    LLM에게 하는 권고일 뿐이라 약한 모델이 그대로 제안할 수 있다. 결과가
+    "안 고친 회로에 PASS"인 이상 권고만으로는 부족하다.
+
+    이름(vdd/vss/gnd)으로 알아보지 않는다 - 그건 추측이다. refdes 접두 V/I는
+    SPICE의 보장이고 "최상위에 놓였다"는 것은 파서가 아는 사실이므로, 이
+    판정은 정확하다. 서브회로 안의 소스는 DUT의 내부 바이어스일 수 있으므로
+    건드리지 않는다."""
+    parsed = parse_netlist(text)
+    top_sources = {
+        c.refdes for c in parsed.top_components if is_top_level_stimulus(None, c.ctype)
+    }
+
+    violations: list[str] = []
+    for change in changes:
+        scope, refdes = split_scoped_refdes(change["refdes"])
+        if scope is not None or refdes not in top_sources:
+            continue
+        violations.append(
+            f"{change['refdes']!r} is a top-level independent source - it is the testbench "
+            f"stimulus or supply, not part of the circuit under test. Changing it changes "
+            f"what is measured rather than the design. Propose a change to a component "
+            f"inside the circuit instead."
         )
 
     if violations:

@@ -9,6 +9,7 @@ from analogcoder.netlist import (
     apply_topology_swap,
     check_param_applicability,
     check_refdes_resolution,
+    check_stimulus_untouched,
     parse_netlist,
     resolve_change_scopes,
 )
@@ -244,6 +245,25 @@ async def run_orchestration(
                 )
                 if not param_ok:
                     rejection_feedback = param_feedback
+                    continue
+
+                # 최상위 자극원/전원을 건드리는 제안은 "회로를 안 고친 채
+                # 측정만 바꾸는" 제안이다 - 앞의 세 게이트 어느 것도 그것을
+                # 막지 않고, judge는 모든 기준이 좋아졌으니 통과시킨다.
+                stimulus_ok, stimulus_feedback = check_stimulus_untouched(
+                    netlist_texts[canonical_name], proposal["proposed_changes"]
+                )
+                state.log_event(
+                    "stimulus_check",
+                    {
+                        "outer_iter": outer_iter,
+                        "retry": retry,
+                        "approved": stimulus_ok,
+                        "feedback": stimulus_feedback,
+                    },
+                )
+                if not stimulus_ok:
+                    rejection_feedback = stimulus_feedback
                     continue
 
                 misses = focus_misses(focus, proposal["proposed_changes"], netlist_texts[canonical_name])

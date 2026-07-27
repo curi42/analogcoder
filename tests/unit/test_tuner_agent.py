@@ -41,6 +41,34 @@ def test_the_tuner_prompt_explains_full_path_addressing():
     assert "OUTER.INNER" in TUNER_SYSTEM_PROMPT
 
 
+def test_the_tuner_prompt_does_not_turn_the_layered_view_back_into_a_filter():
+    # 계층화된 상세도를 고른 이유가 "초점 판정이 틀려도 정답 노브가 사라지지
+    # 않는다"인데, "tunable에 있는 것만 제안하라"는 문장 하나가 그 설계를
+    # 통째로 무효화한다 - tunable 블록은 초점 블록에만 붙기 때문이다.
+    # bandgap의 vbg0_min/max가 정확히 그 경우다: 초점은 {BUF_P}인데 정답
+    # 노브(XRl1/XRl2)는 접힌 BANDGAP 안에 있다.
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert "Only propose changes to parameters listed" not in TUNER_SYSTEM_PROMPT
+    assert "folded" in TUNER_SYSTEM_PROMPT
+    assert "any component in the netlist" in TUNER_SYSTEM_PROMPT
+
+
+def test_the_tuner_prompt_tells_the_model_not_to_edit_the_testbench_stimulus():
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert "stimulus (not tunable)" in TUNER_SYSTEM_PROMPT
+
+
+def test_the_tuner_prompt_spells_the_two_schema_fields_apart():
+    # 주소를 "BUF_P.X6.W"로 렌더링하면 점 하나가 스코프 구분자이자 param
+    # 구분자가 되어, CLAUDE.md가 실제 실패로 기록한 "M1.W를 refdes 칸에
+    # 쓴다"를 뷰 자신이 유도한다.
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert "refdes=" in TUNER_SYSTEM_PROMPT and "param=" in TUNER_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_propose_topology_swap_calls_run_agent_with_available_topologies():
     fake_result = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}

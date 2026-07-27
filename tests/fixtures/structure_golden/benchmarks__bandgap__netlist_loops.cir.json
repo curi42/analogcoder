@@ -3626,30 +3626,6 @@
     [
       "TRIMAMP.Xt",
       "W"
-    ],
-    [
-      "Vdd",
-      "value"
-    ],
-    [
-      "Vs0",
-      "value"
-    ],
-    [
-      "Vs1",
-      "value"
-    ],
-    [
-      "Vsc",
-      "value"
-    ],
-    [
-      "Vss",
-      "value"
-    ],
-    [
-      "Vst",
-      "value"
     ]
   ]
 }

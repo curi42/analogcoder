@@ -75,8 +75,8 @@ against a fixed schema (`schemas.py`).
   "component_roles": {"a": "b"}, ...}`, and across runs on one bandgap
   netlist it produced 93, 26 and 1 component roles. The tuner succeeds by
   reading `netlist_text`, which it still receives. `structure.py` derives
-  flat per-scope facts (inventory, device classes, the complete tunable
-  `(refdes, param)` index, per-net terminal roles); `signal_path.py` maps
+  flat per-scope facts (inventory, device classes, the tunable
+  `(refdes, param)` index); `signal_path.py` maps
   ports to nets across hierarchy and labels each net's drivers and sensors
   by *definition* name, since a definition is what the tuner can address;
   `patterns.py` matches differential pairs, current mirrors, cascodes and
@@ -90,13 +90,32 @@ against a fixed schema (`schemas.py`).
   `control_block.py`, which resolves a measurement name to the nets its
   `meas`/`let` lines observe) and renders every block at one line, focused
   blocks in full, and the netlist itself with unfocused `.subckt` bodies
-  folded away. `check_area_growth`, `check_refdes_resolution` and
-  `check_param_applicability` always read the whole deck, so a wrong focus
-  costs relevance, never correctness. A proposal naming a block outside
-  focus is logged as `focus_miss` - that is the signal the focus rule missed
-  something. Benchmark decks are small enough that this path barely fires;
-  it exists for real production decks of hundreds of lines, where the raw
-  netlist no longer fits a context-limited model.
+  folded away. `check_area_growth`, `check_refdes_resolution`,
+  `check_param_applicability` and `check_stimulus_untouched` always read the
+  whole deck, so a wrong focus costs relevance, never correctness. A proposal
+  naming a block outside focus is logged as `focus_miss` - that is the signal
+  the focus rule missed something. Benchmark decks are small enough that this
+  path barely fires; it exists for real production decks of hundreds of lines,
+  where the raw netlist no longer fits a context-limited model.
+  **The tuner prompt must never restate the focus as a restriction.** Saying
+  "only propose changes to parameters listed under tunable" turns the layered
+  view back into a filter and deletes the answer whenever focus is wrong -
+  e.g. `bandgap`'s `vbg0_min`/`vbg0_max` focus on `{BUF_P}` while the only fix
+  (`XRl1`/`XRl2`) lives in the folded `BANDGAP` block. The prompt says the
+  `tunable` line is what is *visible*, and that a folded block may still be
+  named by its full path.
+- **The testbench's own sources are not tunable, and it takes a gate to say
+  so.** A top-level `V`/`I` is stimulus or supply by construction (an exact
+  test - refdes prefix plus top-level scope - never a name heuristic like
+  "vdd"). `structure.py` omits them from the tunable index, `structure_view.py`
+  renders them under `stimulus (not tunable):` so the omission is visible, and
+  `netlist.check_stimulus_untouched` rejects a change to one. All three share
+  `netlist.is_top_level_stimulus`. The gate is not redundant with the address
+  book: found by review, `{"refdes":"Vin","param":"value","new_value":"100"}`
+  on `inverting_amp` passes area, refdes and param checks, rewrites the deck to
+  `Vin in 0 AC 100`, lifts `gain_db` from ~20 dB to ~60 dB, and reports **PASS
+  on an unmodified circuit** - `verify_post` has no reason to roll back a change
+  that improved every criterion.
 - **A tuning `param` must be able to apply.** `check_param_applicability`
   (in `netlist.py`, run right after `check_refdes_resolution`) rejects
   `param="value"` when the positional token is a model or subckt name, and

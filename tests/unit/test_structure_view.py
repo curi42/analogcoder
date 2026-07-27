@@ -62,9 +62,21 @@ def test_the_structure_view_lists_every_block_but_details_only_the_focused_ones(
 
     text = render_structure(s, paths, [], {"DRIVER"})
 
-    assert "SPARE" in text          # 레벨 0으로는 반드시 보인다
-    assert "DRIVER.M1.W" in text    # 초점 블록의 주소록
-    assert "SPARE.M9.W" not in text
+    assert "SPARE" in text                              # 레벨 0으로는 반드시 보인다
+    assert "refdes=DRIVER.M1 param=W" in text           # 초점 블록의 주소록
+    assert "refdes=SPARE.M9" not in text
+
+
+def test_the_tunable_address_keeps_refdes_and_param_in_separate_fields():
+    # "BUF_P.X6.W"처럼 렌더링하면 점 하나가 스코프 구분자와 param 구분자를
+    # 겸하게 되어, 스키마가 요구하는 두 칸(refdes/param)의 경계가 뷰에서
+    # 사라진다 - CLAUDE.md가 이미 실제 실패로 기록한 혼동("M1.W를 refdes
+    # 칸에 썼다")을 뷰 자신이 가르치는 셈이다.
+    s, paths = _built()
+
+    text = render_structure(s, paths, [], {"DRIVER"})
+
+    assert "DRIVER.M1.W" not in text
 
 
 def test_the_structure_view_never_repeats_a_value():

@@ -3559,14 +3559,6 @@
     [
       "TRIMAMP.Xt",
       "W"
-    ],
-    [
-      "Vdd",
-      "value"
-    ],
-    [
-      "Vss",
-      "value"
     ]
   ]
 }

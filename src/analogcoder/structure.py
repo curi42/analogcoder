@@ -1,6 +1,11 @@
 from dataclasses import dataclass, field
 
-from analogcoder.netlist import Component, parse_netlist, parse_spice_value
+from analogcoder.netlist import (
+    Component,
+    is_top_level_stimulus,
+    parse_netlist,
+    parse_spice_value,
+)
 
 # 모델 이름에서 디바이스 클래스를 읽는다. area_limits.py의 _SKY130_CTYPE_MARKERS와
 # 같은 방식이되, 여기서는 티어가 아니라 단자 의미를 위해 쓴다. 표에 없는
@@ -163,10 +168,11 @@ def derive_structure(netlist_text: str, circuit_name: str) -> NetlistStructure:
     for scope, components in scoped:
         facts = [_fact(scope, component) for component in components]
         for fact, component in zip(facts, components):
-            for name in sorted(fact.params):
-                tunable.append(TunableEntry(refdes=fact.refdes, param=name))
-            if _is_numeric_value(component.value):
-                tunable.append(TunableEntry(refdes=fact.refdes, param="value"))
+            if not is_top_level_stimulus(scope, component.ctype):
+                for name in sorted(fact.params):
+                    tunable.append(TunableEntry(refdes=fact.refdes, param=name))
+                if _is_numeric_value(component.value):
+                    tunable.append(TunableEntry(refdes=fact.refdes, param="value"))
             for terminal, net in zip(fact.terminals, fact.nodes):
                 net_terminals.setdefault(_qualify(scope, net), []).append(terminal)
 

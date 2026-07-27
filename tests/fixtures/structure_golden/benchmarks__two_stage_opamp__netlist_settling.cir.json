@@ -697,14 +697,6 @@
     [
       "OPAMP2STAGE.Xp4",
       "W"
-    ],
-    [
-      "Vdd",
-      "value"
-    ],
-    [
-      "Vss",
-      "value"
     ]
   ]
 }
