@@ -32,6 +32,19 @@ class OptimizeSpec:
 
 
 @dataclass
+class CornerReduction:
+    """중간 반복의 코너 축소 설정.
+
+    enabled=False면 오늘 동작(nominal 한 점)이 그대로다. pvt_corners가 선언되지
+    않은 스펙에서는 축소할 것이 없으므로 이 블록이 있어도 아무 일도 하지
+    않으며, 그 사실은 cli가 로그로 남긴다."""
+
+    enabled: bool = True
+    retry_budget: int = 2
+    probe: bool = True
+
+
+@dataclass
 class Testbench:
     name: str
     netlist_path: str
@@ -46,6 +59,7 @@ class TargetSpec:
     testbenches: list[Testbench]
     pvt_corners: PVTCorners | None = None
     optimize: OptimizeSpec | None = None
+    corner_reduction: CornerReduction | None = None
 
     @property
     def canonical(self) -> Testbench:
@@ -91,6 +105,17 @@ def _load_optimize(raw: dict) -> OptimizeSpec | None:
     )
 
 
+def _load_corner_reduction(raw: dict) -> CornerReduction | None:
+    block = raw.get("corner_reduction")
+    if block is None:
+        return None
+    return CornerReduction(
+        enabled=bool(block.get("enabled", True)),
+        retry_budget=int(block.get("retry_budget", 2)),
+        probe=bool(block.get("probe", True)),
+    )
+
+
 def load_spec(path: str) -> TargetSpec:
     with open(path) as f:
         raw = yaml.safe_load(f)
@@ -107,4 +132,4 @@ def load_spec(path: str) -> TargetSpec:
         for tb in raw["testbenches"]
     ]
 
-    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw), optimize=_load_optimize(raw))
+    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw), optimize=_load_optimize(raw), corner_reduction=_load_corner_reduction(raw))

@@ -173,3 +173,70 @@ def test_an_optimize_block_is_loaded_with_its_three_fields(tmp_path):
     assert opt.objective == "iq_ua"
     assert opt.area_budget == 1.10
     assert opt.guard_band == 0.2
+
+
+def test_a_spec_can_declare_corner_reduction(tmp_path):
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: true
+  retry_budget: 3
+  probe: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is True
+    assert spec.corner_reduction.retry_budget == 3
+    assert spec.corner_reduction.probe is False
+
+
+def test_corner_reduction_defaults_are_on_with_a_budget_of_two(tmp_path):
+    # 블록만 있고 필드가 없으면 기본값. 기본을 끄는 쪽으로 두면 스펙에 블록을
+    # 적어 두고도 아무 일이 안 일어난다 - 이 저장소가 반복해서 당한 모양이다.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction: {}
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is True
+    assert spec.corner_reduction.retry_budget == 2
+    assert spec.corner_reduction.probe is True
+
+
+def test_a_spec_without_the_block_has_no_corner_reduction(tmp_path):
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    assert load_spec(str(path)).corner_reduction is None
