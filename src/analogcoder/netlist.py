@@ -359,6 +359,91 @@ def check_refdes_resolution(text: str, changes: list[dict]) -> tuple[bool, str |
     return True, None
 
 
+def _numeric_or_none(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        return parse_spice_value(raw)
+    except ValueError:
+        return None
+
+
+def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str | None]:
+    """결정론적 사전 게이트: 제안된 param이 그 소자에 실제로 적용될 수 있는가.
+
+    오케스트레이터의 튜닝 재시도 루프에서 check_refdes_resolution 직후,
+    verify_pre 직전에 돈다 - 에어리어/refdes 게이트와 같은 자리이자 같은
+    철학이다. 적용 불가능한 제안은 LLM 호출을 쓰지 않는다.
+
+    잡는 결함은 실측된 것이다: param="width"인 제안이 refdes 게이트를 통과해
+    `X6 ... L=1 W=20 width=55`를 만들고, 넷리스트는 바뀌었는데 소자는 그대로라
+    시뮬레이션에 변화가 없고 verify_post가 롤백한다 - 아무도 볼 수 없는
+    이유로 iteration 하나를 태운다.
+
+    줄에 없는 param을 무조건 거부하지는 않는다. bandgap의 Xq1에는 m=이
+    없지만 같은 모델의 Xq8이 m=8을 쓰고, m은 이 회로의 이미터 면적비를 정하는
+    유일한 노브다. 동료 인스턴스가 쓰는 이름은 정당한 것으로 본다 - 하드코딩된
+    PDK 표 없이 덱만 보고 판정하므로 정확하고, width 같은 헛소리는 여전히
+    걸린다.
+
+    refdes가 아예 매칭되지 않는 경우는 이 게이트가 말하지 않는다 - 그건
+    check_refdes_resolution의 몫이고, 이 게이트 바로 앞에서 이미 걸렀어야
+    한다. 같은 결함을 두 게이트가 다른 말로 보고하면 하나만 보고하는 것보다
+    나쁘다."""
+    parsed = parse_netlist(text)
+    everything = list(parsed.top_components) + [
+        c for subckt in parsed.subckts.values() for c in subckt.components
+    ]
+    by_refdes: dict[str, Component] = {}
+    for component in everything:
+        by_refdes[component.refdes] = component
+        if component.scope:
+            by_refdes[f"{component.scope}.{component.refdes}"] = component
+
+    # 같은 모델명(없으면 같은 ctype)을 쓰는 소자들이 실제로 쓰는 param 이름.
+    peers: dict[str, set[str]] = {}
+    for component in everything:
+        key = component.value if component.value else component.ctype
+        peers.setdefault(key, set()).update(component.params)
+
+    violations: list[str] = []
+    for change in changes:
+        scoped_refdes = change["refdes"]
+        param = change["param"]
+        component = by_refdes.get(scoped_refdes)
+        if component is None:
+            # refdes 게이트가 앞서 걸렀어야 한다. 여기서는 판단하지 않는다.
+            continue
+
+        if param == "value":
+            if _numeric_or_none(component.value) is None:
+                violations.append(
+                    f"{scoped_refdes!r}: param=\"value\" would overwrite the positional token "
+                    f"{component.value!r}, which is not a number - it is this component's model "
+                    f"or subckt name. Change a named parameter instead."
+                )
+            continue
+
+        if param in component.params:
+            continue
+
+        key = component.value if component.value else component.ctype
+        if param in peers.get(key, set()):
+            continue
+
+        available = sorted(component.params) or ["<none>"]
+        peer_names = sorted(peers.get(key, set()) - set(component.params))
+        violations.append(
+            f"{scoped_refdes!r}: {param!r} is not a parameter of this component. It writes "
+            f"{available}; other {key!r} instances in this netlist write {peer_names or ['<none>']}. "
+            f"Adding an unknown name changes the netlist text without changing the device."
+        )
+
+    if violations:
+        return False, "; ".join(violations)
+    return True, None
+
+
 def _rewrite_line(lines: list[str], index: int, mutate) -> bool:
     """물리 줄 하나를 토큰 단위로 고쳐 쓴다. mutate(tokens)가 False를 돌려주면
     그 줄에는 대상이 없다는 뜻이므로 아무것도 바꾸지 않는다.
