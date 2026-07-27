@@ -1449,13 +1449,28 @@ async def test_a_run_that_never_re_enters_uses_exactly_one_area_baseline(tmp_pat
     run_dir = str(tmp_path / "runs" / "c15")
     passing = _sweep({"gain": _wc("fs", 41.0)})
 
+    orch_calls: list = []
     with (
         patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
-        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
     ):
         result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
 
     assert result["corner_reduction"]["area_baselines"] == 1
+    # **통과한 판정 스윕에서 루프를 끊는다는 것 자체를 명시적으로 못박는다.**
+    # `if final_sweep["overall_pass"]: break`가 안전상 중요한 줄인데, 지금까지는
+    # area_baselines가 1이라는 **간접** 단언 하나에만 걸려 있었다. 그 break가
+    # 사라지면 통과한 설계를 두고 재진입이 돌기 시작한다.
+    #
+    # **호출 수만으로는 부족하다는 것을 실제로 확인했다.** break를 지워 보면
+    # 뒤이어 실패 기준 목록이 비어 `grown_with`가 아무것도 더하지 못하고
+    # "코너를 귀속할 수 없다" 갈래로 빠져 나가므로, orch 호출 수는 여전히 1이다.
+    # 바뀌는 것은 **status**다 - 통과한 스윕을 두고 실행이 FAIL로 끝난다.
+    # 그래서 두 단언이 함께 있어야 이 줄이 진짜로 못박힌다.
+    assert len(orch_calls) == 1
+    assert result["status"] == "PASS"
+    assert result.get("failure_reason") is None
 
 
 @pytest.mark.asyncio
@@ -1564,3 +1579,224 @@ def test_a_coordinate_less_entry_is_labelled_as_the_deck():
     assert cli._corner_label(
         {"process": "ss", "voltage": 1.62, "temperature": -40.0, "value": 1.2}
     ) == "ss/1.62/-40.0"
+
+
+# --- 최종 브랜치 리뷰: 재진입 게이트와 시도별 결과 기록 -------------------------
+
+
+def _fail_result(run_dir: str, reason: str) -> dict:
+    """수렴하지 **못하고** 끝난 오케스트레이션. 재진입 테스트가 지금까지 전부
+    _pass_result만 먹여 왔기 때문에 이 모양은 어느 테스트도 지나간 적이 없다."""
+    return {**_pass_result(run_dir), "status": "FAIL", "failure_reason": reason}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "max iterations reached",
+        "tuning proposal repeatedly rejected",
+        "agent execution error: rate limited",
+    ],
+)
+async def test_a_tuning_loop_that_did_not_converge_is_never_re_entered(tmp_path, reason):
+    # 설계가 말하는 재진입의 전제는 "수렴된 덱"이다. 10 반복을 소진한 덱도,
+    # 일부러 토폴로지 교체까지 건너뛰며 하드 FAIL로 만든 "제안이 반복 거부됨"도,
+    # 거의 확실히 재발하는 에이전트 실행 오류도 그것이 아니다. 게이트가 없으면
+    # 셋 다 예산이 새로 채워진 완전한 튜닝 루프를 최대 retry_budget번 더 돌린다.
+    #
+    # **어떤 변형을 잡는가.** `if orch_status != "PASS": break`를 지우는 변형
+    # (= 이 수정 이전의 코드)을 잡는다. 그러면 orch 호출이 1이 아니라 3이 되고
+    # attempts가 2가 된다.
+    run_dir = str(tmp_path / "runs" / "c20")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    fails = [_sweep({"gain": _wc(p, 12.0)}, failing=["gain"]) for p in ("ff", "ss", "sf")]
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, *fails], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_fail_result(run_dir, reason)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 1
+    assert result["corner_reduction"]["attempts"] == 0
+    assert result["status"] == "FAIL"
+    # 조용히 break하지 않는다 - attempts==0만으로는 "더할 코너가 없었다"와
+    # 구별되지 않는다.
+    skipped = result["corner_reduction"]["reentry_skipped"]
+    assert skipped["orchestration_status"] == "FAIL"
+    assert skipped["orchestration_failure_reason"] == reason
+    assert _one_history_event(run_dir, "corner_reentry_skipped")["attempt"] == 0
+    assert "never converged" in result["failure_reason"]
+    assert reason in result["failure_reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_converged_loop_still_re_enters(tmp_path):
+    # 반대 방향 고정. 게이트를 `!= "PASS"`가 아니라 무조건 break로 두는 변형은
+    # 재진입을 통째로 죽이는데, 위 테스트만 있으면 그것이 살아남는다.
+    run_dir = str(tmp_path / "runs" / "c21")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict_fail = _sweep({"gain": _wc("ff", 12.0)}, failing=["gain"])
+    verdict_pass = _sweep({"gain": _wc("ff", 45.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail, verdict_pass], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 2
+    assert result["corner_reduction"]["reentry_skipped"] is None
+
+
+@pytest.mark.asyncio
+async def test_every_orchestration_attempt_is_logged_with_its_own_outcome(tmp_path):
+    # cli는 result["failure_reason"]을 스윕 사유로 덮고, _final_result는
+    # history.jsonl에 아무것도 쓰지 않는다. 그래서 재진입한 실행에서 앞선 시도의
+    # status/iterations_used/failure_reason은 **어디에도** 남지 않았다.
+    #
+    # **어떤 변형을 잡는가.** log_event("orchestration_attempt", ...) 호출을
+    # 지우는 변형(= 이 수정 이전)을 잡는다.
+    run_dir = str(tmp_path / "runs" / "c22")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    fails = [_sweep({"gain": _wc(p, 12.0)}, failing=["gain"]) for p in ("ff", "ss", "sf")]
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, *fails], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    attempts = _history_events(run_dir, "orchestration_attempt")
+    assert [e["attempt"] for e in attempts] == [0, 1, 2]
+    assert all(e["status"] == "PASS" for e in attempts)
+    assert all(e["iterations_used"] == 1 for e in attempts)
+    assert result["corner_reduction"]["attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_reason_is_appended_to_the_loop_s_own_reason(tmp_path):
+    # 덮어쓰기는 이 브랜치보다 오래됐지만, 이 브랜치 전에는 사유 하나를 버렸고
+    # 지금은 최대 세 개를 버린다. 오케스트레이션이 보고한 사유와 스윕 사유는
+    # 서로 다른 사실이고 둘 다 필요하다.
+    #
+    # 축소가 **꺼진** 스펙으로 잰다. 켜져 있으면 재진입 건너뛰기 문장이
+    # 오케스트레이션 사유를 한 번 더 싣게 되어, 덮어쓰기 변형이 그 문장에
+    # 가려 살아남는다(실제로 그렇게 확인했다).
+    run_dir = str(tmp_path / "runs" / "c23")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep({"gain": _wc("ff", 12.0)}, failing=["gain"])
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence(
+                  [_fail_result(run_dir, "max iterations reached")], orch_calls)),
+    ):
+        result = await _run(
+            _corner_args(tmp_path, CORNERS_BUT_REDUCTION_DISABLED_SPEC_YAML, run_dir)
+        )
+
+    assert "max iterations reached" in result["failure_reason"]
+    assert "final PVT sweep failed" in result["failure_reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_passing_loop_reports_only_the_sweep_reason(tmp_path):
+    # 오케스트레이션이 사유를 남기지 않았을 때 앞에 "None; "이 붙으면 안 된다.
+    run_dir = str(tmp_path / "runs" / "c24")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep({"gain": _wc("fs", 12.0)}, failing=["gain"])   # fs는 이미 집합 안
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert result["failure_reason"].startswith("final PVT sweep failed:")
+
+
+@pytest.mark.asyncio
+async def test_the_probe_rotation_is_frozen_while_the_optimizer_searches(tmp_path):
+    """최적화가 도는 동안 상자는 얼어 있고, 끝나면 다시 녹는다.
+
+    상자를 공유하는 것은 의도다(선택 집합이 갈라지면 탐색이 메인 루프가 배운
+    코너를 못 본 채 여유분을 요구한다). 얼리는 것은 **회전뿐**이다: 탐색 도중의
+    승격은 서로 다른 코너 집합에서 잰 목적값을 비교하게 만들고, 그 뒤의 모든
+    단계를 원인이 아닌 knob을 지목하는 사유로 거부시킨다.
+
+    **어떤 변형을 잡는가.** cli가 `probe_frozen`을 세우지 않는 변형(관측값이
+    False가 된다)과, `finally`로 되돌리지 않는 변형(재진입한 메인 루프가 탐침을
+    영영 잃는다).
+    """
+    run_dir = str(tmp_path / "runs" / "c25")
+    passing = _sweep({"gain": _wc("fs", 41.0)})
+    captured: dict = {}
+    observed: list = []
+
+    def fake_build(agent_simulate_fn, sim_backend, state, corner_state, log_event):
+        captured["corner_state"] = corner_state
+        return AsyncMock()
+
+    async def fake_optimization(netlist_texts, spec, state, agents):
+        observed.append(captured["corner_state"].probe_frozen)
+        return _optimization_result()
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.build_corner_simulate", new=fake_build),
+        patch("analogcoder.cli.run_optimization", new=fake_optimization),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert observed == [True]
+    assert captured["corner_state"].probe_frozen is False
+
+
+@pytest.mark.asyncio
+async def test_the_box_is_unfrozen_even_when_the_optimizer_raises(tmp_path):
+    # run_optimization은 자기 예외를 삼키지만 이 배선이 그것에 기대면 안 된다 -
+    # try/finally를 그냥 try로 바꾸는 변형을 이 단언이 잡는다.
+    run_dir = str(tmp_path / "runs" / "c26")
+    passing = _sweep({"gain": _wc("fs", 41.0)})
+    captured: dict = {}
+
+    def fake_build(agent_simulate_fn, sim_backend, state, corner_state, log_event):
+        captured["corner_state"] = corner_state
+        return AsyncMock()
+
+    async def exploding_optimization(netlist_texts, spec, state, agents):
+        raise RuntimeError("boom")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.build_corner_simulate", new=fake_build),
+        patch("analogcoder.cli.run_optimization", new=exploding_optimization),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        with pytest.raises(RuntimeError):
+            await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert captured["corner_state"].probe_frozen is False

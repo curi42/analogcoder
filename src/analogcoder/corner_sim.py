@@ -18,6 +18,23 @@ class CornerState:
     필요하고, cli.py의 재진입 루프는 같은 상자를 계속 들고 있어야 한다."""
 
     corner_set: CornerSet
+    # **최적화 탐색이 도는 동안 회전을 멈춘다.**
+    #
+    # 최적화기는 이 상자를 메인 루프와 **일부러** 공유한다(선택 집합이 갈라지면
+    # 탐색이 메인 루프가 배운 코너를 못 본 채 여유분을 요구한다). 그런데 회전
+    # 탐침까지 함께 도니, `_search` 안의 매 시뮬레이션이 탐침을 하나 돌리고
+    # 실패하면 코너를 **승격**시킨다. 그러면 `records[version]["objective"]`와
+    # `best_objective`가 **서로 다른 코너 집합에서 잰 값**끼리 비교된다:
+    # 승격은 최악값 목적을 단조롭게 악화시키므로 그 뒤의 모든 단계가
+    # "objective가 현재 최선보다 낮지 않다"는 사유로 거부되고, 그 사유는
+    # 원인이 승격인데도 knob 이름을 지목한다. `allowances`도 승격 이전
+    # 집합에서 계산된 값이다.
+    #
+    # 실행이 위험해지지는 않는다(확인과 이분 탐색은 전체 스윕을 쓰고, 이
+    # 단계에는 FAIL 결말이 없다). 다만 최적화 단계의 수확이 틀린 사유와 함께
+    # 조용히 0이 될 수 있다. 그래서 **선택 집합은 계속 공유하되 회전만**
+    # 얼린다 - 탐색이 처음부터 끝까지 같은 기준점 위에서 돈다.
+    probe_frozen: bool = False
 
 
 def _probe_enabled(spec) -> bool:
@@ -103,7 +120,10 @@ def build_corner_simulate(
         # (그것은 판정 경로라 삼킬 수 없다), optimizer._run_simulation이 그
         # 예외를 삼키고 계속 돈다 - 그때 회전이 커밋되지 않으면 상자는 조용히
         # 같은 탐침 코너에 영원히 머문다.
-        probe_point, cs = next_probe(cs) if _probe_enabled(spec) else (None, cs)
+        # 상자의 얼림 상태는 **호출 시점에** 읽는다 - corner_set과 같다.
+        # 최적화 단계가 도는 동안에는 탐침도 승격도 없다(CornerState.probe_frozen).
+        probing = _probe_enabled(spec) and not corner_state.probe_frozen
+        probe_point, cs = next_probe(cs) if probing else (None, cs)
 
         status = "success"
         by_testbench: dict = {}

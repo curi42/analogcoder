@@ -281,6 +281,7 @@ async def _run(args) -> dict:
                     "grown": [],
                     "path_disagreement": None,
                     "unattributed_failures": None,
+                    "reentry_skipped": None,
                     "argmax_drift": _no_drift(),
                 },
             }
@@ -342,6 +343,7 @@ async def _run(args) -> dict:
     grown_labels: list[list[str]] = []
     path_disagreement: dict | None = None
     unattributed_failures: dict | None = None
+    reentry_skipped: dict | None = None
     final_sweep: dict | None = None
 
     while True:
@@ -355,28 +357,60 @@ async def _run(args) -> dict:
             agents,
         )
 
+        # **이 시도의 오케스트레이션 결과는 여기서만 온전하다.** 아래에서
+        # result["status"]는 FAIL로 덮이고 failure_reason에는 스윕 사유가
+        # 덧붙는다. _final_result는 history.jsonl에 아무것도 쓰지 않으므로,
+        # 여기서 남기지 않으면 attempt 0의 "agent execution error: rate limited"는
+        # **어디에도** 흔적이 남지 않는다 - 재진입이 붙으면서 버려지는 결과가
+        # 하나에서 최대 세 개로 늘었다.
+        orch_status = result["status"]
+        state.log_event(
+            "orchestration_attempt",
+            {
+                "attempt": attempt,
+                "status": orch_status,
+                "iterations_used": result.get("iterations_used"),
+                "failure_reason": result.get("failure_reason"),
+            },
+        )
+
         # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
         # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된
         # 넷리스트를 확정하는 역할을 그대로 하기 때문이다. 뒤에 두면 아무도
         # 확인하지 않은 넷리스트로 실행이 끝난다.
         if result["status"] == "PASS":
-            optimization = await run_optimization(
-                # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인 루프가
-                # 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면, run_optimization이
-                # 인자와 state가 어긋난 것을 보고 원본을 새 버전으로 밀어 넣어
-                # (optimizer.py:534) 튜닝 결과를 통째로 되돌린다 - 그리고 그 덱이
-                # 확정되고 보고된다.
-                state.current_netlist_texts(),
-                spec,
-                state,
-                OptimizerAgents(
-                    propose=propose_candidates_fn,
-                    simulate=simulate_for_run,
-                    # 코너를 잴 수단이 없으면 None을 준다. run_optimization은 그때
-                    # 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
-                    verify_corners=verify_corners_fn if corner_capable else None,
-                ),
-            )
+            # **탐색이 도는 동안 탐침 회전을 얼린다.** 상자는 계속 공유한다 -
+            # 선택 집합이 갈라지면 탐색이 메인 루프가 배운 코너를 못 본 채
+            # 여유분을 요구한다. 얼리는 것은 회전뿐이고, 이유는
+            # CornerState.probe_frozen의 주석에 있다: 탐색 도중의 승격은
+            # 서로 다른 코너 집합에서 잰 목적값을 비교하게 만들고, 그 뒤의 모든
+            # 단계를 원인이 아닌 knob을 지목하는 사유로 거부시킨다.
+            #
+            # finally로 되돌리는 것은 재진입 때문이다 - 다음 시도의 메인 루프는
+            # 다시 탐침을 돌려야 한다.
+            if corner_state is not None:
+                corner_state.probe_frozen = True
+            try:
+                optimization = await run_optimization(
+                    # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인
+                    # 루프가 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면,
+                    # run_optimization이 인자와 state가 어긋난 것을 보고 원본을 새
+                    # 버전으로 밀어 넣어 (optimizer.py:534) 튜닝 결과를 통째로
+                    # 되돌린다 - 그리고 그 덱이 확정되고 보고된다.
+                    state.current_netlist_texts(),
+                    spec,
+                    state,
+                    OptimizerAgents(
+                        propose=propose_candidates_fn,
+                        simulate=simulate_for_run,
+                        # 코너를 잴 수단이 없으면 None을 준다. run_optimization은
+                        # 그때 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
+                        verify_corners=verify_corners_fn if corner_capable else None,
+                    ),
+                )
+            finally:
+                if corner_state is not None:
+                    corner_state.probe_frozen = False
             result["optimization"] = optimization
             # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로는 그것이
             # 착지한 버전이어야 한다.
@@ -428,9 +462,40 @@ async def _run(args) -> dict:
         # 경우 최종 스윕은 돌지 않았으므로 사유도 그렇게 적는다 - 돌지 않은
         # 스윕이 실패했다고 적으면 history.jsonl과 대조하는 사람이 헤맨다.
         result["status"] = "FAIL"
-        result["failure_reason"] = f"{sweep_label} failed: {final_sweep['summary']}"
+        # **덧붙인다 - 덮지 않는다.** 여기 이미 들어 있는 것은 run_orchestration이
+        # 보고한 사유이고(예: "max iterations reached"), 그것이 곧 이 시도가
+        # 어떻게 끝났는지다. 덮어쓰면 리포트를 읽는 사람에게 남는 것은 스윕이
+        # 실패했다는 사실뿐이고, 그 앞에서 루프가 왜 멈췄는지는 사라진다.
+        sweep_reason = f"{sweep_label} failed: {final_sweep['summary']}"
+        prior = result.get("failure_reason")
+        result["failure_reason"] = f"{prior}; {sweep_reason}" if prior else sweep_reason
 
         if not reduction_active or attempt >= retry_budget:
+            break
+
+        # **재진입은 수렴된 덱을 전제로 한다.** 설계 문서가 말하는 "수렴된 덱"은
+        # PASS로 끝난 덱이다. 10 반복을 소진하고 멈춘 덱은 그것이 아니고,
+        # "tuning proposal repeatedly rejected"는 이 저장소가 **일부러** 토폴로지
+        # 교체까지 건너뛰며 하드 FAIL로 만든 결말이며, "agent execution error"는
+        # 거의 확실히 재발한다. 셋 다 예산이 새로 채워진 완전한 튜닝 루프를 최대
+        # retry_budget번 더 돌게 된다 - 코너를 하나 더 봤다고 달라지는 실패가
+        # 아닌데도. 조용히 break하지 않고 사유를 남기는 것은, 재진입이 왜 안
+        # 일어났는지가 attempts==0과 구별되지 않으면 이 하위 프로젝트의 "전부
+        # 보인다"는 주장이 깨지기 때문이다.
+        if orch_status != "PASS":
+            skipped = {
+                "attempt": attempt,
+                "orchestration_status": orch_status,
+                "orchestration_failure_reason": prior,
+            }
+            state.log_event("corner_reentry_skipped", skipped)
+            reentry_skipped = skipped
+            result["failure_reason"] += (
+                f" - the corner set was not grown and the loop was not re-entered: "
+                f"the tuning loop itself returned {orch_status} "
+                f"({prior or 'no reason reported'}), so this run never converged; "
+                f"re-entry carries a converged deck forward and there is none"
+            )
             break
 
         failing_names = [
@@ -529,6 +594,10 @@ async def _run(args) -> dict:
         "grown": grown_labels,
         "path_disagreement": path_disagreement,
         "unattributed_failures": unattributed_failures,
+        # 재진입을 건너뛴 **이유**. path_disagreement/unattributed_failures와
+        # 같은 부류의 사실이라 같은 자리에 싣는다 - attempts==0만 보고 "성장할
+        # 코너가 없었다"로 읽으면 틀린다.
+        "reentry_skipped": reentry_skipped,
         "argmax_drift": drift,
     }
 

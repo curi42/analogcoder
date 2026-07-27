@@ -584,3 +584,59 @@ async def test_a_corner_run_gets_the_corner_rendered_deck_and_nominal_the_deck_i
     assert ".temp 125.0" in corner_call["deck"]
     assert "Vdd vdd 0 DC 1.98" in corner_call["deck"]
     assert corner_call["netlist_path"] != nominal_call["netlist_path"]
+
+
+# --- 최적화 동안의 회전 얼림 ---------------------------------------------------
+
+
+async def test_a_frozen_box_runs_no_probe_and_promotes_nothing(tmp_path):
+    """`probe_frozen`이면 탐침도, 승격도, 회전도 없다.
+
+    최적화기는 이 상자를 메인 루프와 **일부러** 공유하므로, 얼리지 않으면
+    `_search` 안의 매 시뮬레이션이 탐침을 하나 돌리고 실패 시 코너를 승격시킨다.
+    그러면 `records`의 목적값들이 서로 다른 코너 집합에서 잰 값이 되고, 승격이
+    최악값 목적을 악화시킨 뒤의 모든 단계가 원인이 아닌 knob을 지목하는 사유로
+    거부된다.
+
+    **어떤 변형을 잡는가.** `_probe_enabled(spec) and not corner_state.probe_frozen`
+    에서 얼림 항을 지우는 변형. 그러면 백엔드 호출이 1이 아니라 2가 되고 FS가
+    선택 집합으로 올라간다.
+    """
+    state = _state(tmp_path)
+    # 얼리지 않았다면 실패했을 탐침(g=10.0 < 40)을 준비해 둔다.
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)), probe_frozen=True)
+    backend = _backend([{"g": 50.0}, {"g": 10.0}])
+    events: list = []
+    sim = build_corner_simulate(
+        _agent(), backend, state, holder, lambda step, data: events.append((step, data))
+    )
+
+    result = await sim({"tb": DECK}, _spec_ge_40())
+
+    assert len(backend.calls) == 1                    # nominal 하나뿐
+    assert result["probe"] is None
+    assert FS not in holder.corner_set.corners
+    assert holder.corner_set.probe_index == 0         # 회전도 진행되지 않는다
+    assert [step for step, _ in events] == []
+
+
+async def test_unfreezing_the_box_resumes_the_rotation(tmp_path):
+    # 반대 방향 고정. probe_frozen을 항상 True로 박는 변형(= 탐침을 통째로
+    # 죽이는 것)은 위 테스트만으로는 살아남는다.
+    state = _state(tmp_path)
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)), probe_frozen=True)
+    backend = _backend([{"g": 50.0}, {"g": 50.0}, {"g": 10.0}])
+    sim = build_corner_simulate(_agent(), backend, state, holder, _noop_log)
+
+    await sim({"tb": DECK}, _spec_ge_40())
+    holder.probe_frozen = False
+    await sim({"tb": DECK}, _spec_ge_40())
+
+    assert len(backend.calls) == 3                    # nominal, nominal + 탐침
+    assert FS in holder.corner_set.corners
+
+
+def test_a_box_is_not_frozen_by_default():
+    # 기본값이 True로 뒤집히면 탐침이 프로덕션에서 통째로 사라지는데, 그것은
+    # 이 저장소가 반복해서 당한 "조용히 아무것도 안 함"이다.
+    assert CornerState(CornerSet(corners=(NOMINAL,), probe_order=())).probe_frozen is False

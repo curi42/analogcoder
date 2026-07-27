@@ -131,3 +131,95 @@ def test_write_report_md_reports_an_optimization_that_could_not_run(tmp_path):
         content = f.read()
 
     assert "does not match the schema" in content
+
+
+CORNER_REDUCTION_RESULT = {
+    **SAMPLE_RESULT,
+    "corner_reduction": {
+        "active": True,
+        "reason": None,
+        "final_set": ["(deck)", "ss/1.62/27.0", "ff/1.98/27.0"],
+        "attempts": 2,
+        "area_baselines": 3,
+        "grown": [["ff/1.98/27.0"]],
+        "path_disagreement": None,
+        "unattributed_failures": None,
+        "reentry_skipped": None,
+        "argmax_drift": {"criteria": [], "moved_count": 0, "total": 0},
+    },
+}
+
+
+def test_write_report_md_reports_the_corner_reduction_phase(tmp_path):
+    """`area_baselines > 1`은 사람이 result.json을 열지 않고 알아야 하는 사실이다.
+
+    재진입할 때마다 면적 게이트의 기준선이 다시 잡히므로, 한 소자가 원래 덱에
+    대해 허용받는 성장은 tier^(area_baselines)가 된다. 그 사실은 PASS로 끝난
+    실행에서 리포트에 **한 줄도** 나타나지 않았다 - 이 저장소에서 면적 게이트가
+    조용히 안 걸린 것이 네 번이고 네 번 다 로그에 안 보였다.
+
+    **어떤 변형을 잡는가.** `_corner_reduction_lines`를 통째로 지우거나
+    `write_report_md`에서 그 호출을 빼는 변형.
+    """
+    path = write_report_md(str(tmp_path), CORNER_REDUCTION_RESULT)
+    with open(path) as f:
+        content = f.read()
+    assert "## Corner reduction" in content
+    assert "**Active:** True" in content
+    assert "3 corners" in content          # final_set 크기
+    assert "**Re-entry attempts:** 2" in content
+    assert "**Area-gate baselines:** 3" in content
+    assert "re-anchored" in content        # 1보다 크다는 사실의 의미
+
+
+def test_write_report_md_says_nothing_about_corner_reduction_when_the_key_is_absent(tmp_path):
+    # corner_reduction 키가 없는 결과(예: 씨앗 실패 이전의 옛 실행, 다른 호출부)
+    # 에 빈 섹션을 그리면 "돌았는데 아무것도 못 했다"로 읽힌다.
+    path = write_report_md(str(tmp_path), SAMPLE_RESULT)
+    with open(path) as f:
+        content = f.read()
+    assert "Corner reduction" not in content
+
+
+def test_write_report_md_reports_an_inactive_corner_reduction_with_its_reason(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "active": False,
+            "reason": "the spec declares no pvt_corners",
+            "final_set": [],
+            "attempts": 0,
+            "area_baselines": 1,
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "**Active:** False" in content
+    assert "no pvt_corners" in content
+
+
+def test_write_report_md_surfaces_a_path_disagreement_and_a_skipped_re_entry(tmp_path):
+    # 둘 다 "왜 재진입이 더 안 일어났는가"를 설명하는 사실이고, attempts 숫자만
+    # 보고는 구별되지 않는다.
+    result = {
+        **SAMPLE_FAIL_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "path_disagreement": {"criteria": ["gain"], "corners": ["fs/1.98/125.0"]},
+            "reentry_skipped": {
+                "attempt": 0,
+                "orchestration_status": "FAIL",
+                "orchestration_failure_reason": "max iterations reached",
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "Path disagreement" in content
+    assert "gain" in content
+    assert "fs/1.98/125.0" in content
+    assert "Re-entry skipped" in content
+    assert "max iterations reached" in content
