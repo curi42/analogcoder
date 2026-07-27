@@ -96,3 +96,59 @@ def test_derivation_is_deterministic():
     # analyzer는 같은 넷리스트에 대해 roles를 93/26/1개로 냈다. 이 테스트가
     # 그것과 대비되는 지점이다.
     assert derive_structure(TWO_BLOCK, "demo") == derive_structure(TWO_BLOCK, "demo")
+
+
+def test_an_m_prefixed_mos_cap_is_not_classified_as_a_cap_by_its_model_name():
+    # 실전 덱에서 발견된 실제 거짓 양성: MOSFET을 MOS 커패시터로 쓰는 관용구가
+    # refdes는 M이지만 모델명에 "cap"이 박혀 있다(TN33_DEP_CAP). refdes 접두는
+    # SPICE의 보장이고 모델명은 관례일 뿐이므로 접두가 이긴다 - ctype이 이미
+    # 단자 의미를 정했으면 모델명 서브스트링을 보지 않는다(area_limits.
+    # _classify_ctype과 같은 규율). 이 소자를 "cap"으로 분류하면 밀러 매처의
+    # 커패시터 목록과 MOS 목록에 동시에 들어가 자기 자신과 짝지어진다.
+    deck = (
+        "* t\n"
+        "M3 nzero vss nzero vss NCH_DEP_CAP w=1.5e-6 l=5.55e-6\n"
+        ".end\n"
+    )
+
+    m3 = derive_structure(deck, "t").blocks[None].components[0]
+
+    assert m3.ctype == "M"
+    assert m3.device_class != "cap"
+    assert [(t.name, t.role) for t in m3.terminals] == [
+        ("d", "drive"), ("g", "sense"), ("s", "drive"), ("b", "bulk"),
+    ]
+
+
+def test_an_m_prefixed_device_is_not_classified_as_a_resistor_by_its_model_name():
+    # "res" 마커에 대해서도 같은 모양. refdes 접두 M이 이긴다.
+    deck = (
+        "* t\n"
+        "M0 na nb nc nd NCH_RES_DUMMY w=1e-6 l=1e-6\n"
+        ".end\n"
+    )
+
+    m0 = derive_structure(deck, "t").blocks[None].components[0]
+
+    assert m0.ctype == "M"
+    assert m0.device_class != "res"
+    assert [(t.name, t.role) for t in m0.terminals] == [
+        ("d", "drive"), ("g", "sense"), ("s", "drive"), ("b", "bulk"),
+    ]
+
+
+def test_an_x_prefixed_sky130_cap_still_classifies_by_its_model_name():
+    # 이 수정이 마커 자체를 없애는 게 아니라는 것을 확인한다: X 접두는
+    # positional value가 PDK 프리미티브 이름이라 ctype 자체가 단자 의미를
+    # 정하지 못하므로(area_limits._classify_ctype과 동일 이유), 이 경우에는
+    # 여전히 모델명을 봐야 한다.
+    deck = (
+        "* t\n"
+        "Xc a b sky130_fd_pr__cap_mim_m3_1 w=10e-6 l=10e-6 m=1\n"
+        ".end\n"
+    )
+
+    xc = derive_structure(deck, "t").blocks[None].components[0]
+
+    assert xc.device_class == "cap"
+    assert [(t.name, t.role) for t in xc.terminals] == [("1", "drive"), ("2", "drive")]

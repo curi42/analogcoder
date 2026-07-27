@@ -11,6 +11,17 @@ class PatternMatch:
     members: tuple[str, ...]
     detail: str
 
+    def __post_init__(self) -> None:
+        # 한 소자가 자기 자신과 짝지어지는 매치는 어떤 매처가 어떻게
+        # 만들어내든 사실일 수 없다 - 분류 버그(모델명이 ctype과 다른
+        # 소자 클래스를 시사) 하나를 고치는 것으로는 다음 매처가 같은
+        # 실수를 반복하지 않는다는 보장이 안 된다. 여기서 생성 자체를
+        # 막아 개별 매처의 조건 목록에 의존하지 않게 한다.
+        if len(set(self.members)) != len(self.members):
+            raise ValueError(
+                f"PatternMatch members must not repeat a refdes: {self.members} ({self.kind})"
+            )
+
 
 def _is_mos(fact: ComponentFact) -> bool:
     return len(fact.terminals) == 4 and [t.name for t in fact.terminals] == ["d", "g", "s", "b"]

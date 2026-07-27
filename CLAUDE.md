@@ -119,6 +119,34 @@ against a fixed schema (`schemas.py`).
   and leaves the naming to the LLM, which has the netlist. It is the only one
   of the three modules that can be wrong, which is why it is separate. See
   `docs/superpowers/specs/2026-07-27-netlist-structure-derivation-design.md`.
+  **A model-name substring marker must lose to the refdes prefix.**
+  `structure._classify_model` used to substring-match a component's model
+  name against `_MODEL_CLASS_MARKERS` (`nfet`/`pfet`/`pnp`/`npn`/`res`/`cap`)
+  unconditionally, while `area_limits._classify_ctype` already only consults
+  those markers when `ctype == "X"` — an X-prefixed instance's positional
+  value is a PDK primitive name, the one case where the prefix itself doesn't
+  fix the device class. That inconsistency was flagged as a low-risk gap
+  ("could false-positive on a model name containing res/cap") on the grounds
+  that no benchmark deck exercised it. The first real production deck did,
+  three times: a MOSFET used as a MOS capacitor is written `m3 nzero vssi
+  nzero vssi TN33_DEP_CAP …` — refdes `m`, model name containing `cap`. Old
+  `structure.py` read the model name and set `device_class="cap"`, which put
+  the device in both `patterns.py`'s cap list and its MOS list, and the
+  Miller matcher paired `m3` with itself. Fixed by mirroring
+  `_classify_ctype`'s rule exactly: `_classify_model` now returns `None`
+  unless `ctype == "X"`, so a refdes prefix that already fixes the device
+  class (`M`/`Q`/`R`/`C`/`L`/`D`) is never overridden by what the model name
+  merely suggests. Confirmed zero change across all ten benchmark decks
+  (every non-null `device_class` in every golden fixture is already on an
+  `X`-prefixed component). Independently, `patterns.PatternMatch.__post_init__`
+  now rejects any match whose `members` repeats a refdes — a structural
+  invariant so a future matcher can't reopen the same self-pairing shape by
+  a different route. This is the mirror image of the bandgap case already
+  documented above ("every capacitor is an nfet or pfet MOS cap"): there, a
+  sky130 MOS cap's model name contains `pfet`, so it is invisible to a
+  hypothetical cap-name matcher; here, a MOS cap's model name contains `cap`,
+  so it was wrongly visible to one. Same substring rule, opposite naming
+  convention, opposite failure.
 - **The prompt is focused; the gates never are.** `structure_view.py` picks
   the blocks reachable from the failing criteria's nets (via
   `control_block.py`, which resolves a measurement name to the nets its
