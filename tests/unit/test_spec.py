@@ -240,3 +240,100 @@ testbenches:
         threshold: 40
 """)
     assert load_spec(str(path)).corner_reduction is None
+
+
+def test_corner_reduction_explicit_enabled_false_produces_false(tmp_path):
+    # Catches: loader ignoring enabled: false or silently coercing it.
+    # Without strict boolean validation, bool("false") returns True.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.enabled is False
+
+
+def test_corner_reduction_explicit_probe_false_produces_false(tmp_path):
+    # Catches: loader ignoring probe: false or silently coercing it.
+    # Without strict boolean validation, bool("false") returns True.
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  probe: false
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    spec = load_spec(str(path))
+    assert spec.corner_reduction.probe is False
+
+
+def test_corner_reduction_raises_on_quoted_false_string(tmp_path):
+    # Catches: bool("false") silently coercing to True instead of raising.
+    # Authors coming from other config formats may write "false" as a quoted string.
+    # int() and float() fail loud on bad input; bool fields must too.
+    import pytest
+
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  enabled: "false"
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    with pytest.raises(ValueError, match=r"corner_reduction\.enabled must be a boolean"):
+        load_spec(str(path))
+
+
+def test_corner_reduction_raises_on_integer_value_for_boolean(tmp_path):
+    # Catches: bool(1) silently coercing to True, or bool(0) to False.
+    # Some YAML authors might write 1/0 instead of true/false.
+    import pytest
+
+    path = tmp_path / "spec.yaml"
+    path.write_text("""
+circuit_name: t
+corner_reduction:
+  probe: 1
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    with pytest.raises(ValueError, match=r"corner_reduction\.probe must be a boolean"):
+        load_spec(str(path))

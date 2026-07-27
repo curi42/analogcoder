@@ -109,10 +109,21 @@ def _load_corner_reduction(raw: dict) -> CornerReduction | None:
     block = raw.get("corner_reduction")
     if block is None:
         return None
+
+    # Helper to validate and extract booleans — fail loud like int/float do.
+    # bool("false") returns True (non-empty string), silently inverting explicit false.
+    def get_bool(key: str, default: bool) -> bool:
+        value = block.get(key, default)
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"corner_reduction.{key} must be a boolean, not {type(value).__name__}: {value!r}"
+            )
+        return value
+
     return CornerReduction(
-        enabled=bool(block.get("enabled", True)),
+        enabled=get_bool("enabled", True),
         retry_budget=int(block.get("retry_budget", 2)),
-        probe=bool(block.get("probe", True)),
+        probe=get_bool("probe", True),
     )
 
 
