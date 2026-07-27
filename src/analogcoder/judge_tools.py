@@ -92,9 +92,16 @@ def guard_band_violations(
 
 
 def corner_allowances(
-    nominal: dict, sweep: dict, criteria: list[Criterion]
+    reference: dict, sweep: dict, criteria: list[Criterion]
 ) -> dict[str, float]:
-    """기준별로 코너가 nominal에서 밀어내는 실측 거리.
+    """기준별로 코너가 **기준점**에서 밀어내는 실측 거리.
+
+    기준점은 탐색이 실제로 보는 측정값이다. 탐색이 nominal 한 점을 보면
+    nominal이고, 축소 코너 집합의 최악값을 보면 그 최악값이다. 둘을 섞으면
+    같은 간격을 두 번 세어 가드가 과도하게 조여진다 - 축소 집합은 이미
+    최악에 가깝기 때문이다. `reference`가 무엇인지는 이 함수가 정하지
+    않는다: 호출부가 탐색이 실제로 측정하는 값을 넘기는 한 이 함수는 그
+    거리를 그대로 잰다.
 
     균일한 비율을 추측하는 대신, 이미 값을 치른 코너 스윕에서 읽는다. 코너에
     둔감한 기준은 여유를 더 쓸 수 있고 민감한 기준은 자동으로 보수적이 된다 -
@@ -111,10 +118,10 @@ def corner_allowances(
         worst = entry.get("actual")
         if criterion is None or worst is None:
             continue
-        nominal_value = nominal.get(criterion.measurement)
-        if nominal_value is None or math.isnan(worst) or math.isnan(nominal_value):
+        reference_value = reference.get(criterion.measurement)
+        if reference_value is None or math.isnan(worst) or math.isnan(reference_value):
             continue
-        allowances[criterion.name] = abs(worst - nominal_value)
+        allowances[criterion.name] = abs(worst - reference_value)
 
     return allowances
 

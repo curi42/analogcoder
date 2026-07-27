@@ -739,8 +739,17 @@ async def _optimize(
                 corner_failure=entry_failure, area_coverage=area_coverage,
             )
         # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
-        # 읽는다. nominal은 measurement로, 스윕은 기준 이름으로 색인되므로
+        # 읽는다. reference는 measurement로, 스윕은 기준 이름으로 색인되므로
         # 둘을 잇는 criteria 목록이 반드시 필요하다 - 인자가 셋인 이유다.
+        #
+        # **기준점은 baseline_measurements, 즉 탐색(_search)이 실제로 보는
+        # 값이다 - 별도로 다시 잰 nominal이 아니다.** 오늘은 baseline이 곧
+        # nominal 한 점이라 이 구분이 안 보이지만, 탐색이 축소 코너 집합의
+        # 최악값을 보도록 바뀌는 순간(코너-인식 simulate가 배선되는 이후
+        # 작업) baseline_measurements 자체가 그 최악값이 되고, 이 자리는
+        # 코드를 안 고쳐도 저절로 옳아진다. 여기서 nominal을 따로 다시 재서
+        # 넘기면 탐색이 이미 최악에 가까운 점을 보는데 가드가 같은 간격을
+        # 두 번 세게 된다 - 이 파일이 고치는 실패 모양이 정확히 그것이다.
         #
         # **비율 여유분 위에 덮어쓴다.** corner_allowances는 스윕이나 nominal이
         # 값을 주지 않은 기준을 의도적으로 **뺀다**(0을 넣으면 "코너가 이 기준을
