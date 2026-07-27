@@ -586,13 +586,18 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     belt-and-braces다: 주소 지정 게이트는 canonical 원문만 보므로, 다른
     테스트벤치 덱에서만 모호한 refdes는 apply_changes의 ValueError로 나온다.
 
+    OSError까지 잡는 것은 이 단계가 **파일을 되읽기** 때문이다. _texts_at은
+    버전 덱을 디스크에서 다시 읽고, 그 open이 실패하면 위 두 예외 중 어느
+    것도 아니다. run_orchestration은 되읽기를 하지 않아 이 짝이 없다 -
+    여기서만 필요한 세 번째다.
+
     되돌리기까지 해야 계약이 완성된다. 예외가 터진 시점에 이미 밀어 넣은
     버전이 있으면 그것은 **확인되지 않은** 덱이므로, 시작 버전까지 롤백한
     뒤에야 결과를 돌려준다 - "최적화는 시작보다 나쁜 결과를 내지 않는다"."""
     progress: dict = {}
     try:
         return await _optimize(netlist_texts, spec, state, agents, progress)
-    except (AgentExecutionError, ValueError) as exc:
+    except (AgentExecutionError, ValueError, OSError) as exc:
         reason = f"{type(exc).__name__}: {exc}"
         state.log_event("optimize_failed", {"reason": reason})
         if progress.get("safe_index") is not None:

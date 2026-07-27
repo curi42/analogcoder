@@ -92,11 +92,15 @@ def test_write_report_md_reports_the_optimization_phase(tmp_path):
     assert "Optimization" in content
     assert "OPTIMIZED" in content
     assert "212.9881" in content and "212.2517" in content   # before/after
-    assert "4" in content and "7" in content                 # 수락/거절 단계 수
-    assert "corner" in content.lower()
+    # 단계 수와 면적은 렌더된 문장 그대로 못박는다. `"4" in content`는
+    # netlist_v4_...cir이, `"7" in content`는 -87.75가 이미 만족시켜서
+    # 두 줄을 통째로 지워도 통과했다.
+    assert "4 accepted, 7 rejected" in content
+    assert "4e-12" in content and "3.1e-12" in content        # 면적 before/after
     # 최적화가 돌았다는 사실만 적고 확인 여부를 빼면, 코너를 못 버틴 설계와
-    # 확인된 설계가 같은 리포트를 낸다.
-    assert "True" in content or "confirmed" in content.lower()
+    # 확인된 설계가 같은 리포트를 낸다. `"True" in content`는 헤딩
+    # `**Corner confirmed:**` 자체가 만족시키므로 값까지 붙여 못박는다.
+    assert "**Corner confirmed:** True" in content
 
 
 def test_write_report_md_says_nothing_about_optimization_when_it_did_not_run(tmp_path):

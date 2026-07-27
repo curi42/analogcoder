@@ -260,6 +260,39 @@ async def test_a_failed_confirmation_bisects_back_to_the_last_passing_version(tm
 
 
 @pytest.mark.asyncio
+async def test_an_unreadable_version_file_during_bisection_is_not_a_crash(tmp_path, monkeypatch):
+    # 이분 탐색은 프로브할 버전 덱을 디스크에서 **되읽는다**(_texts_at). 그 open이
+    # 실패하면 AgentExecutionError도 ValueError도 아니므로, 그 둘만 잡는 짝으로는
+    # 이미 PASS한 실행이 result.json도 report.md도 없이 트레이스백으로 끝난다.
+    # run_orchestration은 되읽기를 하지 않아 이 짝이 없다 - 여기서만 필요한
+    # 세 번째 예외다.
+    import analogcoder.optimizer as optimizer_module
+
+    def boom(state, index):
+        raise OSError("[Errno 24] Too many open files")
+
+    monkeypatch.setattr(optimizer_module, "_texts_at", boom)
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 220.0, 210.0, 200.0, 200.0, 200.0])
+    sweeps = {"n": 0}
+
+    def verify(texts):
+        sweeps["n"] += 1
+        return _sweep(sweeps["n"] == 1, 268.0)  # 진입만 통과 -> 확인 실패 -> 이분 탐색
+
+    agents.verify_corners = verify
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"  # FAIL이라는 결말은 존재하지 않는다
+    assert "Too many open files" in result["failure"]
+    # 확인되지 않은 채 밀어 넣힌 버전이 아니라 시작 덱을 들고 끝나야 한다.
+    assert state.current_netlist_texts()["tb"] == DECK
+
+
+@pytest.mark.asyncio
 async def test_when_no_step_survives_corners_the_start_is_returned_unchanged(tmp_path):
     state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
     state.push_netlist_version({"tb": DECK})
