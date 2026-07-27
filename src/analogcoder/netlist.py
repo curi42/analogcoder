@@ -368,6 +368,19 @@ def _numeric_or_none(raw: str | None) -> float | None:
         return None
 
 
+def _peer_key(component: Component) -> str:
+    """동료 판정에 쓸 정체성 키. X 인스턴스는 마지막 위치 토큰이 모델/서브회로
+    이름이라 그대로 쓸 수 있지만, 일반 R/C/L은 같은 자리가 리터럴 값
+    ("10k")이다 - 그걸 키로 쓰면 값이 다른 두 저항(R1=10k, R2=5k)이 다른
+    그룹으로 갈라져 Xq1.m이 도달 불가능해지는 것과 똑같은 실패가 제네릭
+    소자에서 재현되고, 반대로 값이 우연히 같은 저항과 커패시터(둘 다
+    "10k")는 서로 무관한데 동료로 오인된다. 위치 값이 숫자로 파싱되면
+    그건 모델명이 아니라 소자 값이므로 ctype으로 떨어뜨린다."""
+    if component.value is not None and _numeric_or_none(component.value) is None:
+        return component.value
+    return component.ctype
+
+
 def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str | None]:
     """결정론적 사전 게이트: 제안된 param이 그 소자에 실제로 적용될 수 있는가.
 
@@ -403,8 +416,7 @@ def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str
     # 같은 모델명(없으면 같은 ctype)을 쓰는 소자들이 실제로 쓰는 param 이름.
     peers: dict[str, set[str]] = {}
     for component in everything:
-        key = component.value if component.value else component.ctype
-        peers.setdefault(key, set()).update(component.params)
+        peers.setdefault(_peer_key(component), set()).update(component.params)
 
     violations: list[str] = []
     for change in changes:
@@ -427,7 +439,7 @@ def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str
         if param in component.params:
             continue
 
-        key = component.value if component.value else component.ctype
+        key = _peer_key(component)
         if param in peers.get(key, set()):
             continue
 

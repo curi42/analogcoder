@@ -57,3 +57,30 @@ def test_every_violation_is_reported_not_just_the_first():
 
     assert ok is False
     assert "width" in feedback and "Xa" in feedback
+
+
+def test_a_refdes_that_resolves_to_nothing_is_silently_passed():
+    # check_refdes_resolution의 몫이다 - 이 게이트가 같은 결함을 다른 말로
+    # 또 보고하면 안 된다. (Important 리뷰 항목: 이 무언 의무를 지키는
+    # 회귀를 잡을 테스트가 없었다.)
+    assert check_param_applicability(PDK, [{"refdes": "NoSuchThing", "param": "x"}]) == (True, None)
+
+
+def test_peer_rule_credits_two_generic_resistors_of_different_values():
+    # Critical 리뷰 재현: 동료 판정 키가 리터럴 값이면 R1(10k)과 R2(5k)는
+    # 서로 다른 그룹으로 갈라져 R2.tc가 부당하게 거부된다 - Xq1.m이
+    # 도달 불가능해지는 실패 양상을 제네릭 소자에서 그대로 재현한 것.
+    deck = "* t\nR1 a b 10k tc=1\nR2 c d 5k\n.end\n"
+
+    assert check_param_applicability(deck, [{"refdes": "R2", "param": "tc"}]) == (True, None)
+
+
+def test_peer_rule_does_not_credit_a_resistor_and_capacitor_sharing_a_literal_value():
+    # Critical 리뷰 재현: R과 C가 우연히 같은 값 문자열("10k")을 쓰면
+    # 리터럴 값 키는 이걸 동료로 착각해 커패시터 전용 param을 저항에
+    # 허용해버린다.
+    deck = "* t\nRf a b 10k\nC1 x y 10k ic=0.1\n.end\n"
+
+    ok, _ = check_param_applicability(deck, [{"refdes": "Rf", "param": "ic"}])
+
+    assert ok is False
