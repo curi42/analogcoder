@@ -178,24 +178,30 @@ _COUNT_TOKENS = frozenset({"m"})
 _NEUTRAL_TOKENS = frozenset({"nf"})
 
 
-def _resolved_token(component: Component, token: str) -> float | None:
+def resolved_token(component: Component, token: str) -> float | None:
     """소자가 쓴 토큰의 해소값을 대소문자 무시로 찾는다. SPICE는 대소문자를
-    구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다."""
+    구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다.
+
+    area.py의 total_area도 이 함수로 w/l을 읽는다 - 면적 게이트와 면적
+    합산이 같은 해소 규칙을 따르게 하려는 것이다(공개 이름으로 승격,
+    함수 내부 import 아님)."""
     for name, value in component.resolved_params.items():
         if name.lower() == token:
             return value
     return None
 
 
-def _multiplicity(component: Component) -> float | None:
+def multiplicity(component: Component) -> float | None:
     """m이 없으면 1, m 토큰이 있는데 값을 못 풀면 None. m은 개수이므로
     `.option scale`을 곱하지 않는다.
 
     "m 토큰이 없다"와 "m 토큰은 있는데 모른다"를 구별하지 않으면 모르는 값을
     1로 가정하게 되고, 그 추측은 **항상 티어를 느슨한 쪽으로** 틀린다 (소자가
     실제보다 작아 보인다). params._multiplier와 같은 규칙, 같은 이유다 -
-    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다."""
-    m = _resolved_token(component, "m")
+    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다.
+
+    area.py의 total_area도 이 함수로 m을 읽는다 - 공개 이름으로 승격."""
+    m = resolved_token(component, "m")
     if m is None:
         return None if has_token(component, "m") else 1.0
     return 1.0 if m <= 0 else m
@@ -225,24 +231,24 @@ def _tier_baseline_value(component: Component) -> float | None:
         param = _SKY130_GEOMETRY_PARAM.get(ctype)
         if param is None:
             return None
-        raw = _resolved_token(component, param.lower())
+        raw = resolved_token(component, param.lower())
         if raw is None:
             return None
         if ctype == "Q":
             # m is an emitter-area count, not a length - it must not be
             # scaled, and it is already the tier key itself.
             return raw
-        mult = _multiplicity(component)
+        mult = multiplicity(component)
         return None if mult is None else raw * component.geometry_scale * mult
     if ctype == "M":
-        w = _resolved_token(component, "w")
+        w = resolved_token(component, "w")
         if w is None:
             return None
-        mult = _multiplicity(component)
+        mult = multiplicity(component)
         return None if mult is None else w * component.geometry_scale * mult
     if component.resolved_value is None:
         return None
-    mult = _multiplicity(component)
+    mult = multiplicity(component)
     return None if mult is None else component.resolved_value * mult
 
 
