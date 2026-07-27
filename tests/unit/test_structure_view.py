@@ -77,6 +77,20 @@ def test_the_structure_view_never_repeats_a_value():
     assert "W=10" not in text
 
 
+def test_the_structure_view_never_leaks_a_source_stimulus_value():
+    # V/I 소스는 단자 역할표가 없어 terminals가 비어 있다. 트레일링 AC
+    # 크기가 있는 소스는 structure.py의 위치 분해(positional[:-1]이 노드,
+    # 마지막 하나만 값)가 "0.9"를 값이 아니라 nodes 쪽으로 밀어 넣는다 -
+    # terminals가 비었다고 nodes를 그대로 echo하면 그 값이 새어 나온다.
+    deck = CHAIN.replace("Vin na 0 DC 1\n", "Vin na 0 DC 1\nVac na 0 DC 0.9 AC 1\n")
+    s = derive_structure(deck, "demo")
+    paths = build_signal_paths(s)
+
+    text = render_structure(s, paths, [], {"DRIVER"})
+
+    assert "0.9" not in text
+
+
 def test_the_netlist_view_keeps_every_header_and_folds_only_unfocused_bodies():
     text = render_netlist(CHAIN, {"DRIVER"})
 
@@ -86,6 +100,50 @@ def test_the_netlist_view_keeps_every_header_and_folds_only_unfocused_bodies():
     assert "elided" in text
     assert "Xd na out 0 DRIVER" in text     # 최상위는 언제나 남는다
     assert "Vin na 0 DC 1" in text
+
+
+def test_the_netlist_view_counts_a_continued_component_as_one_elided_not_two():
+    # `+` 연속 줄을 독립된 문장으로 세면 접힌 본문 안 부품 하나가 두 개로
+    # 잡힌다 - netlist.py가 이미 한 번 고친 것과 같은 모양의 버그.
+    deck = (
+        ".subckt KEEP x y\n"
+        "R1 x y 1k\n"
+        ".ends KEEP\n"
+        ".subckt SKIP a b\n"
+        "R9 a b 1k\n"
+        "+ tc=0.01\n"
+        ".ends SKIP\n"
+    )
+
+    text = render_netlist(deck, {"KEEP"})
+
+    assert "R9" not in text
+    assert "tc=0.01" not in text
+    assert "(1 components elided)" in text
+
+
+def test_the_netlist_view_shows_both_physical_lines_of_a_continued_component_in_focus():
+    deck = ".subckt KEEP x y\nR1 x y 1k\n+ tc=0.01\n.ends KEEP\n"
+
+    text = render_netlist(deck, {"KEEP"})
+
+    assert "R1 x y 1k" in text
+    assert "+ tc=0.01" in text
+
+
+def test_the_netlist_view_never_truncates_a_continued_subckt_header():
+    # 헤더 자신이 여러 줄에 걸쳐 있으면, 그 헤더를 낸 순간 본문 접힘이
+    # 시작되어도(비초점이라서) 헤더 자신의 나머지 물리 줄까지는 보여야
+    # 한다 - 안 그러면 다중 라인 포트 목록의 뒷부분이 조용히 잘려 나간
+    # 채로 넘어가, 접히지도 않은 블록의 포트 수가 틀린 값으로 보인다.
+    deck = ".subckt WIDE a b c\n+ d e f\nR1 a b 1k\n.ends WIDE\n"
+
+    text = render_netlist(deck, set())
+
+    assert ".subckt WIDE a b c" in text
+    assert "+ d e f" in text
+    assert "R1" not in text
+    assert "elided" in text
 
 
 def test_a_proposal_outside_focus_is_reported_so_a_wrong_focus_leaves_evidence():

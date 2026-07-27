@@ -19,6 +19,19 @@ def _definition_name(path: str) -> str:
     return path.rpartition(".")[2]
 
 
+def _target_ports(structure: NetlistStructure, model: str | None) -> list[str] | None:
+    """X 인스턴스가 가리키는 정의의 포트 목록. signal_path._definition_of와
+    같은 방식(이름의 마지막 조각으로 조회)이고 같은 한계를 물려받는다.
+    못 찾으면 None - 몇 개의 위치 토큰이 실제 노드인지 알 근거가 없다는
+    뜻이므로 아예 아무것도 보여주지 않는다."""
+    if model is None:
+        return None
+    for path, block in structure.blocks.items():
+        if path is not None and path.rpartition(".")[2] == model:
+            return block.ports
+    return None
+
+
 def select_focus(
     structure: NetlistStructure,
     paths: SignalPaths,
@@ -108,14 +121,26 @@ def render_structure(
         label = path or "<top level>"
         lines += ["", f"{label}  ports: {' '.join(block.ports) or '-'}"]
         for fact in block.components:
-            terminals = " ".join(
-                f"{t.name}={net}{'(sense)' if t.role == 'sense' else ''}"
-                for t, net in zip(fact.terminals, fact.nodes)
-            )
-            lines.append(
-                f"  {fact.refdes} {fact.model or fact.ctype}  {terminals or ' '.join(fact.nodes)}"
-            )
-        matched = [p for p in patterns if getattr(p, "block", None) == path]
+            detail = f"  {fact.refdes} {fact.model or fact.ctype}"
+            if fact.terminals:
+                detail += "  " + " ".join(
+                    f"{t.name}={net}{'(sense)' if t.role == 'sense' else ''}"
+                    for t, net in zip(fact.terminals, fact.nodes)
+                )
+            elif fact.ctype == "X":
+                # 서브회로 인스턴스는 단자 역할표가 없어도 정의의 포트 수는
+                # 안다 - 그 개수만큼만 노드를 보여준다. 그 이상은 노드가
+                # 아니라 구조.py의 위치 분해가 걸러내지 못한 다른 토큰(예:
+                # 괄호를 쓰는 값의 잔여물)일 수 있어, 그대로 echo하면 값이
+                # 새어 나온다.
+                ports = _target_ports(structure, fact.model)
+                if ports:
+                    detail += "  " + " ".join(fact.nodes[: len(ports)])
+            # 그 외(V/I 등 단자표가 없는 소자)는 refdes/ctype만 낸다. nodes를
+            # 그대로 echo하던 예전 방식은 값 토큰(예: DC 1.8의 1.8)까지
+            # nodes에 섞여 있는 경우가 있어 넷리스트 원문과 값이 겹쳐 버렸다.
+            lines.append(detail)
+        matched = [p for p in patterns if p.block == path]
         if matched:
             lines.append(
                 "  patterns: " + "  ".join(f"{p.kind}({','.join(p.members)})" for p in matched)
@@ -157,31 +182,43 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
     physical_lines = netlist_text.splitlines()
 
     # 논리 줄의 첫 물리 줄(앵커)에서만 판정하고, 나머지 물리 줄(`+` 연속)은
-    # 앵커와 운명을 같이한다 - 별개의 지시문/부품으로 세지 않는다.
+    # 앵커와 운명을 같이한다 - 별개의 지시문/부품으로 세지 않는다. owner는
+    # 모든 물리 줄(앵커 자신 포함)을 그 논리 줄의 앵커 인덱스로 매핑한다.
+    owner: dict[int, int] = {}
     anchor_code: dict[int, str] = {}
-    continuation: set[int] = set()
     for code, indices in logical_lines(physical_lines):
-        anchor_code[indices[0]] = code
-        continuation.update(indices[1:])
+        anchor = indices[0]
+        anchor_code[anchor] = code
+        for idx in indices:
+            owner[idx] = anchor
 
     out: list[str] = []
     stack: list[str] = []
     fold_start: int | None = None  # None이면 현재 안 접는 중
     elided = 0
+    # 실제로 라인을 냈던 앵커의 집합. 연속 줄은 "지금 접는 중인가"가 아니라
+    # "자신의 앵커가 실제로 보였는가"로 판단해야 한다 - 헤더 자신이 여러 줄에
+    # 걸쳐 있으면(`.subckt WIDE a b c\n+ d e f`), 헤더를 낸 바로 그 순간에
+    # 본문 접힘이 시작되어도(fold_start가 곧장 채워져도) 헤더 자신의 나머지
+    # 물리 줄까지는 여전히 보여야 한다 - 안 그러면 여러 줄짜리 헤더가 잘려
+    # 포트 일부만 보이는 채로 넘어간다.
+    emitted_anchors: set[int] = set()
 
     for idx, raw_line in enumerate(physical_lines):
-        if idx in continuation:
-            if fold_start is None:
-                out.append(raw_line)
-            continue
-
-        code = anchor_code.get(idx)
-        if code is None:
+        anchor = owner.get(idx)
+        if anchor is None:
             # 빈 줄이나 `*` 전체 주석 줄 - 지시문도 부품도 아니다.
             if fold_start is None:
                 out.append(raw_line)
             continue
 
+        if anchor != idx:
+            # `+` 연속 줄: 자신의 앵커가 실제로 출력됐을 때만 함께 낸다.
+            if anchor in emitted_anchors:
+                out.append(raw_line)
+            continue
+
+        code = anchor_code[idx]
         lowered = code.lower()
 
         if lowered.startswith((".subckt", ".macro")):
@@ -191,6 +228,7 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
                 # 지금 접는 중이 아니므로 이 헤더는 보인다 - 초점 여부와
                 # 무관하게 헤더는 항상 남긴다.
                 out.append(raw_line)
+                emitted_anchors.add(idx)
                 if name not in names:
                     fold_start = len(stack)
             continue
@@ -205,10 +243,12 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
                 # 사람이 붙여 넣어 볼 때 오해가 없다.
                 out.append(f"* ... ({elided} components elided)")
                 out.append(raw_line)
+                emitted_anchors.add(idx)
                 elided = 0
                 fold_start = None
             elif fold_start is None:
                 out.append(raw_line)
+                emitted_anchors.add(idx)
             continue
 
         if fold_start is not None:
@@ -216,6 +256,7 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
             continue
 
         out.append(raw_line)
+        emitted_anchors.add(idx)
 
     return "\n".join(out)
 
