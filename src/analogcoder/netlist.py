@@ -674,10 +674,25 @@ def apply_changes(text: str, changes: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
+def apply_topology_swap(text: str, block_path: str, new_body: str) -> str:
+    """Replace the body of the `.subckt`/`.macro` addressed by `block_path`.
+
+    `block_path` is a dotted scope path matching the model `ParsedNetlist.subckts`
+    already uses elsewhere in this module (e.g. `"OUTER.INNER"`), or a bare name
+    (`"AMP"`), which resolves only to a **top-level** definition of that name —
+    never to a same-named definition nested inside another `.subckt`. A path
+    that names an intermediate scope that doesn't exist (`"INNER.DEEPER"` when
+    there is no `.subckt DEEPER` inside `INNER`) is rejected rather than
+    resolved by guessing which definition was meant.
+
+    When the same dotted path appears more than once (a malformed deck — that
+    is `parse_netlist`'s problem, not this function's), the first exact match
+    in document order wins.
+    """
     lines = text.splitlines()
     start = end = None
     depth = 0
+    scope_stack: list[str] = []
     for i, raw_line in enumerate(lines):
         stripped = raw_line.strip()
         if stripped.startswith("*"):
@@ -687,9 +702,14 @@ def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
         opens = _is_subckt_open(lower)
         closes = _is_subckt_close(lower)
         if start is None:
-            if opens and split_tokens(stripped)[1] == subckt_name:
-                start = i
-                depth = 1
+            if opens:
+                scope_stack.append(split_tokens(stripped)[1])
+                if ".".join(scope_stack) == block_path:
+                    start = i
+                    depth = 1
+            elif closes:
+                if scope_stack:
+                    scope_stack.pop()
             continue
         if opens:
             depth += 1
@@ -699,7 +719,7 @@ def apply_topology_swap(text: str, subckt_name: str, new_body: str) -> str:
                 end = i
                 break
     if start is None or end is None:
-        raise ValueError(f"subckt {subckt_name!r} not found or not closed")
+        raise ValueError(f"subckt {block_path!r} not found or not closed")
     new_lines = lines[: start + 1] + new_body.splitlines() + lines[end:]
     return "\n".join(new_lines) + "\n"
 

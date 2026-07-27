@@ -95,6 +95,62 @@ def test_apply_topology_swap_raises_when_subckt_not_closed():
         apply_topology_swap(netlist, "AMP", "R1 a b 1k\n")
 
 
+NESTED_TOPOLOGY_NETLIST = """\
+* t
+.subckt OUTER a b
+.subckt INNER a b
+R1 a b 1k
+.ends INNER
+Xi a b INNER
+.ends OUTER
+.subckt INNER a b
+R9 a b 9k
+.ends INNER
+.end
+"""
+
+
+def test_a_dotted_path_targets_the_nested_definition_not_the_top_level_one():
+    # Mutation this catches: reverting to "first bare-name match wins" would
+    # replace the top-level INNER (R9) instead of OUTER.INNER (R1).
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 a b 2k\n")
+    assert "R2 a b 2k" in out
+    assert "R9 a b 9k" in out  # top-level same-named definition untouched
+    assert "R1 a b 1k" not in out
+
+
+def test_a_bare_name_targets_the_top_level_definition():
+    # Mutation this catches: matching on bare name anywhere in the stack (or
+    # taking the first occurrence in document order regardless of depth)
+    # would hit the nested INNER (R1) instead of the top-level one (R9).
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "INNER", "R3 a b 3k\n")
+    assert "R1 a b 1k" in out  # nested definition left alone
+    assert "R9 a b 9k" not in out
+    assert "R3 a b 3k" in out
+
+
+def test_a_partial_path_is_rejected_rather_than_guessed_at():
+    # Mutation this catches: a suffix/substring match on the path (e.g.
+    # matching "INNER" as a trailing component of "OUTER.INNER") would
+    # silently pick a definition instead of raising for an unresolvable path.
+    with pytest.raises(ValueError):
+        apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "INNER.DEEPER", "R4 a b 4k\n")
+
+
+def test_an_unknown_path_raises():
+    with pytest.raises(ValueError):
+        apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "NOPE", "R5 a b 5k\n")
+
+
+def test_the_header_and_footer_lines_are_preserved_verbatim():
+    # Mutation this catches: an off-by-one in locating the matched .subckt's
+    # own header/footer line indices (as opposed to some ancestor's) would
+    # drop or duplicate these exact lines.
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 a b 2k\n")
+    assert ".subckt INNER a b" in out
+    assert ".ends INNER" in out
+
+
 def test_parse_spice_value_no_suffix():
     assert parse_spice_value("500") == pytest.approx(500.0)
 
