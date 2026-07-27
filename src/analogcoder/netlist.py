@@ -80,6 +80,30 @@ class Component:
     geometry_scale: float = 1.0
     resolved_params: dict[str, float] = field(default_factory=dict)
     resolved_value: float | None = None
+    # 이 소자가 서브회로 인스턴스일 때, 인스턴스 줄의 파라미터 이름 ->
+    # 그 값이 실제로 도달하는 소자/토큰들. params.annotate_traced_params가 채운다.
+    traced_params: "dict[str, list[TracedTarget]]" = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TracedTarget:
+    """인스턴스 줄의 파라미터 하나가 도달하는 소자와, 그 소자 자신의 토큰 이름.
+
+    이 자료구조가 있는 이유는 "추측하지 말고 추적하라"는 규칙 때문이다.
+    인스턴스 파라미터 이름(`wn`, `ma1`, `nf_n` …)은 설계자의 명명 규칙이므로
+    거기서 의미를 읽어내는 것은 넷 이름 `vdd`를 보고 전원이라고 단정하는 것과
+    같은 종류의 추측이다. 반면 그 값이 도달하는 **본문 토큰 이름**(`w`, `l`,
+    `m`, `nf`)은 SPICE 표준 소자 문법이므로 사실이다. 그래서 면적 게이트는
+    `wn`이 폭이라고 가정하지 않고, `wn`이 어떤 MOSFET의 `w`에 도착한다는 것을
+    관측한다.
+
+    total_width는 이 인스턴스에서 그 소자의 총 폭 = w x m (`.option scale`
+    반영). m은 병렬 소자의 개수이므로 scale을 곱하지 않는다. 확정할 수 없으면
+    None이고, 그때는 "면적 영향을 판단할 수 없다"로 취급한다."""
+
+    device: Component
+    token: str
+    total_width: float | None
 
 
 @dataclass

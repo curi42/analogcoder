@@ -54,6 +54,19 @@ against a fixed schema (`schemas.py`).
   device in the unbounded 1.5x tier, so the tier table did nothing on exactly
   the benchmarks that use a real PDK. A `pnp_05v5` is tiered on its emitter
   multiplier `m`, a count rather than a length.
+  Where a deck is built from **wrapper cells** — a generic cell that
+  declares its geometry as parameters (`ma1 d g s b TN33_LVT w=wn l=ln m=ma1
+  nf=nf_n`) with the real numbers arriving on the *instance* line
+  (`xwrap1 ... WRAP_PAIR_TN33 wn=2e-6 ma1=4`) — the gate **traces** each instance
+  parameter to the body token it lands on (`params.annotate_traced_params` →
+  `Component.traced_params`) and tiers on that. It never reads meaning out of
+  the instance parameter's *name*: `wn`/`ma1`/`nf_n` are the designer's naming
+  convention, and guessing them is the same class of error as recognising a
+  supply rail by the name `vdd`. The **body token** name (`w`, `l`, `m`, `nf`)
+  is standard SPICE device syntax, so it is a fact. Before this the wrapper
+  instance's `value` was just a subckt name, `_classify_ctype` left ctype `X`,
+  `TIERS_BY_CTYPE` had no `X` entry, and every sizing knob on such a deck was
+  completely unconstrained — the third time this gate has been silently inert.
 - `spec.py` — `spec.yaml` declares one or more **testbenches** (`TargetSpec.testbenches`),
   each with its own netlist file, control block, and criteria — not a single
   implicit testbench. `TargetSpec.canonical` (`testbenches[0]`) is the netlist
@@ -476,6 +489,43 @@ worth reading before assuming a weak-model failure is a code bug:
   disagree on it — it is dropped *and* masked from the global environment, so
   the caller sees "unknown" rather than a global value standing in for a local
   one.
+- **`m` multiplies area, `nf` does not.** `m` is a multiplicity — a count of
+  parallel devices, so `w=2u m=2` is two 2 µm devices, total width 4 µm. `nf`
+  is the number of fingers: `w=2u nf=2` is ONE device of total width 2 µm split
+  into two 1 µm fingers, so total width and area do not change, and the shared
+  source/drain diffusions make more fingers area-neutral to slightly
+  favourable. Tuning `nf` is usually meaningless. So the gate gives `w`/`l` the
+  size-graded geometry tiers, `m` a **flat 2.0×** (`COUNT_ALLOWED_MULTIPLIER` —
+  a count, not a length, same reasoning as `pnp_05v5`), and `nf` **no tier at
+  all**. That last one is "nothing to judge", not "cannot judge" — do not look
+  at an unconstrained `nf` and "fix" it by adding a tier. In the production flow
+  NMOS/PMOS widths are fixed and `m` is varied per instance, so the flat count
+  tier is the constraint that actually binds in practice; the 25 µm/50 µm
+  geometry boundaries (chosen for sky130's `W`) rarely will. `m` and `nf` are
+  counts, so a non-integral proposal (`m=6.5`) is rejected outright — the
+  schema only requires a numeric string, and with `m` as the primary knob that
+  path is reachable.
+- **Total width is `w × m`, so the area gate evaluates the product per physical
+  device, not each parameter alone.** Changes in one proposal are grouped by
+  the device they reach and their ratios multiplied; the allowed multiplier is
+  the *tightest* tier among the parameters involved (geometry tier keyed on the
+  baseline `w × m`, 2.0 when `m` is involved, `nf` excluded from the product
+  entirely). Without this, one proposal growing `w` 3× (allowed) and `m` 2×
+  (allowed) grew total width **6×** and nobody looked. Grouping is per *device*,
+  so a wrapper cell's `wn` reaching both `ma1` and `mb1` is checked against
+  each one's own baseline.
+- **Per-instance parameter resolution is a different tool from
+  `build_param_envs`.** The latter resolves per subckt *definition* and
+  deliberately drops any name the instances disagree on — and in wrapper-cell
+  decks disagreement is the normal case (the same cell instantiated with
+  `ma1=4/1/2`), so it returns `None` exactly where a number is needed.
+  `params._instance_env` resolves for one instance: that instance's own
+  override → the `.subckt` line default → a literal in the body, with the
+  override's own expression evaluated in the *outer* scope. Tracing follows a
+  body token into a nested instance, bounded by `_MAX_TRACE_DEPTH`, and falls
+  back to "cannot judge, do not block" rather than guessing. A subckt the deck
+  does not define (any PDK primitive — `parse_netlist` never follows includes)
+  is a leaf, not a dead end.
 
 ## Testing conventions
 

@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from analogcoder.netlist import parse_netlist
 from analogcoder.params import build_param_envs, resolve_value
 
@@ -199,3 +201,132 @@ def test_a_disagreeing_override_does_not_fall_back_to_a_global_of_the_same_name(
 
     assert envs[None]["W"] == 5.0
     assert "W" not in envs["SUB"]
+
+
+# --- 인스턴스 파라미터 추적 ------------------------------------------------
+# 래퍼 셀 덱의 모양만 옮긴 합성 픽스처다 (실물은 사용자 IP라 들어오지
+# 않는다). 두-트랜지스터 셀이 기하를 파라미터로 선언하고, 실제 숫자는
+# 인스턴스 줄에서 온다. 같은 정의를 서로 다른 값으로 두 번 인스턴스화하는
+# 것이 이 설계 스타일의 정상 케이스다.
+WRAPPER_DECK = (
+    "* synthetic wrapper-cell deck (shape only)\n"
+    ".subckt WRAP_PAIR_TN33 b1 b2 d1 d2 g1 g2 s1 s2\n"
+    "ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n geomod=geomod\n"
+    "mb1 d2 g2 s2 b2 TN33_LVT w=wn l=ln m=mb1 nf=nf_n geomod=geomod\n"
+    ".ends WRAP_PAIR_TN33\n"
+    "xin1 vss vss dl dr gl gr com com WRAP_PAIR_TN33 wn=2e-6 ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1\n"
+    "xin2 vss vss d2l d2r g2l g2r com2 com2 WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1\n"
+    ".end\n"
+)
+
+
+def _traced(deck, refdes):
+    from analogcoder.netlist import parse_netlist
+    from analogcoder.params import annotate_traced_params, build_param_envs
+
+    parsed = parse_netlist(deck)
+    envs = build_param_envs(deck)
+    annotate_traced_params(deck, parsed, envs)
+    for component in parsed.top_components:
+        if component.refdes == refdes:
+            return component
+    for subckt in parsed.subckts.values():
+        for component in subckt.components:
+            if component.refdes == refdes:
+                return component
+    raise AssertionError(f"{refdes} not found")
+
+
+def test_build_param_envs_drops_a_name_the_instances_disagree_on():
+    # 왜 인스턴스별 해소가 따로 필요한지 못박는 테스트. 정의 단위 환경은
+    # 인스턴스마다 값이 갈린 이름을 (정당하게) 버리므로, 래퍼 셀 덱에서는
+    # 정확히 필요할 때 None을 준다.
+    envs = build_param_envs(WRAPPER_DECK)
+
+    assert "wn" not in envs["WRAP_PAIR_TN33"]
+    assert "ma1" not in envs["WRAP_PAIR_TN33"]
+
+
+def test_trace_lands_an_instance_param_on_the_body_token():
+    xin1 = _traced(WRAPPER_DECK, "xin1")
+
+    assert [(t.device.refdes, t.token) for t in xin1.traced_params["wn"]] == [
+        ("ma1", "w"),
+        ("mb1", "w"),
+    ]
+    assert [(t.device.refdes, t.token) for t in xin1.traced_params["ln"]] == [
+        ("ma1", "l"),
+        ("mb1", "l"),
+    ]
+    assert [(t.device.refdes, t.token) for t in xin1.traced_params["ma1"]] == [("ma1", "m")]
+    assert [(t.device.refdes, t.token) for t in xin1.traced_params["nf_n"]] == [
+        ("ma1", "nf"),
+        ("mb1", "nf"),
+    ]
+    assert [(t.device.refdes, t.token) for t in xin1.traced_params["geomod"]] == [
+        ("ma1", "geomod"),
+        ("mb1", "geomod"),
+    ]
+
+
+def test_total_width_is_resolved_per_instance_not_per_definition():
+    # 총 폭은 w × m이고, 두 인스턴스가 그 둘 모두에 서로 다른 값을 준다.
+    xin1 = _traced(WRAPPER_DECK, "xin1")
+    xin2 = _traced(WRAPPER_DECK, "xin2")
+
+    assert xin1.traced_params["wn"][0].total_width == pytest.approx(8e-6)  # 2u x 4
+    assert xin2.traced_params["wn"][0].total_width == pytest.approx(40e-6)  # 20u x 2
+
+
+def test_trace_follows_a_nested_instance():
+    deck = (
+        "* nested wrapper\n"
+        ".subckt WRAP_PAIR b1 d1 g1 s1\n"
+        "ma1 d1 g1 s1 b1 TN33 w=wn l=ln m=mm\n"
+        ".ends WRAP_PAIR\n"
+        ".subckt PAIRWRAP b d g s\n"
+        "xdp b d g s WRAP_PAIR wn=wtop ln=ltop mm=mtop\n"
+        ".ends PAIRWRAP\n"
+        "xtop vb vd vg vs PAIRWRAP wtop=2e-6 ltop=3e-6 mtop=4\n"
+        ".end\n"
+    )
+
+    xtop = _traced(deck, "xtop")
+
+    assert [(t.device.refdes, t.token) for t in xtop.traced_params["wtop"]] == [("ma1", "w")]
+    assert xtop.traced_params["wtop"][0].total_width == pytest.approx(8e-6)
+
+
+def test_trace_stops_at_a_subckt_the_deck_does_not_define():
+    # PDK 프리미티브는 덱 안에 정의가 없다 (parse_netlist는 include를 따라가지
+    # 않는다). 그 지점이 잎이며, 그 소자 자신의 w/m으로 총 폭을 읽는다.
+    deck = (
+        "* pdk leaf\n.option scale=1.0u\n"
+        ".subckt CELL d g s b\n"
+        "Xm1 d g s b sky130_fd_pr__nfet_01v8 W=wn L=ln m=mm\n"
+        ".ends CELL\n"
+        "xc1 vd vg vs vb CELL wn=10 ln=1 mm=3\n"
+        ".end\n"
+    )
+
+    xc1 = _traced(deck, "xc1")
+
+    assert [(t.device.refdes, t.token) for t in xc1.traced_params["wn"]] == [("Xm1", "W")]
+    assert xc1.traced_params["wn"][0].total_width == pytest.approx(30e-6)
+
+
+def test_a_param_that_reaches_no_body_token_is_not_traced():
+    # 본문의 어떤 name=value 토큰에도 도달하지 않는 파라미터는 "무엇을
+    # 키우는지 알아내지 못했다"이며, 추측하지 않는다.
+    deck = (
+        "* unused\n"
+        ".subckt CELL a b\n"
+        "R1 a b 1k\n"
+        ".ends CELL\n"
+        "xc1 p q CELL rval=1k\n"
+        ".end\n"
+    )
+
+    xc1 = _traced(deck, "xc1")
+
+    assert "rval" not in xc1.traced_params

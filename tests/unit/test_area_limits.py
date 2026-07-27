@@ -476,3 +476,233 @@ def test_the_resolved_tier_baseline_uses_the_parameterised_geometry():
 
     assert ok is False
     assert "2.0x" in feedback
+
+
+# --- 래퍼 셀: 인스턴스 줄에서 크기가 정해지는 덱 -----------------------------
+# 래퍼 셀 덱의 모양만 옮긴 합성 픽스처다 (실물은 사용자 IP). 제네릭
+# 2-트랜지스터 셀이 기하를 파라미터로 선언하고 실제 숫자는 인스턴스 줄에서
+# 온다. 게이트는 파라미터 *이름*(wn/ma1 - 설계자의 명명 규칙)을 해석하지
+# 않고, 그 값이 도달하는 본문 토큰(w/l/m/nf - SPICE 표준 문법)을 추적한다.
+#
+# xin1: ma1 총 폭 = wn(2u) x m(4)  = 8u  -> 3.0x 티어
+# xin2: ma1 총 폭 = wn(20u) x m(2) = 40u -> 2.0x 티어
+WRAPPER_NETLIST = (
+    "* synthetic wrapper-cell deck (shape only)\n"
+    ".subckt WRAP_PAIR_TN33 b1 b2 d1 d2 g1 g2 s1 s2\n"
+    "ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n geomod=geomod\n"
+    "mb1 d2 g2 s2 b2 TN33_LVT w=wn l=ln m=mb1 nf=nf_n geomod=geomod\n"
+    ".ends WRAP_PAIR_TN33\n"
+    "xin1 vss vss dl dr gl gr com com WRAP_PAIR_TN33 wn=2e-6 ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1\n"
+    "xin2 vss vss d2l d2r g2l g2r com2 com2 WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1\n"
+    ".end\n"
+)
+
+
+def test_wrapper_instance_width_growth_is_bounded():
+    # 이 파일이 존재하는 이유: 예전에는 xin1의 value가 "WRAP_PAIR_TN33"이라
+    # ctype이 X로 남고 X 티어가 없어 어떤 성장도 허용됐다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "8e-6"}]
+    )
+
+    assert ok is False
+    assert "xin1" in feedback
+    assert "ma1" in feedback
+    assert "4.00x" in feedback
+
+
+def test_wrapper_instance_width_growth_within_tier_is_allowed():
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "5e-6"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_wrapper_tier_comes_from_this_instances_own_values():
+    # 같은 2.5x 성장인데 xin1(8u 총 폭, 3.0x 티어)은 통과하고 xin2(40u 총 폭,
+    # 2.0x 티어)는 막힌다. 정의 단위 환경은 인스턴스가 갈린 wn/ma1을 버리므로
+    # 여기서 필요한 숫자를 주지 못한다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin2", "param": "wn", "new_value": "50e-6"}]
+    )
+
+    assert ok is False
+    assert "xin2" in feedback
+
+
+def test_wrapper_count_param_is_capped_flat_at_two():
+    # m은 병렬 소자의 개수다 - 길이가 아니므로 크기별 티어가 아니라 평평한 2.0x.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    rejected, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "12"}]
+    )
+    allowed, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "8"}]
+    )
+
+    assert rejected is False
+    assert "xin1" in feedback
+    assert allowed is True
+
+
+def test_width_and_count_multiply_into_one_total_width():
+    # 6x 구멍: w 3x(단독 허용)와 m 2x(단독 허용)가 같은 제안에 있으면 총 폭은
+    # 6x가 된다. 소자별로 묶어 곱을 봐야 잡힌다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "6e-6"},
+            {"refdes": "xin1", "param": "ma1", "new_value": "8"},
+        ],
+    )
+
+    assert ok is False
+    assert "6.00x" in feedback
+    # ma1만 두 변경이 도달한다. 형제 mb1은 wn의 3x만 받고 3.0x 티어라 통과다.
+    assert "ma1" in feedback
+    assert "mb1" not in feedback
+
+
+def test_each_of_the_two_changes_alone_would_have_been_allowed():
+    # 위 테스트가 진짜로 곱 때문에 막힌 것인지 못박는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    w_only, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "6e-6"}]
+    )
+    m_only, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "8"}]
+    )
+
+    assert w_only is True
+    assert m_only is True
+
+
+def test_finger_count_is_area_neutral_and_excluded_from_the_product():
+    # nf는 손가락 개수다: w를 나눌 뿐 총 폭도 면적도 바꾸지 않는다. 곱에
+    # 들어가면 안 된다 ("판단 불가"가 아니라 "판단할 것이 없다").
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    alone, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "nf_n", "new_value": "4"}]
+    )
+    with_width, feedback2 = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "6e-6"},
+            {"refdes": "xin1", "param": "nf_n", "new_value": "2"},
+        ],
+    )
+
+    assert alone is True, feedback
+    # nf가 곱에 들어갔다면 6x가 되어 막혔을 것이다.
+    assert with_width is True, feedback2
+
+
+def test_a_rejection_says_the_finger_count_was_not_counted():
+    # 면적 중립이라 빼놓았다는 사실이 피드백에 남아야 한다 - 그러지 않으면
+    # 튜너도, 나중에 읽는 사람도 nf가 그냥 잊힌 것으로 오해한다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "8e-6"},
+            {"refdes": "xin1", "param": "nf_n", "new_value": "2"},
+        ],
+    )
+
+    assert ok is False
+    assert "area-neutral" in feedback
+
+
+def test_a_non_integral_count_is_rejected():
+    # m/nf는 개수다. 스키마는 숫자 문자열만 요구하고 게이트는 비율만 보므로
+    # m=6.5가 통과할 수 있었다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok_m, feedback_m = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "6.5"}]
+    )
+    ok_nf, feedback_nf = check_area_growth(
+        components, [{"refdes": "xin1", "param": "nf_n", "new_value": "1.5"}]
+    )
+
+    assert ok_m is False
+    assert "whole number" in feedback_m
+    assert ok_nf is False
+    assert "whole number" in feedback_nf
+
+
+def test_a_shrinking_non_integral_count_is_still_rejected():
+    # 줄어드는 변경은 면적 검사를 건너뛰지만, 정수 조건은 면적과 무관하다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "2.5"}]
+    )
+
+    assert ok is False
+    assert "whole number" in feedback
+
+
+def test_a_traced_non_size_param_stays_unconstrained():
+    # geomod는 크기가 아니다. 티어도 없고 곱에도 들어가지 않는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "geomod", "new_value": "100"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_an_untraceable_instance_param_falls_back_to_not_blocking():
+    # "무엇을 키우는지 알아내지 못했다"는 "아무것도 키우지 않는다"와 다르다.
+    # 전자는 기존 철학대로 막지 않는다.
+    deck = (
+        "* untraceable\n"
+        ".subckt CELL a b\n"
+        "R1 a b 1k\n"
+        ".ends CELL\n"
+        "xc1 p q CELL rval=1k\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "rval", "new_value": "100k"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_a_wrapper_around_a_pdk_primitive_is_tiered_on_the_scaled_geometry():
+    # .option scale은 계속 존중된다 - sky130 덱이 게이트를 통과하는 이유다.
+    deck = (
+        "* pdk-backed wrapper\n.option scale=1.0u\n"
+        ".subckt CELL d g s b\n"
+        "Xm1 d g s b sky130_fd_pr__nfet_01v8 W=wn L=ln m=mm\n"
+        ".ends CELL\n"
+        "xc1 vd vg vs vb CELL wn=10 ln=1 mm=3\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    # 총 폭 = 10 x 3 x 1u = 30u -> sky130 기하 티어 2.0x. 10 -> 30은 3.0x.
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "30"}]
+    )
+
+    assert ok is False
+    assert "xc1" in feedback

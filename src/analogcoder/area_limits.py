@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from analogcoder.netlist import Component, parse_netlist
-from analogcoder.params import build_param_envs, resolve_value
+from analogcoder.netlist import Component, TracedTarget, parse_netlist
+from analogcoder.params import annotate_traced_params, build_param_envs, resolve_value
 
 
 _SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
@@ -50,6 +50,11 @@ SKY130_GEOMETRY_TIERS: list[SizeTier] = [
 # A bipolar's tuning knob is its emitter-area multiplier m, a count rather
 # than a length, so it gets one flat tier instead of a size-graded table.
 PNP_TIERS: list[SizeTier] = [SizeTier(max_value=None, allowed_multiplier=2.0)]
+# 소자 개수(m)를 키우는 변경에 허용하는 배수. 길이가 아니라 개수이므로
+# 크기별 티어가 아니라 평평한 한 값이다 - PNP_TIERS와 같은 이유, 같은 값.
+# 사용자의 흐름에서는 NMOS/PMOS 폭을 고정하고 인스턴스마다 m을 바꾸므로,
+# 이 상수가 실무에서 가장 자주 걸리는 제약이다 (기하 티어가 아니라).
+COUNT_ALLOWED_MULTIPLIER = 2.0
 TIERS_BY_CTYPE: dict[str, list[SizeTier]] = {
     "M": TRANSISTOR_TIERS,
     "C": CAPACITOR_TIERS,
@@ -119,6 +124,11 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
         for component in subckt.components:
             _annotate(component)
 
+    # 인스턴스 줄에서 크기가 정해지는 덱(래퍼 셀 스타일)을 위해, 각
+    # 인스턴스 파라미터가 실제로 도달하는 소자/토큰을 여기서 한 번 계산해
+    # 둔다. check_area_growth는 넷리스트 원문이 아니라 이 표만 받는다.
+    annotate_traced_params(netlist_text, parsed, envs)
+
     plain_counts: dict[str, int] = {}
     for component in parsed.top_components:
         plain_counts[component.refdes] = plain_counts.get(component.refdes, 0) + 1
@@ -153,6 +163,35 @@ def _baseline_value_for(component: Component, param: str) -> float | None:
 # The geometry dimension each X-prefixed sky130 primitive is tiered on.
 _SKY130_GEOMETRY_PARAM: dict[str, str] = {"M": "W", "C": "w", "R": "l", "Q": "m"}
 
+# 소자 자신의 토큰 이름별 취급. 이름들은 SPICE 표준 소자 문법이므로 사실이지,
+# 명명 규칙이 아니다 (인스턴스 파라미터 이름과 대비된다 - netlist.TracedTarget
+# 참고).
+_GEOMETRY_TOKENS = frozenset({"w", "l"})
+# m: 병렬 소자의 **개수**. `w=2u m=2`는 2um 소자 두 개라 총 폭 4um - 면적이
+# m에 비례해 늘어난다.
+_COUNT_TOKENS = frozenset({"m"})
+# nf: 손가락 **개수**. `w=2u nf=2`는 총 폭 2um짜리 소자 하나를 1um 손가락 둘로
+# 쪼갠 것이다. 총 폭도 면적도 nf로 변하지 않으며, 손가락끼리 소스/드레인
+# 확산을 공유하므로 오히려 약간 유리하다. 그래서 티어가 없고 곱에도 들어가지
+# 않는다 - 이것은 "판단할 수 없다"가 아니라 "판단할 것이 없다"이다. 여기
+# 제약이 없는 것을 보고 빠뜨린 것으로 오해해 티어를 붙이지 말 것.
+_NEUTRAL_TOKENS = frozenset({"nf"})
+
+
+def _resolved_token(component: Component, token: str) -> float | None:
+    """소자가 쓴 토큰의 해소값을 대소문자 무시로 찾는다. SPICE는 대소문자를
+    구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다."""
+    for name, value in component.resolved_params.items():
+        if name.lower() == token:
+            return value
+    return None
+
+
+def _multiplicity(component: Component) -> float:
+    """m이 없으면 1. m은 개수이므로 `.option scale`을 곱하지 않는다."""
+    m = _resolved_token(component, "m")
+    return 1.0 if m is None or m <= 0 else m
+
 
 def _tier_baseline_value(component: Component) -> float | None:
     """The dimension used to pick a size tier.
@@ -165,66 +204,196 @@ def _tier_baseline_value(component: Component) -> float | None:
     leaving the device silently unconstrained.
 
     A generic (non-X) transistor is still tiered on W; every other generic
-    component on its own value, which is already an absolute quantity."""
+    component on its own value, which is already an absolute quantity.
+
+    트랜지스터는 폭이 아니라 **총 폭**(w x m)으로 티어를 고른다. m은 병렬
+    소자의 개수라 면적이 그만큼 곱해지므로, w만 보면 m=4인 소자가 실제
+    크기의 1/4로 티어링되어 가장 느슨한 티어를 받는다."""
     ctype = _classify_ctype(component)
     if component.ctype == "X":
         param = _SKY130_GEOMETRY_PARAM.get(ctype)
         if param is None:
             return None
-        raw = component.resolved_params.get(param)
+        raw = _resolved_token(component, param.lower())
         if raw is None:
             return None
-        # m is an emitter-area count, not a length - it must not be scaled.
-        scale = 1.0 if ctype == "Q" else component.geometry_scale
-        return raw * scale
+        if ctype == "Q":
+            # m is an emitter-area count, not a length - it must not be
+            # scaled, and it is already the tier key itself.
+            return raw
+        return raw * component.geometry_scale * (_multiplicity(component) if ctype == "M" else 1.0)
     if ctype == "M":
-        w = component.resolved_params.get("W")
-        return w * component.geometry_scale if w is not None else None
+        w = _resolved_token(component, "w")
+        return w * component.geometry_scale * _multiplicity(component) if w is not None else None
     return component.resolved_value
+
+
+@dataclass(frozen=True)
+class _Target:
+    """한 변경이 도달하는 **물리 소자 하나**와, 그 소자에 대한 판정 재료."""
+
+    key: tuple  # 소자 정체성. 같은 제안 안에서 이 키가 같은 변경들이 곱해진다.
+    label: str
+    allowed: float | None  # None = 이 소자에 대해 이 토큰은 티어가 없다
+    counts: bool  # 곱에 들어가는가
+    neutral: bool = False  # 면적 중립이라 일부러 뺐는가 (nf)
+
+
+@dataclass
+class _Group:
+    label: str
+    ratio: float = 1.0
+    allowed: float | None = None
+    excluded_neutral: bool = False
+
+
+def _direct_target(refdes: str, component: Component, param: str) -> _Target:
+    """소자를 직접 주소지정한 변경. param이 곧 그 소자의 토큰이다."""
+    token = param.lower()
+    if token in _NEUTRAL_TOKENS:
+        return _Target(key=(refdes,), label=refdes, allowed=None, counts=False, neutral=True)
+    tier_baseline = _tier_baseline_value(component)
+    allowed = (
+        None
+        if tier_baseline is None
+        else allowed_multiplier_for(
+            _classify_ctype(component), tier_baseline, is_sky130=component.ctype == "X"
+        )
+    )
+    if token in _COUNT_TOKENS:
+        allowed = COUNT_ALLOWED_MULTIPLIER if allowed is None else min(allowed, COUNT_ALLOWED_MULTIPLIER)
+    return _Target(key=(refdes,), label=refdes, allowed=allowed, counts=True)
+
+
+def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
+    """인스턴스 줄의 파라미터가 도달한 소자들에 대한 판정 재료.
+
+    티어는 파라미터 이름이 아니라 **도달한 토큰**으로 정해진다. 이름은
+    설계자의 규칙이라 추측이 되지만 토큰은 SPICE 문법이라 사실이다."""
+    targets: list[_Target] = []
+    for traced_target in traced:
+        device = traced_target.device
+        token = traced_target.token.lower()
+        key = (refdes, device.scope, device.refdes)
+        where = f"{device.scope}.{device.refdes}" if device.scope else device.refdes
+        label = f"{refdes} -> {where}"
+        if token in _NEUTRAL_TOKENS:
+            targets.append(_Target(key, label, allowed=None, counts=False, neutral=True))
+            continue
+        if token in _COUNT_TOKENS:
+            targets.append(_Target(key, label, allowed=COUNT_ALLOWED_MULTIPLIER, counts=True))
+            continue
+        if token in _GEOMETRY_TOKENS:
+            if traced_target.total_width is None:
+                # 이 소자의 총 폭을 확정하지 못했다 - 면적 영향을 판단할 수
+                # 없으므로 막지 않는다 (해소 불가 베이스라인과 같은 폴백).
+                continue
+            targets.append(
+                _Target(
+                    key,
+                    label,
+                    allowed=allowed_multiplier_for(
+                        _classify_ctype(device),
+                        traced_target.total_width,
+                        is_sky130=device.ctype == "X",
+                    ),
+                    counts=True,
+                )
+            )
+            continue
+        # 크기가 아닌 토큰(geomod 등). 티어도 없고 곱에도 들어가지 않는다.
+        targets.append(_Target(key, label, allowed=None, counts=False))
+    return targets
+
+
+def _integrality_violation(refdes: str, param: str, tokens: set[str], new_value: str) -> str | None:
+    """m/nf는 개수다. 스키마는 숫자 문자열만 요구하고 이 게이트는 비율만 보므로
+    m=6.5 같은 제안이 그대로 통과할 수 있었다 - 사용자의 흐름에서 m이 주된
+    사이징 노브인 이상 도달 가능한 경로다."""
+    counts = sorted(tokens & (_COUNT_TOKENS | _NEUTRAL_TOKENS))
+    if not counts:
+        return None
+    value = resolve_value(new_value, {})
+    if value is None or abs(value - round(value)) <= 1e-9:
+        return None
+    return (
+        f"{refdes}.{param} sets {'/'.join(counts)}, a count of parallel devices or fingers - "
+        f"it must be a whole number, and {new_value!r} is not"
+    )
 
 
 def check_area_growth(
     baseline_components: dict[str, Component], proposed_changes: list[dict]
 ) -> tuple[bool, str | None]:
-    by_refdes: dict[str, list[dict]] = {}
-    for change in proposed_changes:
-        by_refdes.setdefault(change["refdes"], []).append(change)
+    """제안된 변경들이 소자를 얼마나 키우는지를 소자별로 판정한다.
 
+    변경 하나씩이 아니라 **도달하는 물리 소자별로 묶어 곱**을 본다. 총 폭이
+    w x m이므로, 한 제안 안에서 w를 3x(단독 허용) 키우고 m을 2x(단독 허용)
+    키우면 총 폭은 6x가 되는데 각각을 따로 보면 아무도 보지 못한다.
+    허용 배수는 그 묶음에 관여한 파라미터들의 티어 중 **가장 빡빡한 것**이다."""
     violations: list[str] = []
-    for refdes, changes in by_refdes.items():
+    groups: dict[tuple, _Group] = {}
+
+    for change in proposed_changes:
+        refdes = change["refdes"]
         component = baseline_components.get(refdes)
         if component is None:
             continue
+        param = change["param"]
 
-        combined_ratio = 1.0
-        for change in changes:
-            baseline_value = _baseline_value_for(component, change["param"])
-            if baseline_value is None or baseline_value <= 0:
-                continue
-            # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사
-            # 붙은 숫자 리터럴로만 제한하기 때문이다 (식별자·연산자 불가).
-            # 그 패턴이 느슨해져 파라미터 참조를 허용하게 되면 여기서 None이
-            # 나와 조용히 증가율 계산에서 빠지므로, 패턴을 건드릴 때 이 줄도
-            # 함께 재검토해야 한다.
-            new_value = resolve_value(change["new_value"], {})
-            if new_value is None:
-                continue
-            combined_ratio *= new_value / baseline_value
+        traced = component.traced_params.get(param)
+        if traced:
+            targets = _traced_targets(refdes, traced)
+            tokens = {t.token.lower() for t in traced}
+        else:
+            # 추적이 안 되는 파라미터는 소자를 직접 주소지정한 것으로 본다.
+            # 서브회로 인스턴스인데 추적에 실패한 경우도 여기로 오는데, 그때는
+            # _tier_baseline_value가 None이라 자연히 "판단 불가, 막지 않음"이
+            # 된다 - "무엇을 키우는지 알아내지 못했다"와 "아무것도 키우지
+            # 않는다"는 다른 사실이고, 후자만이 nf처럼 의도적으로 무제약이다.
+            targets = [_direct_target(refdes, component, param)]
+            tokens = {param.lower()}
 
-        if combined_ratio <= 1.0:
+        integrality = _integrality_violation(refdes, param, tokens, change["new_value"])
+        if integrality is not None:
+            violations.append(integrality)
             continue
 
-        tier_baseline = _tier_baseline_value(component)
-        if tier_baseline is None:
+        baseline_value = _baseline_value_for(component, param)
+        # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사
+        # 붙은 숫자 리터럴로만 제한하기 때문이다 (식별자·연산자 불가).
+        # 그 패턴이 느슨해져 파라미터 참조를 허용하게 되면 여기서 None이
+        # 나와 조용히 증가율 계산에서 빠지므로, 패턴을 건드릴 때 이 줄도
+        # 함께 재검토해야 한다.
+        new_value = resolve_value(change["new_value"], {})
+        ratio = None
+        if baseline_value is not None and baseline_value > 0 and new_value is not None:
+            ratio = new_value / baseline_value
+
+        for target in targets:
+            group = groups.setdefault(target.key, _Group(label=target.label))
+            if target.allowed is not None:
+                group.allowed = (
+                    target.allowed if group.allowed is None else min(group.allowed, target.allowed)
+                )
+            if not target.counts:
+                group.excluded_neutral |= target.neutral
+                continue
+            if ratio is not None:
+                group.ratio *= ratio
+
+    for group in groups.values():
+        if group.ratio <= 1.0 or group.allowed is None or group.ratio <= group.allowed:
             continue
-        allowed = allowed_multiplier_for(
-            _classify_ctype(component), tier_baseline, is_sky130=component.ctype == "X"
+        note = (
+            " (nf is a finger count: area-neutral by construction, so it was not counted)"
+            if group.excluded_neutral
+            else ""
         )
-        if allowed is not None and combined_ratio > allowed:
-            violations.append(
-                f"{refdes}: proposed change grows area by {combined_ratio:.2f}x, "
-                f"exceeding the {allowed:.1f}x limit for its size tier"
-            )
+        violations.append(
+            f"{group.label}: proposed change grows area by {group.ratio:.2f}x, "
+            f"exceeding the {group.allowed:.1f}x limit for its size tier{note}"
+        )
 
     if violations:
         return False, "; ".join(violations)
