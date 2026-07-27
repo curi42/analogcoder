@@ -100,7 +100,7 @@ def test_derivation_is_deterministic():
 
 def test_an_m_prefixed_mos_cap_is_not_classified_as_a_cap_by_its_model_name():
     # 실전 덱에서 발견된 실제 거짓 양성: MOSFET을 MOS 커패시터로 쓰는 관용구가
-    # refdes는 M이지만 모델명에 "cap"이 박혀 있다(TN33_DEP_CAP). refdes 접두는
+    # refdes는 M이지만 모델명에 "cap"이 박혀 있다(UNITDEV_N_DEP_CAP). refdes 접두는
     # SPICE의 보장이고 모델명은 관례일 뿐이므로 접두가 이긴다 - ctype이 이미
     # 단자 의미를 정했으면 모델명 서브스트링을 보지 않는다(area_limits.
     # _classify_ctype과 같은 규율). 이 소자를 "cap"으로 분류하면 밀러 매처의

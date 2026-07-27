@@ -384,7 +384,7 @@ def test_matches_are_scoped_to_their_block():
 
 def test_a_mos_used_as_a_cap_via_model_name_does_not_miller_pair_with_itself():
     # 실전 덱에서 실제로 나온 거짓 양성: MOSFET을 MOS 커패시터로 쓰는
-    # 관용구가 refdes는 M이지만 모델명에 "cap"이 들어 있다(TN33_DEP_CAP).
+    # 관용구가 refdes는 M이지만 모델명에 "cap"이 들어 있다(UNITDEV_N_DEP_CAP).
     # 소자가 게이트/드레인이 같은 넷에 물린 자기 참조 모양이면, 커패시터
     # 목록과 MOS 목록 둘 다에 오른 이 소자가 자기 자신과 밀러 쌍으로
     # 잘못 잡힌다. 하나의 refdes를 자기 자신과 짝짓는 매칭은 사실이 아니다.
@@ -433,7 +433,7 @@ def test_no_pattern_match_ever_pairs_a_component_with_itself():
         "* t\n"
         "M3 nzero vss nzero vss NCH_DEP_CAP w=1.5e-6 l=5.55e-6\n"
         "M0 nzero vss nzero vss NCH_RES_DUMMY w=1e-6 l=1e-6\n"
-        "Md0 vss vcci vss vss TN33_CAP w=9.71e-6 l=6.38e-6\n"
+        "Md0 vss vcci vss vss UNITDEV_N_DEP_CAP w=9.71e-6 l=6.38e-6\n"
         ".end\n"
     )
     matches = find_patterns(derive_structure(deck, "t"))

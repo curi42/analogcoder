@@ -237,8 +237,8 @@ def test_build_param_envs_drops_a_name_the_instances_disagree_on():
     # 정확히 필요할 때 None을 준다.
     envs = build_param_envs(WRAPPER_DECK)
 
-    assert "wn" not in envs["WRAP_PAIR_TN33"]
-    assert "ma1" not in envs["WRAP_PAIR_TN33"]
+    assert "wn" not in envs["WRAPCELL_A"]
+    assert "ma1" not in envs["WRAPCELL_A"]
 
 
 def test_trace_lands_an_instance_param_on_the_body_token():
@@ -276,7 +276,7 @@ def test_trace_follows_a_nested_instance():
     deck = (
         "* nested wrapper\n"
         ".subckt WRAP_PAIR b1 d1 g1 s1\n"
-        "ma1 d1 g1 s1 b1 TN33 w=wn l=ln m=mm\n"
+        "ma1 d1 g1 s1 b1 UNITDEV_N w=wn l=ln m=mm\n"
         ".ends WRAP_PAIR\n"
         ".subckt PAIRWRAP b d g s\n"
         "xdp b d g s WRAP_PAIR wn=wtop ln=ltop mm=mtop\n"

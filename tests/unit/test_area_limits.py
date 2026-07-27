@@ -503,7 +503,7 @@ WRAPPER_NETLIST = WRAPPER_DECK
 
 
 def test_wrapper_instance_width_growth_is_bounded():
-    # 이 파일이 존재하는 이유: 예전에는 xin1의 value가 "WRAP_PAIR_TN33"이라
+    # 이 파일이 존재하는 이유: 예전에는 xin1의 value가 "WRAPCELL_A"이라
     # ctype이 X로 남고 X 티어가 없어 어떤 성장도 허용됐다.
     components = index_baseline_components(WRAPPER_NETLIST)
 

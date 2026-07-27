@@ -65,9 +65,9 @@ that number was measured.
   the benchmarks that use a real PDK. A `pnp_05v5` is tiered on its emitter
   multiplier `m`, a count rather than a length.
   Where a deck is built from **wrapper cells** — a generic cell that
-  declares its geometry as parameters (`ma1 d g s b TN33_LVT w=wn l=ln m=ma1
+  declares its geometry as parameters (`ma1 d g s b UNITDEV_N_LVT w=wn l=ln m=ma1
   nf=nf_n`) with the real numbers arriving on the *instance* line
-  (`xwrap1 ... WRAP_PAIR_TN33 wn=2e-6 ma1=4`) — the gate **traces** each instance
+  (`xwrap1 ... WRAPCELL_A wn=2e-6 ma1=4`) — the gate **traces** each instance
   parameter to the body token it lands on (`params.annotate_traced_params` →
   `Component.traced_params`) and tiers on that. It never reads meaning out of
   the instance parameter's *name*: `wn`/`ma1`/`nf_n` are the designer's naming
@@ -466,7 +466,7 @@ that number was measured.
   ("could false-positive on a model name containing res/cap") on the grounds
   that no benchmark deck exercised it. The first real production deck did,
   three times: a MOSFET used as a MOS capacitor is written `m3 nzero vssi
-  nzero vssi TN33_DEP_CAP …` — refdes `m`, model name containing `cap`. Old
+  nzero vssi UNITDEV_N_DEP_CAP …` — refdes `m`, model name containing `cap`. Old
   `structure.py` read the model name and set `device_class="cap"`, which put
   the device in both `patterns.py`'s cap list and its MOS list, and the
   Miller matcher paired `m3` with itself. Fixed by mirroring
@@ -899,7 +899,7 @@ assuming a weak-model failure is a code bug.
 - **The trace needs the wrapper cell's definition *in the deck*, and an
   wrapper cell library normally arrives as an `.include`.** `parse_netlist`
   never follows includes (deliberate — see the `.option scale` note above), so
-  `xwrap1 … WRAP_PAIR_TN33_LVT wn=2e-6` against an include-only definition has no
+  `xwrap1 … WRAPCELL_A_LVT wn=2e-6` against an include-only definition has no
   traceable target at all and the gate is fully inert for it: `wn` 2 µm → 2 mm
   passes. This is *not* fixed by making the parser follow includes. Instead the
   blindness is recorded: `check_area_growth`'s richer sibling

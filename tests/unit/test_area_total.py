@@ -76,12 +76,12 @@ def test_total_area_and_area_gate_agree_on_the_adversarial_wn_case():
     갈라질 수 있는) 주석 로직이 생겨도 이 테스트는 절대 못 잡는다 -
     total_area() 자신을 통과시켜야만 그 회귀를 잡는다."""
     result = total_area(WRAPPER_DECK)
-    # WRAP_PAIR_TN33 has exactly two w/l-bearing devices (ma1, mb1); both must be
+    # WRAPCELL_A has exactly two w/l-bearing devices (ma1, mb1); both must be
     # skipped, not guessed, because wn cannot resolve at the definition level.
     assert result.counted == 0
     assert result.skipped == 2
 
     gate_indexed = index_baseline_components(WRAPPER_DECK)
     for refdes in ("ma1", "mb1"):
-        resolved = gate_indexed[f"WRAP_PAIR_TN33.{refdes}"].resolved_params
+        resolved = gate_indexed[f"WRAPCELL_A.{refdes}"].resolved_params
         assert "w" not in resolved

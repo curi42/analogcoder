@@ -11,11 +11,11 @@ not a fact.
 ## Root cause
 
 The offending devices are MOSFETs used as MOS capacitors
-(`m3 nzero vssi nzero vssi TN33_DEP_CAP …`, `md0 vssi vcci vssi vssi
-TN33_CAP …`): refdes prefix `m` (MOSFET), model name containing `cap`.
+(`m3 nzero vssi nzero vssi UNITDEV_N_DEP_CAP …`, `md0 vssi vcci vssi vssi
+UNITDEV_N_DEP_CAP …`): refdes prefix `m` (MOSFET), model name containing `cap`.
 
 `structure._classify_model` substring-matched the model name against
-`_MODEL_CLASS_MARKERS` unconditionally, so `TN33_DEP_CAP` → `device_class =
+`_MODEL_CLASS_MARKERS` unconditionally, so `UNITDEV_N_DEP_CAP` → `device_class =
 "cap"`. Because the refdes prefix is `m`, `_terminals_for` still gave it the
 full MOS terminal layout via `_TERMINALS_BY_CTYPE`. The device therefore
 landed in both `patterns._find_in_block`'s cap list (`device_class == "cap"`)
@@ -152,8 +152,8 @@ Manual confirmation against the reported defect's shape (synthetic, not the
 real deck):
 
 ```
-m3  nzero vssi nzero vssi TN33_DEP_CAP w=1.5e-6 l=5.55e-6 m=4 nf=1 geomod=0
-md0 vssi  vcci vssi  vssi TN33_CAP     w=9.71e-6 l=6.38e-6 m=2 nf=1 geomod=0
+m3  nzero vssi nzero vssi UNITDEV_N_DEP_CAP w=1.5e-6 l=5.55e-6 m=4 nf=1 geomod=0
+md0 vssi  vcci vssi  vssi UNITDEV_N_DEP_CAP     w=9.71e-6 l=6.38e-6 m=2 nf=1 geomod=0
 ```
 → `m3.device_class = None`, `md0.device_class = None` (both keep MOS
 terminal roles), `find_patterns` returns `[]` (no self-matches).

@@ -96,7 +96,7 @@ def _classify_model(component: Component) -> str | None:
     (area_limits._classify_ctype과 같은 규율: X 접두만 모델 이름을 본다 -
     X 인스턴스의 위치 값은 PDK 프리미티브 이름 그 자체라 ctype만으로는
     단자 의미를 알 수 없는 유일한 경우이기 때문이다). 실전 덱에서
-    "TN33_DEP_CAP"이라는 모델명의 MOSFET(refdes m3)이 이 규율 없이는
+    "UNITDEV_N_DEP_CAP"이라는 모델명의 MOSFET(refdes m3)이 이 규율 없이는
     device_class="cap"이 되어 밀러 매처의 캡 목록과 MOS 목록에 동시에
     올라 자기 자신과 짝지어졌다 - M/Q/R/C/L/D는 ctype 자체가 이미
     단자 의미를 정하므로 모델 이름의 res/cap/nfet/pfet 마커를 보지 않는다."""

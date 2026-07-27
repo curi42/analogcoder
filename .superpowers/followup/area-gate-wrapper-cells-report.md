@@ -48,8 +48,8 @@ MiM 캡을 패럿으로 비교). 원인은 매번 다르고 결과는 매번 같
 넣지 않았다). 같은 정의를 서로 다른 값으로 두 번 인스턴스화한다:
 
 ```
-xin1 ... WRAP_PAIR_TN33 wn=2e-6  ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1
-xin2 ... WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1
+xin1 ... WRAPCELL_A wn=2e-6  ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1
+xin2 ... WRAPCELL_A wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1
 ```
 
 | 변경 | 도달 토큰 | ctype | 허용 배수 |
@@ -72,7 +72,7 @@ xin2 ... WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1
 ```
 [{"refdes":"xin1","param":"wn","new_value":"6e-6"},    # 3x, 단독 허용
  {"refdes":"xin1","param":"ma1","new_value":"8"}]      # 2x, 단독 허용
--> (False, 'xin1 -> WRAP_PAIR_TN33.ma1: proposed change grows area by 6.00x,
+-> (False, 'xin1 -> WRAPCELL_A.ma1: proposed change grows area by 6.00x,
             exceeding the 2.0x limit for its size tier')
 ```
 형제 `mb1`은 `wn`의 3x만 받고 3.0x 티어라 통과한다 — 그룹이 소자 단위임을

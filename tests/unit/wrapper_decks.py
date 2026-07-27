@@ -10,12 +10,12 @@ test_params.py(추적이 무엇을 찾아내는가)와 test_area_limits.py(그 �
 # 파라미터로 두 번 인스턴스화한다.
 WRAPPER_DECK = (
     "* synthetic wrapper-cell deck (shape only)\n"
-    ".subckt WRAP_PAIR_TN33 b1 b2 d1 d2 g1 g2 s1 s2\n"
-    "ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n geomod=geomod\n"
-    "mb1 d2 g2 s2 b2 TN33_LVT w=wn l=ln m=mb1 nf=nf_n geomod=geomod\n"
-    ".ends WRAP_PAIR_TN33\n"
-    "xin1 vss vss dl dr gl gr com com WRAP_PAIR_TN33 wn=2e-6 ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1\n"
-    "xin2 vss vss d2l d2r g2l g2r com2 com2 WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1\n"
+    ".subckt WRAPCELL_A b1 b2 d1 d2 g1 g2 s1 s2\n"
+    "ma1 d1 g1 s1 b1 UNITDEV_N_LVT w=wn l=ln m=ma1 nf=nf_n geomod=geomod\n"
+    "mb1 d2 g2 s2 b2 UNITDEV_N_LVT w=wn l=ln m=mb1 nf=nf_n geomod=geomod\n"
+    ".ends WRAPCELL_A\n"
+    "xin1 vss vss dl dr gl gr com com WRAPCELL_A wn=2e-6 ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1\n"
+    "xin2 vss vss d2l d2r g2l g2r com2 com2 WRAPCELL_A wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1\n"
     ".end\n"
 )
 
@@ -25,7 +25,7 @@ WRAPPER_DECK = (
 SIBLING_INSTANCE_DECK = (
     "* synthetic sibling-instance deck (shape only)\n"
     ".subckt LEAF d g s b\n"
-    "ma1 d g s b TN33 w=wl l=1e-6 m=2\n"
+    "ma1 d g s b UNITDEV_N w=wl l=1e-6 m=2\n"
     ".ends LEAF\n"
     ".subckt PAIR d1 d2 g s b\n"
     "xl1 d1 g s b LEAF wl=wtop\n"
@@ -40,7 +40,7 @@ SIBLING_INSTANCE_DECK = (
 INCLUDE_ONLY_DECK = (
     "* synthetic include-only deck (shape only)\n"
     ".include 'inhouse_cells.inc'\n"
-    "xwrap1 d g s b WRAP_PAIR_TN33_LVT wn=2e-6 ln=3e-6 ma1=4 nf_n=1\n"
+    "xwrap1 d g s b WRAPCELL_A_LVT wn=2e-6 ln=3e-6 ma1=4 nf_n=1\n"
     ".end\n"
 )
 
@@ -62,7 +62,7 @@ CONTESTED_NAME_DECK = (
     "* synthetic contested-name deck (shape only)\n"
     ".subckt CELL d g s b wn=10e-6\n"
     ".param wn=60e-6\n"
-    "ma1 d g s b TN33 w=wn l=ln\n"
+    "ma1 d g s b UNITDEV_N w=wn l=ln\n"
     ".ends CELL\n"
     "xc1 a b c d CELL ln=1e-6\n"
     ".end\n"
@@ -73,8 +73,8 @@ CONTESTED_NAME_DECK = (
 PARTIAL_REACH_DECK = (
     "* synthetic partial-reach deck (shape only)\n"
     ".subckt WRAP_PAIR b1 b2 d1 d2 g1 g2 s1 s2\n"
-    "ma1 d1 g1 s1 b1 TN33 w=wn l=ln m=4\n"
-    "mb1 d2 g2 s2 b2 TN33 w='wn*kfac' l=ln m=4\n"
+    "ma1 d1 g1 s1 b1 UNITDEV_N w=wn l=ln m=4\n"
+    "mb1 d2 g2 s2 b2 UNITDEV_N w='wn*kfac' l=ln m=4\n"
     ".ends WRAP_PAIR\n"
     "xin1 vss vss dl dr gl gr com com WRAP_PAIR wn=2e-6 ln=3e-6\n"
     ".end\n"
@@ -86,7 +86,7 @@ UNRESOLVABLE_M_DECK = (
     "* synthetic unresolvable-m deck (shape only)\n"
     ".subckt CELL d g s b mm=8\n"
     ".param mm=8\n"
-    "ma1 d g s b TN33 w=wn m=mm\n"
+    "ma1 d g s b UNITDEV_N w=wn m=mm\n"
     ".ends CELL\n"
     "xc1 a b c d CELL wn=10e-6\n"
     ".end\n"

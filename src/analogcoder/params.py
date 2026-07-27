@@ -274,7 +274,7 @@ def build_param_envs(text: str) -> dict[str | None, dict[str, float]]:
 # 줄**에서 정해진다:
 #
 #   .subckt WRAP_PAIR b1 b2 d1 d2 g1 g2 s1 s2
-#   ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n
+#   ma1 d1 g1 s1 b1 UNITDEV_N_LVT w=wn l=ln m=ma1 nf=nf_n
 #   .ends
 #   xin1 ... WRAP_PAIR wn=2e-6 ln=3e-6 ma1=4 nf_n=1
 #
