@@ -38,6 +38,7 @@ that number was measured.
   system prompt + schema + tool declarations (`ToolSpec`, not
   provider-specific). Every public function takes a required `backend:
   AgentBackend` as its last positional arg.
+
 ### Spec, topologies, and the area gate
 
 - `topologies.py` — a small curated library of pre-verified amplifier
@@ -90,6 +91,7 @@ that number was measured.
   always in lockstep (`push_netlist_version`/`rollback` operate on the whole
   set atomically — never partially applied across testbenches). See
   `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
+
 ### The optimization phase
 
 - `optimizer.py` / `agents/optimizer.py` / `area.py` — a second phase that runs
@@ -227,6 +229,7 @@ that number was measured.
   section (objective/area before→after, steps, corner confirmation, and the
   guard-infeasible / area-coverage / phase-failure reasons — without those the
   run still says PASS while the phase did nothing).
+
 ### Deterministic netlist derivation, and what the tuner is shown
 
 - `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
