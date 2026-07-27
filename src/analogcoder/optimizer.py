@@ -3,7 +3,12 @@ from typing import Callable
 
 from analogcoder.area import total_area
 from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
-from analogcoder.judge_tools import evaluate_criteria, guard_band_violations, ratio_allowances
+from analogcoder.judge_tools import (
+    corner_allowances,
+    evaluate_criteria,
+    guard_band_violations,
+    ratio_allowances,
+)
 from analogcoder.netlist import (
     Component,
     apply_changes,
@@ -25,8 +30,12 @@ STEP_RATIO = 0.9
 class OptimizerAgents:
     propose: Callable
     simulate: Callable
-    # Task 6(코너 확인)이 채운다. 여기서는 쓰지 않지만 미리 자리를 잡아 둔다 -
-    # Task 6이 이 dataclass의 시그니처를 바꾸지 않게 하려는 것이다.
+    # 코너 스윕. `(netlist_texts) -> pvt.run_full_pvt_sweep의 결과 dict`인
+    # **동기** 콜러블이다 - run_full_pvt_sweep 자체가 동기이고 LLM이 끼지
+    # 않는다(코너 변동은 순수하게 기계적이다). None이면 코너를 잴 수단이
+    # 없다는 뜻이고, 그때는 검증했다고 말하지 않는다.
+    #
+    # frozen이 아닌 것은 의도다: 테스트가 구성 후에 대입한다.
     verify_corners: Callable | None = None
 
 
@@ -162,6 +171,47 @@ async def _run_simulation(simulate, netlist_texts: dict[str, str], spec) -> tupl
     return result, None
 
 
+def _run_sweep(verify_corners, netlist_texts: dict[str, str]) -> tuple[dict | None, str | None]:
+    """(스윕 결과, 실패 이유). 실패하면 (None, 이유).
+
+    _run_simulation과 같은 계약이고 같은 이유다: 이 단계에는 **FAIL 결과가
+    없다.** 코너 스윕은 코너마다 sim_backend.run을 부르고(pvt.run_full_pvt_sweep),
+    ngspice는 소자 bin을 벗어나면 경고가 아니라 실행 중단으로 답한다. 그
+    예외가 새어 나가면 이미 통과한 실행이 크래시로 끝나는데, 그것이 바닥
+    규칙("최적화는 시작보다 나쁜 결과를 내지 않는다")의 가장 나쁜 위반이다.
+
+    실패한 스윕은 "통과하지 않은 스윕"으로 접는다 - 진입에서는 최적화를 하지
+    않는 쪽, 이분 탐색에서는 앵커 쪽으로 미는 쪽이라 어느 자리에서도 보수적인
+    방향이다. 대신 사유를 반드시 이력에 남긴다: 조용히 무력화되는 것이 이
+    저장소가 반복해서 당한 실패 모양이라, 스윕이 늘 터지는 환경에서 최적화가
+    영구히 UNCHANGED가 되더라도 그 이유가 history에 보여야 한다."""
+    try:
+        sweep = verify_corners(netlist_texts)
+    except Exception as exc:  # noqa: BLE001 - 계약상 어떤 실패도 결과를 크래시로 바꾸면 안 된다
+        return None, f"corner sweep raised {type(exc).__name__}: {exc}"
+
+    if not isinstance(sweep, dict) or "overall_pass" not in sweep:
+        # 판정 키가 없는 것을 "통과"로 읽으면 아무것도 확인하지 않고
+        # corner_confirmed=True를 내게 된다.
+        return None, (
+            f"corner sweep returned an unusable result "
+            f"(type {type(sweep).__name__}, no 'overall_pass')"
+        )
+
+    return sweep, None
+
+
+def _sweep_event(sweep: dict | None, failure: str | None, **extra) -> dict:
+    """스윕 하나를 이력에 남길 모양. 실패한 스윕도 같은 모양으로 남는다."""
+    return {
+        "overall_pass": bool(sweep and sweep.get("overall_pass")),
+        "summary": sweep.get("summary") if sweep else None,
+        "criteria": sweep.get("criteria") if sweep else None,
+        "reason": failure,
+        **extra,
+    }
+
+
 def _result(
     status: str,
     state,
@@ -171,6 +221,7 @@ def _result(
     area_after: float,
     accepted: int = 0,
     rejected: int = 0,
+    pvt_sweep: dict | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -180,67 +231,99 @@ def _result(
         "area_after": area_after,
         "steps_accepted": accepted,
         "steps_rejected": rejected,
-        # Task 5는 코너를 모른다. Task 6이 확인 스윕을 얹고 나서야 True가 될
-        # 수 있다 - 여기서 True를 내면 확인하지 않은 것을 확인했다고 말하는 것이다.
-        "corner_confirmed": False,
+        # 돌려주는 넷리스트에 **통과한 스윕이 붙어 있을 때만** True다.
+        # 코너를 잴 수단이 없었거나(pvt_sweep is None) 스윕이 실패했으면
+        # False - 확인하지 않은 것을 확인했다고 말하지 않는다. 두 필드가 한
+        # 사실에서 파생되므로 서로 어긋날 수 없다.
+        "corner_confirmed": bool(pvt_sweep and pvt_sweep.get("overall_pass")),
+        "pvt_sweep": pvt_sweep,
         "final_netlist_paths": state.current_netlist_paths(),
     }
 
 
-async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
-    """이미 모든 기준을 통과한 회로의 남은 마진을 목적값에 쓰는 결정론적 탐색.
+def _version_index(state, canonical_name: str) -> int:
+    """현재 버전의 인덱스. state.netlist_versions는 테스트벤치별로 lockstep이라
+    canonical 하나만 봐도 된다."""
+    return len(state.netlist_versions[canonical_name]) - 1
 
-    기존 루프의 verify_post를 쓰지 않는다. 그쪽 계약은 "나빠졌으면 롤백"인데
-    좋은 최적화 단계는 **의도적으로** 마진을 소비하므로, 그 계약을 재사용하면
-    성공한 축소마다 롤백이 난다. 수락 규칙은 결정론적이고 LLM이 필요 없다.
 
-    실패(FAIL) 결과가 없다는 점도 의도적이다 - 개선하지 못하면 이미 통과한
-    설계를 그대로 돌려준다."""
-    canonical_name = spec.canonical.name
-    start_text = netlist_texts[canonical_name]
-    area_before = total_area(start_text).area
+def _texts_at(state, index: int) -> dict[str, str]:
+    """버전 index의 넷리스트 원문. 상태를 건드리지 않는다.
 
-    if spec.optimize is None:
-        state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
-        return _result("SKIPPED", state, None, None, area_before, area_before)
+    rollback()은 pop뿐이라 앞으로 갈 수 없으므로, 이분 탐색이 중간 지점을
+    확인하려면 **비파괴적** 조회가 필요하다. 새 상태 API를 만드는 대신 이미
+    공개된 netlist_versions의 경로를 읽고, 착지한 뒤에야 rollback()을 필요한
+    횟수만큼 부른다."""
+    texts = {}
+    for name, paths in state.netlist_versions.items():
+        with open(paths[index]) as f:
+            texts[name] = f.read()
+    return texts
 
+
+def _rollback_to(state, canonical_name: str, index: int) -> None:
+    """rollback()을 한 단계씩 반복해 index까지 되돌린다."""
+    while _version_index(state, canonical_name) > index:
+        state.rollback()
+
+
+def _bisect_last_passing(
+    state, agents: OptimizerAgents, canonical_name: str, anchor_index: int, anchor_sweep: dict
+) -> tuple[int, dict]:
+    """앵커와 현재 사이에서 코너를 통과하는 **마지막** 버전을 찾아 거기 착지한다.
+
+    가드밴드를 올려 다시 탐색하는 안은 버렸다. 그것은 같은 추측을 더 크게
+    다시 돌리는 것이라 비용 상한이 없고, 다시 실패하면 또 올릴지 말지를
+    판단할 근거가 없다. 이분 탐색은 상한이 있고(구간 n에 대해 ceil(log2 n)
+    회), 방향이 정해져 있고, 최악이어도 앵커 - 즉 시작점 - 에 착지한다.
+
+    불변식: lo는 통과가 **확인된** 인덱스, hi는 실패가 **확인된** 인덱스.
+    lo의 통과는 진입 스윕이 이미 확인해 두었다 - 진입 스윕이 추가 비용이
+    아니라 앵커인 이유가 이것이다. 확인되지 않은 인덱스에 착지하는 경로는
+    없으므로, 돌려주는 넷리스트에는 언제나 통과한 스윕이 붙는다."""
+    lo = anchor_index
+    hi = _version_index(state, canonical_name)
+    passing = {lo: anchor_sweep}
+
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        sweep, failure = _run_sweep(agents.verify_corners, _texts_at(state, mid))
+        state.log_event("optimize_bisect_probe", _sweep_event(sweep, failure, version=mid))
+        if sweep is not None and sweep.get("overall_pass"):
+            lo = mid
+            passing[lo] = sweep
+        else:
+            # 실패한(또는 터진) 스윕은 통과가 아니다. 어느 쪽이든 앵커 쪽으로
+            # 미는 방향이라 보수적이다.
+            hi = mid
+
+    _rollback_to(state, canonical_name, lo)
+    return lo, passing[lo]
+
+
+async def _search(
+    spec,
+    state,
+    agents: OptimizerAgents,
+    canonical_name: str,
+    start_text: str,
+    baseline_measurements: dict,
+    objective_before: float,
+    area_before: float,
+    allowances: dict[str, float],
+) -> dict:
+    """nominal 한 점에서 도는 탐색 루프. 코너는 모른다 - 여유분을 인자로 받는다.
+
+    records는 **버전 인덱스 → 그 버전에서 잰 값**이다. 확인 스윕이 실패해서
+    이분 탐색이 중간 버전에 착지했을 때, 마지막 버전이 아니라 착지한 버전의
+    수치를 보고해야 하기 때문이다."""
     objective_name = spec.optimize.objective
-
-    # state가 인자와 같은 덱을 들고 있는지 맞춘다. 루프는 매 단계 state에서
-    # 현재 텍스트를 다시 읽고 거절 시 state.rollback()으로 되돌리므로, 둘이
-    # 갈라져 있으면 인자로 받은 덱이 아니라 state의 덱을 조용히 최적화하게
-    # 되고, state가 비어 있으면 첫 롤백에서 터진다.
-    if state.current_netlist_texts() != netlist_texts:
-        state.push_netlist_version(netlist_texts)
-
-    # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
-    sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
-    state.log_event(
-        "optimize_baseline",
-        {"objective": objective_name, **(sim_result or {"failure": sim_failure})},
-    )
-    baseline_measurements = sim_result["measurements"] if sim_result else {}
-    objective_before = baseline_measurements.get(objective_name)
-
-    if objective_before is None:
-        # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
-        # 판정할 수 없다. 통과한 설계를 그대로 둔다.
-        state.log_event(
-            "optimize_step",
-            {
-                "refdes": None, "param": None, "before": None, "after": None,
-                "objective": None, "area": area_before, "accepted": False,
-                "gate": None,
-                "reason": sim_failure
-                or f"objective {objective_name!r} is not among the measurements",
-            },
-        )
-        return _result("UNCHANGED", state, None, None, area_before, area_before)
+    anchor_index = _version_index(state, canonical_name)
+    records = {anchor_index: {"objective": objective_before, "area": area_before}}
 
     # **최적화 시작 시점**의 넷리스트로 만든다 - 에어리어 게이트가 여기서 막아야
     # 할 것은 최적화 자신이 만든 성장이다.
     baseline_components = index_baseline_components(start_text)
-    allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
 
     structure = derive_structure(start_text, spec.circuit_name)
     paths = build_signal_paths(structure)
@@ -389,6 +472,9 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
                 best_objective = objective
                 best_area = area
                 accepted_count += 1
+                records[_version_index(state, canonical_name)] = {
+                    "objective": objective, "area": area,
+                }
                 continue
 
             state.rollback()
@@ -398,8 +484,150 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
             # 쪽(후보 소진)이 예산도 아낀다.
             break
 
-    status = "OPTIMIZED" if accepted_count else "UNCHANGED"
-    return _result(
-        status, state, objective_before, best_objective, area_before, best_area,
-        accepted=accepted_count, rejected=rejected_count,
+    return {"accepted": accepted_count, "rejected": rejected_count, "records": records}
+
+
+async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
+    """이미 모든 기준을 통과한 회로의 남은 마진을 목적값에 쓰는 결정론적 탐색.
+
+    기존 루프의 verify_post를 쓰지 않는다. 그쪽 계약은 "나빠졌으면 롤백"인데
+    좋은 최적화 단계는 **의도적으로** 마진을 소비하므로, 그 계약을 재사용하면
+    성공한 축소마다 롤백이 난다. 수락 규칙은 결정론적이고 LLM이 필요 없다.
+
+    실패(FAIL) 결과가 없다는 점도 의도적이다 - 개선하지 못하면 이미 통과한
+    설계를 그대로 돌려준다.
+
+    코너를 잴 수 있으면(spec.pvt_corners와 agents.verify_corners가 둘 다 있으면)
+    nominal 탐색을 진입 스윕/확인 스윕으로 감싼다. nominal 마진과 코너 마진은
+    다른 양이기 때문이다 - 한 점에서 잰 여유를 다 써도 코너에서 무너질 수 있다.
+    진입 스윕은 앵커(되돌아갈 안전한 지점)이자 실측 여유분의 출처이고, 확인
+    스윕이 실패하면 다시 탐색하지 않고 통과하는 마지막 버전으로 이분 탐색해
+    내려간다. **최적화는 시작보다 나쁜 결과를 내지 않는다** - 이것이 없으면
+    최적화를 돌렸다는 이유로 통과하던 설계가 실패로 끝난다."""
+    canonical_name = spec.canonical.name
+    start_text = netlist_texts[canonical_name]
+    area_before = total_area(start_text).area
+
+    if spec.optimize is None:
+        state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
+        return _result("SKIPPED", state, None, None, area_before, area_before)
+
+    objective_name = spec.optimize.objective
+
+    # state가 인자와 같은 덱을 들고 있는지 맞춘다. 루프는 매 단계 state에서
+    # 현재 텍스트를 다시 읽고 거절 시 state.rollback()으로 되돌리므로, 둘이
+    # 갈라져 있으면 인자로 받은 덱이 아니라 state의 덱을 조용히 최적화하게
+    # 되고, state가 비어 있으면 첫 롤백에서 터진다.
+    if state.current_netlist_texts() != netlist_texts:
+        state.push_netlist_version(netlist_texts)
+
+    # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
+    sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
+    state.log_event(
+        "optimize_baseline",
+        {"objective": objective_name, **(sim_result or {"failure": sim_failure})},
+    )
+    baseline_measurements = sim_result["measurements"] if sim_result else {}
+    objective_before = baseline_measurements.get(objective_name)
+
+    if objective_before is None:
+        # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
+        # 판정할 수 없다. 통과한 설계를 그대로 둔다.
+        state.log_event(
+            "optimize_step",
+            {
+                "refdes": None, "param": None, "before": None, "after": None,
+                "objective": None, "area": area_before, "accepted": False,
+                "gate": None,
+                "reason": sim_failure
+                or f"objective {objective_name!r} is not among the measurements",
+            },
+        )
+        return _result("UNCHANGED", state, None, None, area_before, area_before)
+
+    # 코너를 잴 수단이 있는가. 스펙에 코너가 없거나 스윕 콜러블이 없으면 코너
+    # **인식이 없는** 탐색이다 - 비율 여유분을 쓰고, 결과는 확인이 없었다고
+    # 말한다(corner_confirmed=False). 검증하지 않은 것을 검증된 것처럼 보고하지
+    # 않는다.
+    corner_capable = spec.pvt_corners is not None and agents.verify_corners is not None
+    anchor_index = _version_index(state, canonical_name)
+    entry_sweep = None
+
+    if corner_capable:
+        # 진입 스윕. 추가 비용이 아니라 **앵커**다: "실패하면 시작점으로
+        # 되돌린다"는 회수 계획은 시작점이 코너를 통과할 때만 안전하다.
+        entry_sweep, entry_failure = _run_sweep(
+            agents.verify_corners, state.current_netlist_texts()
+        )
+        state.log_event(
+            "optimize_entry_sweep", _sweep_event(entry_sweep, entry_failure, version=anchor_index)
+        )
+        if entry_sweep is None or not entry_sweep.get("overall_pass"):
+            # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다. 되돌아갈
+            # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다.
+            return _result(
+                "UNCHANGED", state, objective_before, objective_before,
+                area_before, area_before, pvt_sweep=entry_sweep,
+            )
+        # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
+        # 읽는다. nominal은 measurement로, 스윕은 기준 이름으로 색인되므로
+        # 둘을 잇는 criteria 목록이 반드시 필요하다 - 인자가 셋인 이유다.
+        allowances = corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria)
+    else:
+        allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
+
+    outcome = await _search(
+        spec, state, agents, canonical_name, start_text, baseline_measurements,
+        objective_before, area_before, allowances,
+    )
+    accepted = outcome["accepted"]
+    rejected = outcome["rejected"]
+    records = outcome["records"]
+
+    def _final(status: str, version: int, accepted_count: int, rejected_count: int, sweep) -> dict:
+        record = records[version]
+        return _result(
+            status, state, objective_before, record["objective"], area_before, record["area"],
+            accepted=accepted_count, rejected=rejected_count, pvt_sweep=sweep,
+        )
+
+    if not corner_capable:
+        return _final(
+            "OPTIMIZED" if accepted else "UNCHANGED",
+            _version_index(state, canonical_name), accepted, rejected, None,
+        )
+
+    if not accepted:
+        # 밟은 단계가 없으므로 확인할 것도 없다. 진입 스윕이 곧 이 넷리스트의
+        # 스윕이다 - 다시 도는 것은 같은 덱에 같은 값을 두 번 치르는 것이다.
+        return _final("UNCHANGED", anchor_index, 0, rejected, entry_sweep)
+
+    end_index = _version_index(state, canonical_name)
+    confirm_sweep, confirm_failure = _run_sweep(
+        agents.verify_corners, state.current_netlist_texts()
+    )
+    state.log_event(
+        "optimize_confirm_sweep", _sweep_event(confirm_sweep, confirm_failure, version=end_index)
+    )
+    if confirm_sweep is not None and confirm_sweep.get("overall_pass"):
+        return _final("OPTIMIZED", end_index, accepted, rejected, confirm_sweep)
+
+    # 확인이 실패했다. 다시 탐색하지 않는다 - 어느 단계가 코너를 깼는지는
+    # 이미 구간 안에 있고, 통과하는 마지막 지점을 이분 탐색으로 찾는 편이
+    # 상한이 있다. 최악이어도 앵커에 착지하므로 시작보다 나빠질 수 없다.
+    landed, landed_sweep = _bisect_last_passing(
+        state, agents, canonical_name, anchor_index, entry_sweep
+    )
+    survived = landed - anchor_index
+    state.log_event(
+        "optimize_bisect_result",
+        {"version": landed, "anchor": anchor_index, "end": end_index,
+         "steps_kept": survived, "steps_walked_back": accepted - survived},
+    )
+    # 착지가 앵커면 남은 것이 없다 - 시작 설계를 그대로 돌려준다. 보고하는
+    # 수락 수는 **살아남은** 단계 수다: 코너에서 되돌린 단계를 수락으로 세면
+    # 결과가 돌려주는 넷리스트를 설명하지 못한다.
+    return _final(
+        "UNCHANGED" if survived == 0 else "OPTIMIZED",
+        landed, survived, rejected + (accepted - survived), landed_sweep,
     )
