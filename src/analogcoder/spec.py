@@ -21,6 +21,17 @@ class PVTCorners:
 
 
 @dataclass
+class OptimizeSpec:
+    """스펙에 여유가 있을 때 무엇을 어디까지 줄일지. 선언이 없으면
+    최적화 단계 자체를 돌리지 않는다 - 조용히 안 도는 것과 명시적으로
+    안 도는 것은 다르다."""
+
+    objective: str
+    area_budget: float
+    guard_band: float
+
+
+@dataclass
 class Testbench:
     name: str
     netlist_path: str
@@ -34,6 +45,7 @@ class TargetSpec:
     circuit_name: str
     testbenches: list[Testbench]
     pvt_corners: PVTCorners | None = None
+    optimize: OptimizeSpec | None = None
 
     @property
     def canonical(self) -> Testbench:
@@ -68,6 +80,17 @@ def _load_pvt_corners(raw: dict) -> PVTCorners | None:
     )
 
 
+def _load_optimize(raw: dict) -> OptimizeSpec | None:
+    raw_opt = raw.get("optimize")
+    if raw_opt is None:
+        return None
+    return OptimizeSpec(
+        objective=raw_opt["objective"],
+        area_budget=float(raw_opt["area_budget"]),
+        guard_band=float(raw_opt["guard_band"]),
+    )
+
+
 def load_spec(path: str) -> TargetSpec:
     with open(path) as f:
         raw = yaml.safe_load(f)
@@ -84,4 +107,4 @@ def load_spec(path: str) -> TargetSpec:
         for tb in raw["testbenches"]
     ]
 
-    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw))
+    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw), optimize=_load_optimize(raw))
