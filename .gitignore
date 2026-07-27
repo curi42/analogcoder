@@ -6,3 +6,7 @@ runs/
 .pytest_cache/
 .worktrees/
 runs_*.log
+
+# 에이전트 작업 공간 - 브리프, 리포트, 리뷰 패키지. 산출물이 아니라 과정이고,
+# 기록은 git 히스토리가 한다. sdd/ 는 자기 .gitignore 로 이미 무시된다.
+.superpowers/
