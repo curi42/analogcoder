@@ -680,3 +680,108 @@ async def test_exhausting_the_candidates_is_not_reported_as_a_spent_budget(tmp_p
 
     events = [json.loads(line) for line in open(state.history_path)]
     assert not [e for e in events if e["step"] == "optimize_budget_exhausted"]
+
+
+# --- 최종 리뷰 Finding 5: 가드밴드가 기준선에서 이미 불가능할 수 있다 --------
+# benchmarks/bandgap의 spec.yaml은 코너 없이 optimize:를 실어 보내므로 비율
+# 대체가 vbgout_v >= 1.44 AND <= 1.024를 동시에 요구한다 - 1.2389V 기준선이
+# 이미 위반하는 빈 구간이라 어떤 후보도 수락될 수 없다. 코너를 재는 경로에서도
+# 도달한다: 어떤 기준에서 nominal이 모든 코너보다 나쁘면 |worst - nominal|이
+# nominal보다 엄격한 허용선을 만든다.
+
+
+@pytest.mark.asyncio
+async def test_a_guard_band_the_baseline_already_violates_is_recorded(tmp_path):
+    # guard_band 1.0 -> 여유분 300 -> 허용선 0. 기준선 235는 iq<=300을
+    # 통과하지만 허용선 0은 어떤 값으로도 못 지킨다.
+    spec = _spec(optimize=OptimizeSpec(objective="iq_ua", area_budget=1.10, guard_band=1.0))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, spec, state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert result["guard_infeasible"]
+    assert "iq" in result["guard_infeasible"][0]
+    events = [json.loads(line) for line in open(state.history_path)]
+    logged = [e for e in events if e["step"] == "optimize_guard_infeasible"]
+    assert len(logged) == 1
+    assert logged[0]["infeasible"] is True
+    assert logged[0]["violations"]
+
+
+@pytest.mark.asyncio
+async def test_a_feasible_guard_band_still_logs_the_check(tmp_path):
+    # 이벤트를 조건부로 남기면 "검사했고 문제없었다"와 "검사 자체가 사라졌다"가
+    # 같은 모양이 된다 - 이 저장소가 세 번 당한 조용한 무력화의 정확한 형태다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "OPTIMIZED"
+    assert result["guard_infeasible"] == []
+    events = [json.loads(line) for line in open(state.history_path)]
+    logged = [e for e in events if e["step"] == "optimize_guard_infeasible"]
+    assert len(logged) == 1
+    assert logged[0]["infeasible"] is False
+
+
+# --- 최종 리뷰 Finding 3: 면적 예산이 조용히 무력화될 수 있다 ----------------
+# total_area는 build_param_envs로 해소하는데, 그것은 인스턴스들이 이견을 보이는
+# 이름을 의도적으로 버린다(래퍼 셀 덱에서는 그것이 정상이다). 그러면
+# area_before == 0 이 되고 예산 검사가 통째로 꺼진다 - 거절도, 로그도, 흔적도
+# 없이. AreaTotal의 counted/skipped는 바로 이것을 알아차리라고 있는 값인데
+# 지금까지 test_area_total.py 밖에서는 아무도 읽지 않았다.
+
+UNRESOLVABLE_AREA_DECK = (
+    "* t\n"
+    ".subckt AMP a b vss\n"
+    "M1 a b vss vss NCH w='wx*2' l=1e-6 m=4\n"
+    ".ends AMP\n"
+    "Xa p q 0 AMP\n"
+    "Vdd vdd 0 DC 1.8\n"
+    ".end\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_an_unenforceable_area_budget_says_so_instead_of_disappearing(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": UNRESOLVABLE_AREA_DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": UNRESOLVABLE_AREA_DECK}, _spec(), state, agents)
+
+    assert result["area_before"] == 0.0
+    coverage = result["area_coverage"]
+    assert coverage["counted"] == 0 and coverage["skipped"] == 1
+    assert coverage["budget_enforced"] is False
+    assert "not enforced" in coverage["reason"]
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    baseline = [e for e in events if e["step"] == "optimize_baseline"]
+    assert len(baseline) == 1
+    assert baseline[0]["area_counted"] == 0
+    assert baseline[0]["area_skipped"] == 1
+    assert baseline[0]["area_budget_enforced"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_enforceable_area_budget_reports_its_coverage_too(tmp_path):
+    # 반대쪽도 고정한다 - 상수 False를 넣어도 위 테스트는 통과한다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    coverage = result["area_coverage"]
+    assert coverage["counted"] == 1 and coverage["skipped"] == 0
+    assert coverage["budget_enforced"] is True
+    assert coverage["reason"] is None
+    events = [json.loads(line) for line in open(state.history_path)]
+    baseline = [e for e in events if e["step"] == "optimize_baseline"][0]
+    assert baseline["area_counted"] == 1 and baseline["area_budget_enforced"] is True

@@ -230,6 +230,8 @@ def _result(
     pvt_sweep: dict | None = None,
     corner_failure: str | None = None,
     failure: str | None = None,
+    guard_infeasible: list[str] | None = None,
+    area_coverage: dict | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -257,6 +259,14 @@ def _result(
         # 한 필드에 뭉치면 "코너를 못 쟀다"와 "LLM 호출이 실패했다"가 같은
         # 모양이 된다. 정상 경로에서는 언제나 None이다.
         "failure": failure,
+        # 기준선 자체가 자기 가드밴드를 못 지키는 기준들. 비어 있으면 검사했고
+        # 문제가 없었다는 뜻이다 - 키가 없는 것과 구별되어야 한다.
+        "guard_infeasible": list(guard_infeasible or []),
+        # 면적 예산이 실제로 걸렸는가와, 걸리지 않았다면 왜인가. area_before가
+        # 0이면 area/area_before 비교가 통째로 꺼지는데, 그것이 결과에도
+        # 이력에도 안 보이면 "예산이 있었지만 안 걸렸다"와 "예산이 아예 없다"가
+        # 같은 모양이 된다.
+        "area_coverage": area_coverage,
         "final_netlist_paths": state.current_netlist_paths(),
     }
 
@@ -463,6 +473,9 @@ async def _search(
             # 앞에서 걸러진다.
             area = total_area(new_texts[canonical_name]).area
             event["area"] = area
+            # area_before가 0이면 비율이 정의되지 않아 예산이 통째로 꺼진다.
+            # 그것이 실제로 도달하는 경우라, 껐다는 사실을 _optimize가
+            # area_coverage로 이력과 결과에 적어 둔다 - 조용히 사라지지 않게.
             if area_before > 0 and area / area_before > spec.optimize.area_budget:
                 event["reason"] = (
                     f"area {area:g} is {area / area_before:.3f}x the starting area, "
@@ -566,7 +579,8 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
             _rollback_to(state, spec.canonical.name, progress["safe_index"])
         area_before = progress.get("area_before", 0.0)
         return _result(
-            "UNCHANGED", state, None, None, area_before, area_before, failure=reason
+            "UNCHANGED", state, None, None, area_before, area_before, failure=reason,
+            area_coverage=progress.get("area_coverage"),
         )
 
 
@@ -595,12 +609,38 @@ async def _optimize(
     여기서만 알 수 있다."""
     canonical_name = spec.canonical.name
     start_text = netlist_texts[canonical_name]
-    area_before = total_area(start_text).area
+    start_area = total_area(start_text)
+    area_before = start_area.area
+    # 면적 예산이 실제로 걸리는지를 여기서 한 번 정하고, 그 사실을 이력과
+    # 결과 양쪽에 싣는다. AreaTotal이 counted/skipped를 드러내는 이유가 정확히
+    # 이것인데(docstring), 지금까지 이 두 값을 읽는 곳이 자기 테스트 말고는
+    # 없었다. area_before가 0이면 아래의 `area_before > 0` 조건 때문에 예산
+    # 비교가 통째로 꺼지는데, 그것이 실제로 도달하는 경우다: 래퍼 셀
+    # 덱에서는 인스턴스마다 wn이 달라 build_param_envs가 그 이름을 버리고
+    # (tests/unit/test_area_total.py가 `counted == 0, skipped == 2`로 고정),
+    # 그러면 해소되는 소자가 하나도 없다.
+    #
+    # 이 저장소에서 게이트가 조용히 무력화된 것이 세 번이고 세 번 다 실행
+    # 로그에 보이지 않았다. 네 번째가 되지 않게 사실을 적는다.
+    area_coverage = {
+        "counted": start_area.counted,
+        "skipped": start_area.skipped,
+        "budget_enforced": area_before > 0,
+        "reason": None if area_before > 0 else (
+            f"the area budget is not enforced: no device's w/l/m could be resolved in "
+            f"{canonical_name} ({start_area.counted} counted, {start_area.skipped} skipped), "
+            f"so the starting area is 0 and every candidate's area ratio is undefined"
+        ),
+    }
     progress["area_before"] = area_before
+    progress["area_coverage"] = area_coverage
 
     if spec.optimize is None:
         state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
-        return _result("SKIPPED", state, None, None, area_before, area_before)
+        return _result(
+            "SKIPPED", state, None, None, area_before, area_before,
+            area_coverage=area_coverage,
+        )
 
     objective_name = spec.optimize.objective
 
@@ -617,7 +657,15 @@ async def _optimize(
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
     state.log_event(
         "optimize_baseline",
-        {"objective": objective_name, **(sim_result or {"failure": sim_failure})},
+        {
+            "objective": objective_name,
+            "area_before": area_before,
+            "area_counted": area_coverage["counted"],
+            "area_skipped": area_coverage["skipped"],
+            "area_budget_enforced": area_coverage["budget_enforced"],
+            "area_reason": area_coverage["reason"],
+            **(sim_result or {"failure": sim_failure}),
+        },
     )
     baseline_measurements = sim_result["measurements"] if sim_result else {}
     objective_before = baseline_measurements.get(objective_name)
@@ -635,7 +683,10 @@ async def _optimize(
                 or f"objective {objective_name!r} is not among the measurements",
             },
         )
-        return _result("UNCHANGED", state, None, None, area_before, area_before)
+        return _result(
+            "UNCHANGED", state, None, None, area_before, area_before,
+            area_coverage=area_coverage,
+        )
 
     # 코너를 잴 수단이 있는가. 스펙에 코너가 없거나 스윕 콜러블이 없으면 코너
     # **인식이 없는** 탐색이다 - 비율 여유분을 쓰고, 결과는 확인이 없었다고
@@ -660,7 +711,7 @@ async def _optimize(
             return _result(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,
-                corner_failure=entry_failure,
+                corner_failure=entry_failure, area_coverage=area_coverage,
             )
         # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
         # 읽는다. nominal은 measurement로, 스윕은 기준 이름으로 색인되므로
@@ -688,6 +739,38 @@ async def _optimize(
     else:
         allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
 
+    # **기준선이 자기 가드밴드를 지키는가.** 지키지 못하면 어떤 후보도 수락될
+    # 수 없다: 수락 규칙이 매 단계 이 같은 검사를 돌리기 때문이다.
+    #
+    # 조건은 "pvt_corners가 없다"가 아니다 - benchmarks/bandgap의 spec.yaml이
+    # 그 사례일 뿐이고(비율 대체가 vbgout_v >= 1.44 AND <= 1.024라는 빈 구간을
+    # 요구하는데 1.2389V 기준선이 이미 위반한다), 실측 경로에서도 도달한다:
+    # 어떤 기준에서 nominal이 모든 코너보다 나쁘면 |worst - nominal|이
+    # nominal보다 엄격한 허용선을 만든다.
+    #
+    # **조기 반환하지 않는다 - 의도적인 선택이다.** (1) 위반한 기준을 도로
+    # 안쪽으로 미는 단계가 원리적으로 존재한다(예: 가드를 깬 것이 목적값과
+    # 같은 방향으로 움직이는 기준일 때). 여기서 끊으면 그 경우를 영구히
+    # 못 찾는다. (2) 비용 상한이 이미 작다: 후보 하나가 거절되면 그 후보는
+    # 소진되므로(루프 끝의 break) 최악이 후보 수만큼의 시뮬레이션이다.
+    # (3) 이 저장소가 반복해서 당한 실패는 "조용히 아무것도 안 함"이지
+    # "너무 많이 함"이 아니다 - 그래서 고치는 자리는 가시성이다.
+    # 사유는 이벤트로도 결과로도 나간다.
+    guard_infeasible = guard_band_violations(
+        baseline_measurements, spec.all_criteria, allowances
+    )
+    # 조건 없이 남긴다. 위반이 있을 때만 남기면 "검사했고 문제없었다"와
+    # "검사 자체가 사라졌다"가 history.jsonl에서 같은 모양이 된다.
+    state.log_event(
+        "optimize_guard_infeasible",
+        {
+            "infeasible": bool(guard_infeasible),
+            "violations": guard_infeasible,
+            "allowances": allowances,
+            "measured_allowances": corner_capable,
+        },
+    )
+
     outcome = await _search(
         spec, state, agents, canonical_name, start_text, baseline_measurements,
         objective_before, area_before, allowances,
@@ -704,7 +787,8 @@ async def _optimize(
         return _result(
             status, state, objective_before, record["objective"], area_before, record["area"],
             accepted=accepted_count, rejected=rejected_count, pvt_sweep=sweep,
-            corner_failure=corner_failure,
+            corner_failure=corner_failure, guard_infeasible=guard_infeasible,
+            area_coverage=area_coverage,
         )
 
     if not corner_capable:
