@@ -1,10 +1,22 @@
+import inspect
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
-from analogcoder.cli import _build_agent_backend, _build_agent_backends, _run, build_arg_parser
+from analogcoder.cli import (
+    AGENT_NAMES,
+    _build_agent_backend,
+    _build_agent_backends,
+    _run,
+    build_arg_parser,
+)
+
+# 최적화 단계가 시뮬레이션 결과를 어떻게 읽는지를 그대로 상대로 삼는다.
+# cli.py가 만드는 status를 optimizer가 실제로 거절하는지까지 확인하지 않으면,
+# "합쳤다"는 사실만 남고 그것이 무엇을 막는지는 아무도 지키지 않는다.
+from analogcoder.optimizer import _run_simulation
 
 SPEC_YAML = (
     "circuit_name: test\n"
@@ -17,6 +29,82 @@ SPEC_YAML = (
     "      .endc\n"
     "    criteria: []\n"
 )
+
+TWO_TESTBENCH_SPEC_YAML = (
+    "circuit_name: test\n"
+    "testbenches:\n"
+    "  - name: ac_loop_gain\n"
+    "    netlist: netlist.cir\n"
+    '    analyses: ["ac"]\n'
+    '    control_block: ".control\\n.endc\\n"\n'
+    "    criteria: []\n"
+    "  - name: psr_plus\n"
+    "    netlist: netlist_psr_plus.cir\n"
+    '    analyses: ["ac"]\n'
+    '    control_block: ".control\\n.endc\\n"\n'
+    "    criteria: []\n"
+)
+
+OPTIMIZE_SPEC_YAML = (
+    "circuit_name: test\n"
+    "optimize:\n"
+    "  objective: iq_ua\n"
+    "  area_budget: 1.1\n"
+    "  guard_band: 0.2\n"
+    "pvt_corners:\n"
+    "  process: [tt]\n"
+    "  voltage: [1.8]\n"
+    "  temperature: [27]\n"
+    "testbenches:\n"
+    "  - name: ac_loop_gain\n"
+    "    netlist: netlist.cir\n"
+    '    analyses: ["ac"]\n'
+    '    control_block: ".control\\n.endc\\n"\n'
+    "    criteria: []\n"
+)
+
+OPTIMIZE_NO_CORNERS_SPEC_YAML = (
+    "circuit_name: test\n"
+    "optimize:\n"
+    "  objective: iq_ua\n"
+    "  area_budget: 1.1\n"
+    "  guard_band: 0.2\n"
+    "testbenches:\n"
+    "  - name: ac_loop_gain\n"
+    "    netlist: netlist.cir\n"
+    '    analyses: ["ac"]\n'
+    '    control_block: ".control\\n.endc\\n"\n'
+    "    criteria: []\n"
+)
+
+
+def _orchestration(result, captured: dict | None = None):
+    """run_orchestration 대역. **v0을 push한다.**
+
+    진짜 run_orchestration은 첫 줄에서 state.push_netlist_version을 부른다.
+    그것을 흉내내지 않는 mock은 프로덕션에 존재하지 않는 모양(버전이 하나도
+    없는 RunState)을 남기고, 그 뒤에 오는 단계들은 그 모양을 상대로 테스트되어
+    실제 배선을 확인하지 못한다."""
+
+    async def fake(initial_netlist_texts, spec, state, agents):
+        state.push_netlist_version(initial_netlist_texts)
+        if captured is not None:
+            captured["spec"] = spec
+            captured["state"] = state
+            captured["agents"] = agents
+        return result
+
+    return fake
+
+
+def _pass_result(run_dir: str) -> dict:
+    return {
+        "status": "PASS",
+        "final_netlist_paths": {},
+        "run_dir": run_dir,
+        "iterations_used": 1,
+        "final_criteria": [],
+    }
 
 
 def test_arg_parser_requires_spec_only():
@@ -78,7 +166,7 @@ async def test_run_wires_orchestration_and_returns_its_result(tmp_path):
         ["--spec", str(spec_path), "--run-dir", str(tmp_path / "runs" / "r1")]
     )
 
-    with patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)):
+    with patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)):
         result = await _run(args)
 
     assert result == fake_result
@@ -110,6 +198,7 @@ async def test_run_passes_one_netlist_text_per_testbench_to_run_orchestration(tm
     captured = {}
 
     async def fake_run_orchestration(initial_netlist_texts, spec, state, agents):
+        state.push_netlist_version(initial_netlist_texts)
         captured["texts"] = initial_netlist_texts
         return {
             "status": "PASS",
@@ -140,7 +229,7 @@ async def test_run_skips_pvt_sweep_when_spec_has_no_pvt_corners(tmp_path):
     }
 
     with (
-        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)),
         patch("analogcoder.cli.run_full_pvt_sweep") as mock_sweep,
     ):
         result = await _run(args)
@@ -189,7 +278,7 @@ async def test_run_overrides_pass_to_fail_when_final_pvt_sweep_fails(tmp_path):
     # naturally returns {} (no versions tracked), which is fine here since
     # run_full_pvt_sweep is also mocked and ignores its netlist_texts arg.
     with (
-        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)),
         patch("analogcoder.cli.run_full_pvt_sweep", return_value=fake_final_sweep) as mock_sweep,
     ):
         result = await _run(args)
@@ -235,7 +324,7 @@ async def test_run_keeps_pass_when_final_pvt_sweep_also_passes(tmp_path):
     }
 
     with (
-        patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)),
         patch("analogcoder.cli.run_full_pvt_sweep", return_value=fake_passing_sweep) as mock_sweep,
     ):
         result = await _run(args)
@@ -267,7 +356,9 @@ async def test_run_hands_orchestration_include_resolved_netlist_texts(tmp_path):
         "run_dir": str(tmp_path / "runs" / "r6"), "iterations_used": 1, "final_criteria": [],
     }
 
-    with patch("analogcoder.cli.run_orchestration", new=AsyncMock(return_value=fake_result)) as mock_orch:
+    with patch(
+        "analogcoder.cli.run_orchestration", new=AsyncMock(side_effect=_orchestration(fake_result))
+    ) as mock_orch:
         await _run(args)
 
     passed_texts = mock_orch.await_args.args[0]
@@ -280,7 +371,7 @@ def test_claude_backend_defaults_to_sonnet():
 
     backends = _build_agent_backends(args)
 
-    assert set(backends) == {"simulator", "judge", "tuner", "verifier"}
+    assert set(backends) == {"simulator", "judge", "tuner", "verifier", "optimizer"}
     assert all(b.model == "sonnet" for b in backends.values())
 
 
@@ -314,3 +405,379 @@ def test_agent_model_flag_rejects_an_unknown_agent_name():
 
     with pytest.raises(ValueError, match="nosuchagent"):
         _build_agent_backends(args)
+
+
+def test_optimizer_is_an_agent_whose_model_can_be_overridden():
+    # 최적화 제안도 LLM 호출이므로 다른 에이전트와 같은 자리에 있어야 한다 -
+    # 아니면 그 한 에이전트만 모델을 내려 실험할 방법이 없다.
+    assert "optimizer" in AGENT_NAMES
+
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        ["--spec", "s.yaml", "--claude-model", "sonnet", "--agent-model", "optimizer=haiku"]
+    )
+
+    backends = _build_agent_backends(args)
+
+    assert backends["optimizer"].model == "haiku"
+    assert backends["tuner"].model == "sonnet"
+
+
+# --- 지뢰 1: 테스트벤치를 가로지르는 status ------------------------------------
+
+
+async def _capture_simulate_fn(tmp_path, spec_yaml: str, run_dir: str):
+    """_run을 한 번 돌려 orchestrator에 넘어가는 simulate 콜러블을 꺼낸다.
+
+    최적화 단계도 **같은 콜러블**을 받으므로(cli.py가 simulate_fn 하나를 두
+    소비자에게 준다) 여기서 꺼낸 것이 곧 optimizer가 보는 것이다."""
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    (tmp_path / "netlist_psr_plus.cir").write_text("* psr netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(spec_yaml)
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir])
+
+    captured: dict = {}
+    with patch(
+        "analogcoder.cli.run_orchestration",
+        new=_orchestration(_pass_result(run_dir), captured),
+    ):
+        await _run(args)
+
+    return captured["agents"].simulate, captured["spec"]
+
+
+@pytest.mark.asyncio
+async def test_simulate_fn_merges_a_non_success_status_across_testbenches(tmp_path):
+    # 한 테스트벤치가 수렴하지 못했는데 합쳐진 결과가 성공으로 보이면,
+    # 최적화는 수렴 실패한 해의 측정값으로 마진을 태우는 결정을 내린다
+    # (실제로 iq_ua=1.0이 235->1 개선으로 수락된 적이 있다). optimizer는
+    # status 키가 **없으면** 성공으로 읽으므로, 이 신호가 없는 것은 틀린 것보다
+    # 나쁘다 - 어떤 mock에도 보이지 않는다.
+    run_dir = str(tmp_path / "runs" / "s1")
+    per_testbench = [
+        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": []},
+        {"measurements": {"iq_ua": 1.0}, "status": "convergence_failure", "warnings": []},
+    ]
+
+    async def fake_agent_simulate(*args, **kwargs):
+        return per_testbench.pop(0)
+
+    with patch("analogcoder.cli.agent_simulate", new=fake_agent_simulate):
+        simulate_fn, spec = await _capture_simulate_fn(
+            tmp_path, TWO_TESTBENCH_SPEC_YAML, run_dir
+        )
+        merged = await simulate_fn({}, spec)
+
+    assert merged["status"] == "convergence_failure"
+    # 전부 성공했을 때만 성공이라는 규칙이 소비자 쪽에서 실제로 걸리는가.
+    result, reason = await _run_simulation(
+        lambda texts, spec_arg: _as_coroutine(merged), {}, spec
+    )
+    assert result is None
+    assert "convergence_failure" in reason
+
+
+@pytest.mark.asyncio
+async def test_simulate_fn_reports_success_only_when_every_testbench_succeeded(tmp_path):
+    # 반대 방향. status를 무조건 실패로 박아도 위 테스트는 통과하므로,
+    # 성공 경로가 성공으로 남는지 같이 고정한다.
+    run_dir = str(tmp_path / "runs" / "s2")
+    per_testbench = [
+        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": []},
+        {"measurements": {"iq_ua": 200.0}, "status": "success", "warnings": []},
+    ]
+
+    async def fake_agent_simulate(*args, **kwargs):
+        return per_testbench.pop(0)
+
+    with patch("analogcoder.cli.agent_simulate", new=fake_agent_simulate):
+        simulate_fn, spec = await _capture_simulate_fn(
+            tmp_path, TWO_TESTBENCH_SPEC_YAML, run_dir
+        )
+        merged = await simulate_fn({}, spec)
+
+    assert merged["status"] == "success"
+    assert merged["measurements"] == {"gain_db": 40.0, "iq_ua": 200.0}
+    result, reason = await _run_simulation(
+        lambda texts, spec_arg: _as_coroutine(merged), {}, spec
+    )
+    assert result is merged
+    assert reason is None
+
+
+async def _as_coroutine(value):
+    return value
+
+
+# --- 최적화 배선 --------------------------------------------------------------
+
+
+def _optimization_result(**overrides) -> dict:
+    base = {
+        "status": "UNCHANGED",
+        "objective_before": 200.0,
+        "objective_after": 200.0,
+        "area_before": 1.0,
+        "area_after": 1.0,
+        "steps_accepted": 0,
+        "steps_rejected": 0,
+        "corner_confirmed": False,
+        "corner_failure": None,
+        "pvt_sweep": None,
+        "final_netlist_paths": {},
+    }
+    return {**base, **overrides}
+
+
+async def _run_with_optimization(
+    tmp_path, spec_yaml, run_dir, fake_optimization, sweep_result, extra_args=()
+):
+    """_run을 돌리되 최적화와 스윕을 둘 다 대역으로 바꾼다.
+    (result, mock_sweep, captured) 를 돌려준다."""
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(spec_yaml)
+
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        ["--spec", str(spec_path), "--run-dir", run_dir, *extra_args]
+    )
+
+    captured: dict = {}
+
+    with (
+        patch(
+            "analogcoder.cli.run_orchestration",
+            new=_orchestration(_pass_result(run_dir), captured),
+        ),
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=sweep_result) as mock_sweep,
+        patch("analogcoder.cli.run_optimization", new=fake_optimization(captured, mock_sweep)),
+    ):
+        result = await _run(args)
+
+    return result, mock_sweep, captured
+
+
+@pytest.mark.asyncio
+async def test_optimization_runs_after_pass_and_before_the_final_pvt_sweep(tmp_path):
+    # 순서가 계약이다. 최종 스윕이 최적화된 넷리스트를 확정하는 역할을 하려면
+    # 최적화가 그 앞에 와야 한다 - 뒤에 두면 아무도 확인하지 않은 넷리스트로
+    # 실행이 끝난다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            # 여기까지 온 스윕 호출은 baseline 하나뿐이어야 한다.
+            captured["sweeps_before_optimization"] = mock_sweep.call_count
+            captured["netlist_texts"] = netlist_texts
+            captured["optimizer_simulate"] = agents.simulate
+            return _optimization_result()
+
+        return run
+
+    result, mock_sweep, captured = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o1"), fake_optimization, passing
+    )
+
+    assert captured["sweeps_before_optimization"] == 1  # baseline만 돌았다
+    assert mock_sweep.call_count == 2  # 최적화가 코너를 확인하지 못했으니 최종 스윕이 돈다
+    # 최적화는 실행의 **현재** 넷리스트 위에서 돈다 - 원본 파일이 아니다.
+    assert set(captured["netlist_texts"]) == {"ac_loop_gain"}
+    # 메인 루프가 쓰던 것과 **같은** simulate여야 한다. 최적화 전용 래퍼를 따로
+    # 두면 status 병합 같은 규칙이 한쪽에만 붙는다.
+    assert captured["optimizer_simulate"] is captured["agents"].simulate
+    assert result["optimization"]["status"] == "UNCHANGED"
+    assert result["status"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_optimization_does_not_run_when_the_orchestration_did_not_pass(tmp_path):
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(OPTIMIZE_NO_CORNERS_SPEC_YAML)
+
+    run_dir = str(tmp_path / "runs" / "o2")
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir])
+
+    fail_result = {**_pass_result(run_dir), "status": "FAIL", "failure_reason": "max iterations"}
+
+    with (
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(fail_result)),
+        patch("analogcoder.cli.run_optimization", new=AsyncMock()) as mock_opt,
+    ):
+        result = await _run(args)
+
+    # 통과하지 못한 설계의 마진을 더 깎을 이유가 없다.
+    mock_opt.assert_not_called()
+    assert "optimization" not in result
+
+
+@pytest.mark.asyncio
+async def test_verify_corners_handed_to_the_optimizer_is_synchronous(tmp_path):
+    # run_optimization은 이것을 await 없이 직접 부른다. async로 감싸면
+    # 코루틴 객체가 "쓸 수 없는 결과"로 접혀 최적화 단계 전체가 조용히
+    # UNCHANGED가 된다 - 크래시도 로그도 없이.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            captured["verify_corners"] = agents.verify_corners
+            # run_optimization이 하는 그대로 - await 없이 직접 부른다.
+            captured["returned"] = agents.verify_corners({"ac_loop_gain": "* ac netlist\n.end\n"})
+            return _optimization_result()
+
+        return run
+
+    _, mock_sweep, captured = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o3"), fake_optimization, passing
+    )
+
+    verify_corners = captured["verify_corners"]
+    assert verify_corners is not None
+    assert not inspect.iscoroutinefunction(verify_corners)
+    # 코루틴이면 run_optimization의 _run_sweep이 "overall_pass가 없는 결과"로
+    # 접어 코너를 확인하지 못한 채 조용히 지나간다.
+    assert not inspect.isawaitable(captured["returned"])
+    assert captured["returned"] is passing
+
+
+@pytest.mark.asyncio
+async def test_verify_corners_is_none_when_the_spec_declares_no_corners(tmp_path):
+    # 코너를 잴 수단이 없으면 None을 준다 - 그때 run_optimization은
+    # 확인하지 않았다고 보고한다. 빈 스윕을 지어내지 않는다.
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            captured["verify_corners"] = agents.verify_corners
+            return _optimization_result()
+
+        return run
+
+    result, mock_sweep, captured = await _run_with_optimization(
+        tmp_path,
+        OPTIMIZE_NO_CORNERS_SPEC_YAML,
+        str(tmp_path / "runs" / "o4"),
+        fake_optimization,
+        None,
+    )
+
+    assert captured["verify_corners"] is None
+    mock_sweep.assert_not_called()
+    assert "pvt_sweep" not in result
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_optimization_sweep_is_reused_as_the_final_sweep(tmp_path):
+    # 최적화가 착지시킨 지점은 정의상 스윕을 통과한 버전이다. 같은 덱에
+    # 같은 값(bandgap 기준 286초)을 두 번 치를 이유가 없다.
+    confirmed = {
+        "overall_pass": True, "criteria": [], "summary": "all corners passed",
+        "worst_case_corners": {"iq": {"process": "ff", "voltage": 1.98, "temperature": 125}},
+    }
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            return _optimization_result(
+                status="OPTIMIZED", objective_after=180.0, steps_accepted=2,
+                corner_confirmed=True, pvt_sweep=confirmed,
+            )
+
+        return run
+
+    result, mock_sweep, _ = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o5"), fake_optimization, confirmed
+    )
+
+    assert mock_sweep.call_count == 1  # baseline 스윕 하나뿐이다
+    assert result["pvt_sweep"] is confirmed
+    assert result["status"] == "PASS"
+    # 두 결과가 같은 키 이름을 쓴다. 어느 쪽도 다른 쪽을 덮지 않는다.
+    assert result["optimization"]["pvt_sweep"] is confirmed
+    assert result["optimization"]["corner_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_optimization_keeps_its_corner_failure_and_still_sweeps(tmp_path):
+    # 스윕이 **돌지 못한** 사유는 결과에 남아야 한다. "코너가 깨져서
+    # 되돌아왔다"와 "스윕을 못 돌려서 되돌아왔다"는 다른 사실이고, 후자는
+    # 고칠 대상이 회로가 아니다. 그리고 확인이 없었으므로 최종 스윕은 돈다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            return _optimization_result(
+                corner_failure="corner sweep raised RuntimeError: ngspice died"
+            )
+
+        return run
+
+    result, mock_sweep, _ = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o6"), fake_optimization, passing
+    )
+
+    assert mock_sweep.call_count == 2  # baseline + 최종
+    assert result["pvt_sweep"] is passing
+    assert (
+        result["optimization"]["corner_failure"]
+        == "corner sweep raised RuntimeError: ngspice died"
+    )
+    assert result["optimization"]["pvt_sweep"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_failing_optimization_sweep_still_turns_the_run_into_a_fail(tmp_path):
+    # 브리프의 산문은 "재사용 경로에서는 status가 FAIL로 뒤집힐 수 없다"고
+    # 말하지만, 진입 스윕이 실패한 경우 run_optimization은 **통과하지 않은**
+    # 스윕을 실어 UNCHANGED를 낸다. 그 넷리스트는 최적화를 돌리지 않았을 때
+    # 최종 스윕이 보게 될 바로 그 덱이므로, 판정은 그때와 같아야 한다.
+    failing = {
+        "overall_pass": False, "criteria": [], "summary": "one or more criteria failed",
+        "worst_case_corners": {},
+    }
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            return _optimization_result(pvt_sweep=failing)
+
+        return run
+
+    result, mock_sweep, _ = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o7"), fake_optimization, failing
+    )
+
+    assert mock_sweep.call_count == 1  # 같은 덱을 두 번 재지 않는다
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "final PVT sweep failed: one or more criteria failed"
+
+
+@pytest.mark.asyncio
+async def test_the_optimizer_proposal_runs_on_the_optimizer_agent_backend(tmp_path):
+    # propose가 다른 에이전트의 백엔드에 배선되면 --agent-model optimizer=...가
+    # 아무 데도 닿지 않는다. 모델을 갈라 두고 실제로 넘어간 백엔드를 본다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            captured["propose"] = agents.propose
+            return _optimization_result()
+
+        return run
+
+    _, _, captured = await _run_with_optimization(
+        tmp_path,
+        OPTIMIZE_SPEC_YAML,
+        str(tmp_path / "runs" / "o8"),
+        fake_optimization,
+        passing,
+        extra_args=["--claude-model", "sonnet", "--agent-model", "optimizer=haiku"],
+    )
+
+    with patch("analogcoder.cli.propose_candidates", new=AsyncMock(return_value={})) as mock_propose:
+        await captured["propose"]("structure", [{"name": "gain"}], "iq_ua", "netlist")
+
+    args = mock_propose.await_args.args
+    assert args[:4] == ("structure", [{"name": "gain"}], "iq_ua", "netlist")
+    assert args[4].model == "haiku"

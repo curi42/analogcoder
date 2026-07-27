@@ -8,10 +8,12 @@ from analogcoder.agents.backend import AgentBackend
 from analogcoder.agents.backends.claude_sdk import DEFAULT_CLAUDE_MODEL, ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.agents.judge import judge_measurements
+from analogcoder.agents.optimizer import propose_candidates
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
 from analogcoder.netlist import resolve_includes
+from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
@@ -39,7 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-AGENT_NAMES = ("simulator", "judge", "tuner", "verifier")
+AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
 
 
 def _build_agent_backend(args, model: str | None = None) -> AgentBackend:
@@ -84,12 +86,24 @@ async def _run(args) -> dict:
     async def simulate_fn(netlist_texts, spec_arg):
         merged_measurements = {}
         by_testbench = {}
+        # 테스트벤치별 status를 하나로 합친다. **전부 성공했을 때만** 성공이고,
+        # 처음 만난 비성공이 합쳐진 status가 된다.
+        #
+        # 최상위 status가 아예 없으면 optimizer._run_simulation이 "없는 키는
+        # 실패가 아니다"라는 자기 규칙에 따라 성공으로 읽는다. 그러면 수렴하지
+        # 못한 테스트벤치의 측정값으로 마진을 태우는 결정이 내려진다 - 실제로
+        # 수렴 실패가 낸 iq_ua=1.0이 235->1 개선으로 수락된 적이 있다. 신호가
+        # 틀린 것이 아니라 **없는** 쪽이라 어떤 mock에도 보이지 않는 결함이다.
+        status = "success"
         paths = state.current_netlist_paths()
         for tb in spec_arg.testbenches:
             result = await agent_simulate(paths[tb.name], tb.control_block, sim_backend, agent_backends["simulator"])
             merged_measurements.update(result["measurements"])
             by_testbench[tb.name] = result
-        return {"measurements": merged_measurements, "by_testbench": by_testbench}
+            tb_status = result.get("status", "success")
+            if status == "success" and tb_status != "success":
+                status = tb_status
+        return {"status": status, "measurements": merged_measurements, "by_testbench": by_testbench}
 
     async def judge_fn(measurements, spec_arg):
         return await judge_measurements(measurements, spec_arg.all_criteria, agent_backends["judge"])
@@ -110,6 +124,18 @@ async def _run(args) -> dict:
             structure_view, judge_result, available_topologies, rejection_feedback, agent_backends["tuner"]
         )
 
+    async def propose_candidates_fn(structure_view, margins, objective, netlist_view):
+        return await propose_candidates(
+            structure_view, margins, objective, netlist_view, agent_backends["optimizer"]
+        )
+
+    def verify_corners_fn(netlist_texts):
+        # **동기** 함수여야 한다. run_optimization은 이것을 await 없이 직접
+        # 부르므로, async로 감싸면 돌아오는 코루틴 객체가 "쓸 수 없는 결과"로
+        # 접혀 최적화가 크래시도 로그도 없이 통째로 UNCHANGED가 된다.
+        # run_full_pvt_sweep 자체가 동기이고 LLM이 끼지 않으므로 감쌀 이유도 없다.
+        return run_full_pvt_sweep(netlist_texts, spec, sim_backend)
+
     agents = OrchestratorAgents(
         simulate=simulate_fn,
         judge=judge_fn,
@@ -125,11 +151,48 @@ async def _run(args) -> dict:
 
     result = await run_orchestration(initial_netlist_texts, spec, state, agents)
 
+    # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
+    # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된
+    # 넷리스트를 확정하는 역할을 그대로 하기 때문이다. 뒤에 두면 아무도
+    # 확인하지 않은 넷리스트로 실행이 끝난다.
+    if result["status"] == "PASS":
+        optimization = await run_optimization(
+            state.current_netlist_texts(),
+            spec,
+            state,
+            OptimizerAgents(
+                propose=propose_candidates_fn,
+                simulate=simulate_fn,
+                # 코너를 잴 수단이 없으면 None을 준다. run_optimization은 그때
+                # 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
+                verify_corners=verify_corners_fn if spec.pvt_corners is not None else None,
+            ),
+        )
+        result["optimization"] = optimization
+        # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로는 그것이
+        # 착지한 버전이어야 한다.
+        result["final_netlist_paths"] = state.current_netlist_paths()
+
     if spec.pvt_corners is not None:
-        final_netlist_texts = state.current_netlist_texts()
-        final_sweep = run_full_pvt_sweep(final_netlist_texts, spec, sim_backend)
-        state.log_event("pvt_final_sweep", final_sweep)
+        # 최적화가 코너를 확인했으면 그 스윕이 곧 이 넷리스트의 최종 스윕이다.
+        # 착지 지점은 정의상 스윕을 통과한 버전이므로(_bisect_last_passing은
+        # 통과가 확인된 인덱스에만 착지한다) 다시 도는 것은 같은 덱에 같은
+        # 값을 두 번 치르는 것이다 - bandgap 45 코너 기준 286초짜리다.
+        #
+        # 최적화의 pvt_sweep은 result["optimization"] 안에 그대로 남는다.
+        # 두 결과가 같은 키 이름을 쓰므로 어느 쪽도 다른 쪽을 덮지 않도록
+        # 최상위에만 대입한다.
+        confirmed = (result.get("optimization") or {}).get("pvt_sweep")
+        if confirmed is not None:
+            final_sweep = confirmed
+        else:
+            final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
+            state.log_event("pvt_final_sweep", final_sweep)
         result["pvt_sweep"] = final_sweep
+        # 재사용 경로에서 이 판정이 FAIL로 뒤집히는 일은 사실상 없다(착지
+        # 지점은 통과한 버전이다). 그래도 조건을 걸어 두는 것은, 최적화가
+        # **진입** 스윕에서 이미 실패한 코너를 그대로 실어 보낼 수 있고 그때는
+        # 최적화를 돌리지 않았을 때와 똑같이 FAIL이어야 하기 때문이다.
         if not final_sweep["overall_pass"]:
             result["status"] = "FAIL"
             result["failure_reason"] = f"final PVT sweep failed: {final_sweep['summary']}"
