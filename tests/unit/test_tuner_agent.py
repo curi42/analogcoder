@@ -2,8 +2,43 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
+from analogcoder.agents.tuner import TOPOLOGY_TUNER_SYSTEM_PROMPT, propose_topology_swap, propose_tuning
+from analogcoder.schemas import TOPOLOGY_SCHEMA
 from analogcoder.topologies import Topology
+from analogcoder.topology_match import SwapCandidate
+
+
+class FakeBackend:
+    """Conforms to the positional AgentBackend.run(system_prompt, user_prompt,
+    output_schema, tools) signature that agents.agent_runtime.run_agent actually
+    calls with - see tests/unit/test_agent_runtime.py's FakeBackend."""
+
+    def __init__(self, result):
+        self._result = result
+        self.calls = []
+
+    async def run(self, system_prompt, user_prompt, output_schema, tools=None):
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "schema": output_schema})
+        return self._result
+
+
+NINE_PORT = Topology(
+    id="nine_port",
+    description="folded cascode with a 9-port bias interface",
+    subckt_body="",
+    addresses=[],
+    ports=["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"],
+    assumes_scale=1e-6,
+)
+
+FIVE_PORT = Topology(
+    id="five_port",
+    description="basic miller-compensated op-amp with no bias ports",
+    subckt_body="",
+    addresses=[],
+    ports=["vinp", "vinn", "vout", "vdd", "vss"],
+    assumes_scale=1e-6,
+)
 
 
 @pytest.mark.asyncio
@@ -70,11 +105,16 @@ def test_the_tuner_prompt_spells_the_two_schema_fields_apart():
 
 
 @pytest.mark.asyncio
-async def test_propose_topology_swap_calls_run_agent_with_available_topologies():
-    fake_result = {"topology_id": "miller_nulling_resistor", "reasoning": "fixes phase margin", "confidence": 90}
+async def test_propose_topology_swap_calls_run_agent_with_candidates():
+    fake_result = {
+        "topology_id": "miller_nulling_resistor",
+        "block_path": "AMP",
+        "reasoning": "fixes phase margin",
+        "confidence": 90,
+    }
     fake_backend = object()
-    topologies = [
-        Topology(
+    library = {
+        "miller_nulling_resistor": Topology(
             id="miller_nulling_resistor",
             description="adds Rz to cancel the RHP zero",
             subckt_body="Cc outA vnull 2p\nRz vnull vout 500\n",
@@ -82,12 +122,14 @@ async def test_propose_topology_swap_calls_run_agent_with_available_topologies()
             ports=["vinp", "vinn", "vout", "vdd", "vss"],
             assumes_scale=1e-6,
         ),
-    ]
+    }
+    candidates = [SwapCandidate(block_path="AMP", topology_id="miller_nulling_resistor")]
     with patch("analogcoder.agents.tuner.run_agent", new=AsyncMock(return_value=fake_result)) as mock_run:
         result = await propose_topology_swap(
             structure_view="circuit: two-stage op-amp\n\nblocks:\n",
             judge_result={"overall_pass": False},
-            available_topologies=topologies,
+            candidates=candidates,
+            library=library,
             rejection_feedback=None,
             backend=fake_backend,
         )
@@ -97,13 +139,14 @@ async def test_propose_topology_swap_calls_run_agent_with_available_topologies()
     assert kwargs["backend"] is fake_backend
     assert "miller_nulling_resistor" in kwargs["user_prompt"]
     assert "adds Rz to cancel the RHP zero" in kwargs["user_prompt"]
+    assert "AMP" in kwargs["user_prompt"]
 
 
 @pytest.mark.asyncio
 async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
     fake_backend = object()
-    topologies = [
-        Topology(
+    library = {
+        "miller_basic": Topology(
             id="miller_basic",
             description="baseline",
             subckt_body="",
@@ -111,7 +154,8 @@ async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
             ports=["vinp", "vinn", "vout", "vdd", "vss"],
             assumes_scale=1e-6,
         ),
-    ]
+    }
+    candidates = [SwapCandidate(block_path="AMP", topology_id="miller_basic")]
     with patch(
         "analogcoder.agents.tuner.run_agent",
         new=AsyncMock(return_value={"topology_id": "miller_basic", "reasoning": "x", "confidence": 50}),
@@ -119,9 +163,36 @@ async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
         await propose_topology_swap(
             structure_view="",
             judge_result={},
-            available_topologies=topologies,
+            candidates=candidates,
+            library=library,
             rejection_feedback="'bogus_id' is not an available untried topology.",
             backend=fake_backend,
         )
     _, kwargs = mock_run.call_args
     assert "is not an available untried topology" in kwargs["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_lists_block_and_topology_pairs_not_the_whole_library():
+    backend = FakeBackend({"topology_id": "nine_port", "block_path": "AMP", "reasoning": "r", "confidence": 80})
+    await propose_topology_swap(
+        "sv",
+        {"criteria": []},
+        [SwapCandidate(block_path="AMP", topology_id="nine_port")],
+        {"nine_port": NINE_PORT, "five_port": FIVE_PORT},
+        None,
+        backend,
+    )
+    prompt = backend.calls[0]["user_prompt"]
+    assert "AMP" in prompt and "nine_port" in prompt
+    assert "five_port" not in prompt  # 후보가 아닌 항목은 새어 나가면 안 된다
+
+
+@pytest.mark.asyncio
+async def test_the_schema_does_not_require_block_path():
+    assert "block_path" in TOPOLOGY_SCHEMA["properties"]
+    assert "block_path" not in TOPOLOGY_SCHEMA["required"]
+
+
+def test_the_system_prompt_does_not_assume_a_single_amplifier():
+    assert "the amplifier's internal structure" not in TOPOLOGY_TUNER_SYSTEM_PROMPT

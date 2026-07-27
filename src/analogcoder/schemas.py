@@ -124,6 +124,11 @@ TOPOLOGY_SCHEMA = {
     "type": "object",
     "properties": {
         "topology_id": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        # Declared, deliberately not required: a weak model that omits it would
+        # otherwise hard-FAIL every spec (this repo hit exactly that with
+        # `control_block` in a previous sub-project). The orchestrator (Task 5)
+        # resolves an omitted block_path from the candidate list it offered.
+        "block_path": {"type": "string"},
         "reasoning": {"type": "string"},
         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
     },

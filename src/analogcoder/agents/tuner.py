@@ -1,6 +1,7 @@
 from analogcoder.agents.agent_runtime import run_agent
 from analogcoder.agents.backend import AgentBackend
 from analogcoder.schemas import TOPOLOGY_SCHEMA, TUNER_SCHEMA
+from analogcoder.topology_match import SwapCandidate
 from analogcoder.topologies import Topology
 
 TUNER_SYSTEM_PROMPT = """You are an analog circuit tuning specialist. Given the
@@ -78,13 +79,17 @@ async def propose_tuning(
 
 TOPOLOGY_TUNER_SYSTEM_PROMPT = """You are an analog circuit tuning specialist. Parameter
 tuning has been tried repeatedly and failed to meet the target criteria. You must now
-choose ONE topology from the list of available, pre-verified topologies below to replace
-the amplifier's internal structure.
+choose ONE (block, topology) pair from the candidates listed below to replace that
+block's internal structure. A deck can contain more than one block, so the candidates
+are pairs, not bare topology ids - the same topology may be listed against more than one
+block, and a block may appear against more than one topology.
 
-topology_id MUST be exactly one of the ids listed as available - never invent a new id,
-never reuse a topology_id that is not in the available list (it has likely already been
-tried and rejected). Base your choice on which listed topology's description most
-directly addresses the currently failing criteria.
+You may only choose a pair that appears in the candidate list below. topology_id MUST be
+exactly the topology_id of one listed candidate - never invent a new id, never choose one
+that is not listed (it is either incompatible with every block or has already been tried
+and rejected). block_path MUST be exactly that same candidate's block_path, copied as-is.
+Base your choice on which listed candidate's description most directly addresses the
+currently failing criteria.
 
 Respond via the structured output schema."""
 
@@ -92,17 +97,20 @@ Respond via the structured output schema."""
 async def propose_topology_swap(
     structure_view: str,
     judge_result: dict,
-    available_topologies: list[Topology],
+    candidates: list[SwapCandidate],
+    library: dict[str, Topology],
     rejection_feedback: str | None,
     backend: AgentBackend,
 ) -> dict:
-    topology_descriptions = "\n".join(
-        f"- {t.id}: {t.description} (addresses: {t.addresses})" for t in available_topologies
+    candidate_descriptions = "\n".join(
+        f"- {c.block_path} / {c.topology_id}: {library[c.topology_id].description} "
+        f"(addresses: {library[c.topology_id].addresses})"
+        for c in candidates
     )
     user_prompt = (
         f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result: {judge_result}\n"
-        f"Available topologies:\n{topology_descriptions}\n"
+        f"Available (block, topology) candidates:\n{candidate_descriptions}\n"
         f"Rejection feedback (if retrying): {rejection_feedback}"
     )
     return await run_agent(
