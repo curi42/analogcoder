@@ -579,3 +579,104 @@ async def test_a_failed_optimization_result_is_still_shaped_like_a_normal_one(tm
     assert failed["final_netlist_paths"]
     # 정상 경로는 실패 사유가 없다 - 두 경로가 구분되어야 한다.
     assert healthy["failure"] is None
+
+
+# --- 최종 리뷰의 값싼 Minor들 -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_that_cannot_move_further_is_counted_as_a_rejection(tmp_path):
+    # 이력에는 거절이 하나 남는데 보고하는 steps_rejected는 0이었다. 다른 모든
+    # 거절 경로는 세므로, 결과 dict만 보는 쪽에서는 "후보가 하나도 시도되지
+    # 않았다"와 구별되지 않는다.
+    deck = DECK.replace("m=4", "m=1")
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": deck})
+    agents, _ = _agents([235.0])
+
+    result = await run_optimization({"tb": deck}, _spec(), state, agents)
+
+    steps = [
+        json.loads(line) for line in open(state.history_path)
+        if json.loads(line)["step"] == "optimize_step"
+    ]
+    assert len(steps) == 1 and steps[0]["accepted"] is False
+    assert result["steps_rejected"] == len([s for s in steps if not s["accepted"]]) == 1
+
+
+PEER_DECK = (
+    "* t\n"
+    ".subckt CORE a b vss\n"
+    "Xq1 a b vss pnp_05v5\n"
+    "Xq8 a b vss pnp_05v5 m=8\n"
+    ".ends CORE\n"
+    "Xc p q 0 CORE\n"
+    "Vdd vdd 0 DC 1.8\n"
+    ".end\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_param_admitted_by_the_peer_rule_but_absent_from_the_line_says_so(tmp_path):
+    # bandgap의 Xq1.m 그대로다: check_param_applicability는 동료 규칙으로
+    # 이것을 **admit** 하는데(m이 이미터 면적비를 정하는 유일한 노브라 그
+    # 규칙이 존재한다), 정작 Xq1 줄에는 m=이 없어 출발 값이 없다. 값을
+    # 지어내지 않는 것이 옳지만, 그 사유가 "값을 못 읽었다"로 뭉개지면
+    # 해소 불가능한 표현식과 구별되지 않는다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": PEER_DECK})
+    agents, calls = _agents(
+        [235.0],
+        candidates=[{"refdes": "CORE.Xq1", "param": "m", "direction": "decrease",
+                     "reasoning": "emitter area ratio"}],
+    )
+
+    result = await run_optimization({"tb": PEER_DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert calls["n"] == 1
+    steps = [
+        json.loads(line) for line in open(state.history_path)
+        if json.loads(line)["step"] == "optimize_step"
+    ]
+    assert len(steps) == 1
+    assert steps[0]["gate"] is None  # 게이트가 막은 것이 아니다 - 동료 규칙이 통과시켰다
+    assert "does not write" in steps[0]["reason"]
+    assert "cannot read a numeric" not in steps[0]["reason"]
+    assert result["steps_rejected"] == 1
+
+
+@pytest.mark.asyncio
+async def test_running_out_of_the_step_budget_is_its_own_event(tmp_path, monkeypatch):
+    # "예산이 떨어졌다"와 "후보를 전부 소진했다"는 다른 사실이다. 이력에서
+    # 구별되지 않으면 탐색이 왜 멈췄는지 아무도 답할 수 없다.
+    import analogcoder.optimizer as optimizer_module
+
+    monkeypatch.setattr(optimizer_module, "MAX_OPTIMIZE_STEPS", 2)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    # 매 단계 개선되므로 후보는 절대 소진되지 않는다 - 멈추는 이유는 예산뿐이다.
+    agents, _ = _agents([235.0, 220.0, 210.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["steps_accepted"] == 2
+    events = [json.loads(line) for line in open(state.history_path)]
+    exhausted = [e for e in events if e["step"] == "optimize_budget_exhausted"]
+    assert len(exhausted) == 1
+    assert exhausted[0]["steps"] == 2
+
+
+@pytest.mark.asyncio
+async def test_exhausting_the_candidates_is_not_reported_as_a_spent_budget(tmp_path):
+    # 반대 방향도 고정한다 - 두 사실이 구별되지 않으면 새 이벤트를 붙인 의미가
+    # 없다. m=1은 더 내려갈 곳이 없어 후보가 소진되고, 예산은 남아 있다.
+    deck = DECK.replace("m=4", "m=1")
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": deck})
+    agents, _ = _agents([235.0])
+
+    await run_optimization({"tb": deck}, _spec(), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    assert not [e for e in events if e["step"] == "optimize_budget_exhausted"]

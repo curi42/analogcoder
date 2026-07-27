@@ -361,7 +361,6 @@ async def _search(
     state.log_event("optimize_proposal", {"objective": objective_name, **proposal})
 
     best_objective = objective_before
-    best_area = area_before
     accepted_count = 0
     rejected_count = 0
     steps = 0
@@ -397,12 +396,31 @@ async def _search(
             # 닫은 넷리스트 해소 이중화 결함의 더 나쁜 판본이다.
             component = index_baseline_components(current_text).get(refdes)
             token = _deck_token(component, param) if component is not None else None
-            before = _current_value(component, token) if token is not None else None
+            if token is None:
+                # 게이트는 통과했는데 그 소자 줄에는 이 이름이 없다. 실재하는
+                # 경로다: check_param_applicability의 **동료 규칙**이
+                # bandgap의 `Xq1.m`을 admit 한다(Xq1은 m=을 안 쓰지만 같은
+                # 모델의 Xq8이 m=8을 쓰고, m이 이미터 면적비를 정하는 유일한
+                # 노브다). 적용 가능한 것은 맞지만 **출발 값이 없다** - 여기서
+                # 기본값을 지어내는 것이 이 프로젝트가 금하는 추측이다.
+                # "값을 못 읽었다"와 한 문장으로 뭉치면, 해소 불가능한
+                # 표현식(`W='wn*2'`)과 같은 사유로 보여 진단이 갈라진다.
+                event["reason"] = (
+                    f"{refdes} does not write {param!r} on its own line, so there is no "
+                    f"current value to step from (a same-model peer writes it, which is why "
+                    f"the applicability gate admits it - but the starting value is not "
+                    f"something to invent)"
+                )
+                state.log_event("optimize_step", event)
+                rejected_count += 1
+                break
+            before = _current_value(component, token)
             if before is None:
                 event["reason"] = (
                     f"cannot read a numeric current value for {refdes}.{param} in the netlist"
                 )
                 state.log_event("optimize_step", event)
+                rejected_count += 1
                 break
             # 실제로 편집한 철자를 기록한다. 제안의 철자를 남기면 대소문자가
             # 섞인 덱에서 이력은 `w`라고 하는데 넷리스트는 `W`를 든다.
@@ -418,6 +436,7 @@ async def _search(
             if after is None:
                 event["reason"] = f"{refdes}.{param} cannot move further in direction {direction!r}"
                 state.log_event("optimize_step", event)
+                rejected_count += 1
                 break
             new_value = _format_value(after, integer)
             # 로그의 after는 넷리스트에 실제로 적힌 값이어야 한다. 원시 float를
@@ -490,7 +509,6 @@ async def _search(
 
             if event["accepted"]:
                 best_objective = objective
-                best_area = area
                 accepted_count += 1
                 records[_version_index(state, canonical_name)] = {
                     "objective": objective, "area": area,
@@ -502,6 +520,18 @@ async def _search(
             # 한 번 거절된 방향은 그 후보에서 더 밀지 않는다. 같은 노브를 같은
             # 방향으로 계속 미는 것은 방금 얻은 증거를 무시하는 것이고, 보수적인
             # 쪽(후보 소진)이 예산도 아낀다.
+            break
+        else:
+            # while/else: **break 없이** 조건이 거짓이 되어 끝났을 때만 온다 -
+            # 이 루프에서 그것은 steps >= MAX_OPTIMIZE_STEPS 하나뿐이다.
+            # "예산이 떨어졌다"와 "후보를 전부 소진했다"는 다른 사실인데,
+            # 이력에서는 둘 다 그냥 optimize_step이 멈추는 모양이라 구별되지
+            # 않았다. 예산은 전역이므로 후보 루프도 여기서 끝난다.
+            state.log_event(
+                "optimize_budget_exhausted",
+                {"steps": steps, "limit": MAX_OPTIMIZE_STEPS,
+                 "refdes": refdes, "param": param},
+            )
             break
 
     return {"accepted": accepted_count, "rejected": rejected_count, "records": records}
