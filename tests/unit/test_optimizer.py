@@ -280,6 +280,102 @@ async def test_a_written_parameter_keeps_the_spelling_used_in_the_deck(tmp_path)
     ][0]
     assert line.lower().count("w=") == 1  # 폭 토큰이 하나뿐이다
     assert "W=1.8e-06" in line
+    steps = [json.loads(entry) for entry in open(state.history_path)]
+    written = [e["param"] for e in steps if e["step"] == "optimize_step" and e["before"]]
+    assert written and set(written) == {"W"}  # 이력이 실제로 편집한 철자를 말한다
+
+
+@pytest.mark.asyncio
+async def test_a_simulate_without_a_status_key_still_lets_a_step_be_accepted(tmp_path):
+    # production 모양을 고정한다. cli.py의 simulate_fn은 테스트벤치별 결과를
+    # 합치면서 **최상위 status를 만들지 않는다** - orchestrator도 그것을 읽지
+    # 않으므로 누락이 아니라 계약이다. 없는 키를 실패로 읽으면 최적화가
+    # 영구히 UNCHANGED가 된다: 크래시도 없고 이상해 보이는 로그도 없다.
+    seq = [235.0, 200.0, 200.0, 200.0]
+    calls = {"n": 0}
+
+    async def simulate(netlist_texts, spec_arg):
+        value = seq[min(calls["n"], len(seq) - 1)]
+        calls["n"] += 1
+        return {"measurements": {"iq_ua": value}, "by_testbench": {"tb": {"status": "success"}}}
+
+    async def propose(structure_view, margins, objective, netlist_view):
+        return {
+            "candidates": [{"refdes": "AMP.M1", "param": "m", "direction": "decrease",
+                            "reasoning": "tail"}],
+            "overall_reasoning": "x",
+        }
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents = OptimizerAgents(propose=propose, simulate=simulate)
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "OPTIMIZED"
+    assert "m=3" in state.current_netlist_texts()["tb"]
+
+
+@pytest.mark.asyncio
+async def test_a_simulate_returning_a_non_mapping_is_a_rejected_step(tmp_path):
+    # _run_simulation은 "아무것도 새어 나가지 않는다"고 약속한다. 출구가
+    # 하나여야 그 약속이 참이다.
+    calls = {"n": 0}
+
+    async def simulate(netlist_texts, spec_arg):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return None
+        return {"measurements": {"iq_ua": 235.0}, "status": "success", "warnings": []}
+
+    async def propose(structure_view, margins, objective, netlist_view):
+        return {
+            "candidates": [{"refdes": "AMP.M1", "param": "m", "direction": "decrease",
+                            "reasoning": "tail"}],
+            "overall_reasoning": "x",
+        }
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents = OptimizerAgents(propose=propose, simulate=simulate)
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+    steps = [json.loads(line) for line in open(state.history_path)]
+    reasons = [e["reason"] for e in steps if e["step"] == "optimize_step"]
+    assert any("unusable result" in (r or "") for r in reasons)
+
+
+@pytest.mark.asyncio
+async def test_a_result_without_measurements_is_a_rejected_step(tmp_path):
+    calls = {"n": 0}
+
+    async def simulate(netlist_texts, spec_arg):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return {"status": "success", "warnings": []}
+        return {"measurements": {"iq_ua": 235.0}, "status": "success", "warnings": []}
+
+    async def propose(structure_view, margins, objective, netlist_view):
+        return {
+            "candidates": [{"refdes": "AMP.M1", "param": "m", "direction": "decrease",
+                            "reasoning": "tail"}],
+            "overall_reasoning": "x",
+        }
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents = OptimizerAgents(propose=propose, simulate=simulate)
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+    steps = [json.loads(line) for line in open(state.history_path)]
+    reasons = [e["reason"] for e in steps if e["step"] == "optimize_step"]
+    assert any("unusable result" in (r or "") for r in reasons)
 
 
 @pytest.mark.asyncio

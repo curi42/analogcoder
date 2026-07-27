@@ -129,15 +129,36 @@ async def _run_simulation(simulate, netlist_texts: dict[str, str], spec) -> tupl
     **중단**한다 - 경고가 아니다. 최소 치수를 숫자로 박는 대신(그것은 PDK
     지식이고 이 프로젝트는 추측을 금한다) 실패를 단계 거절로 받는다.
 
-    status가 success가 아닌 경우도 같이 막는다 - 수렴 실패한 해의 측정값으로
-    마진을 태우는 결정을 내리면 안 된다."""
+    status가 명시적으로 success가 아닌 경우도 같이 막는다 - 수렴 실패한 해의
+    측정값으로 마진을 태우는 결정을 내리면 안 된다. 그러나 **키가 없는 것은
+    실패가 아니다.** 이 프로젝트의 유일한 실제 simulate 콜러블(cli.py의
+    simulate_fn)은 테스트벤치별 결과를 합치면서 최상위 status를 만들지 않고,
+    orchestrator도 최상위 status를 읽지 않는다 - 그것이 누락이 아니라 계약이다.
+    없는 키를 실패로 읽으면 최적화가 영구히 UNCHANGED가 된다: 크래시도 없고
+    이상해 보이는 로그도 없이 모든 단계가 거절된다. 이 저장소가 세 번 겪은
+    조용한 무력화와 같은 모양이라, 기본값은 success다. (테스트벤치를 가로지르는
+    진짜 status 신호는 Task 7이 cli.py 쪽에서 만든다.)
+
+    docstring이 "아무것도 새어 나가지 않는다"고 약속하는 이상 출구는 하나여야
+    한다 - 그래서 result의 모양 검사도 전부 이 안에서 한다."""
     try:
         result = await simulate(netlist_texts, spec)
     except Exception as exc:  # noqa: BLE001 - 계약상 어떤 실패도 결과를 바꾸면 안 된다
         return None, f"simulation raised {type(exc).__name__}: {exc}"
-    status = result.get("status")
+
+    try:
+        status = result.get("status", "success")
+        measurements = result["measurements"]
+    except Exception as exc:  # noqa: BLE001 - dict가 아니거나 measurements가 없다
+        return None, f"simulation returned an unusable result ({type(exc).__name__}: {exc})"
+
     if status != "success":
         return None, f"simulation did not succeed (status={status!r})"
+    if not isinstance(measurements, dict):
+        return None, (
+            f"simulation returned 'measurements' of type {type(measurements).__name__}, "
+            f"not a mapping"
+        )
     return result, None
 
 
@@ -280,6 +301,9 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
                 )
                 state.log_event("optimize_step", event)
                 break
+            # 실제로 편집한 철자를 기록한다. 제안의 철자를 남기면 대소문자가
+            # 섞인 덱에서 이력은 `w`라고 하는데 넷리스트는 `W`를 든다.
+            event["param"] = token
             event["before"] = before
 
             # 정수성은 이름이 아니라 param이 **도달하는 토큰**에서 나온다.
