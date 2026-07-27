@@ -37,6 +37,21 @@ def _target_ports(structure: NetlistStructure, model: str | None) -> list[str] |
     return None
 
 
+def _with_ancestors(scopes: set[str]) -> set[str]:
+    """중첩 정의 경로가 하나 들어오면 그 모든 조상 경로도 함께 담는다.
+    render_netlist는 중첩된 정의를 부모와 통째로 접으므로(216-218행 주석 -
+    접힌 본문 안에 헤더만 남기면 그 헤더가 어디 소속인지 알 수 없는 조각이
+    되기 때문), 조상이 초점 밖이면 자손 하나만 초점에 넣어봤자 부모가
+    접히는 순간 그 자손의 본문까지 함께 묻힌다. "OUTER.INNER.DEEP"은
+    "OUTER", "OUTER.INNER", "OUTER.INNER.DEEP" 셋 다를 낸다. 점이 없는
+    경로(중첩 아님)는 자기 자신만 낸다 - 순수 no-op."""
+    result: set[str] = set()
+    for scope in scopes:
+        parts = scope.split(".")
+        result.update(".".join(parts[: i + 1]) for i in range(len(parts)))
+    return result
+
+
 def select_focus(
     structure: NetlistStructure,
     paths: SignalPaths,
@@ -119,7 +134,12 @@ def select_focus(
 
     touched = resolve_change_scopes(netlist_text, [{"refdes": r} for r in sorted(touched_refdes)])
 
-    focus = seeds | upstream | (touched & definitions)
+    # seeds/upstream도 by_name[name]을 거쳐 정의 경로를 얻는데, name은 항상
+    # 정의 이름의 마지막 조각(net_blocks의 색인 방식)이라 그 경로가 중첩
+    # 정의일 수 있다 - touched와 같은 모양의 문제다. 그래서 조상 보정은 셋을
+    # 합친 뒤 한 번만 적용한다: 어느 갈래로 들어왔든 그 경로가 중첩이면
+    # 조상까지 함께 넣어야 render_netlist의 폴딩이 그 자손을 삼키지 않는다.
+    focus = _with_ancestors(seeds | upstream | (touched & definitions)) & definitions
     return focus or definitions
 
 

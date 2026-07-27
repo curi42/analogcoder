@@ -66,6 +66,40 @@ def test_an_unqualified_touched_refdes_still_keeps_its_block_in_focus():
     assert select_focus(s, paths, {"out"}, {"M9"}, CHAIN) == {"DRIVER", "SPARE"}
 
 
+NESTED = (
+    "* t\n"
+    ".subckt OUTER a b vss\n"
+    ".subckt INNER c d vss\n"
+    "M1 c d vss vss NMOS W=10 L=1\n"
+    ".ends INNER\n"
+    "Xi a b vss INNER\n"
+    "M2 a b vss vss NMOS W=10 L=1\n"
+    ".ends OUTER\n"
+    "Xtop na out 0 OUTER\n"
+    "Vin na 0 DC 1\n"
+    ".end\n"
+)
+
+
+def test_a_touched_refdes_in_a_nested_definition_keeps_every_ancestor_in_focus_and_visible():
+    # 회귀: resolve_change_scopes는 가장 안쪽 스코프만 돌려준다("OUTER.INNER"
+    # 하나). 그런데 render_netlist는 중첩 정의를 부모와 통째로 접는다(216-218행
+    # 주석) - OUTER가 초점 밖이면 그 안의 OUTER.INNER 본문까지 함께 묻혀,
+    # 튜너가 방금 바꾼 값을 다음 반복에서 다시 읽을 수 없다. 규칙 4가 막으려던
+    # 바로 그 상황이 다시 일어난다. 조상 경로까지 초점에 넣어야 이 접힘을
+    # 막는다 - focus 집합만 확인하면 render_netlist의 접힘 규칙이 나중에
+    # 바뀌어도 이 회귀를 못 잡으므로 실제 렌더 결과까지 함께 확인한다.
+    s = derive_structure(NESTED, "demo")
+    paths = build_signal_paths(s)
+
+    focus = select_focus(s, paths, set(), {"OUTER.INNER.M1"}, NESTED)
+    assert focus == {"OUTER", "OUTER.INNER"}
+
+    text = render_netlist(NESTED, focus)
+    assert "M1 c d vss vss NMOS W=10 L=1" in text
+    assert "elided" not in text
+
+
 FEEDBACK = (
     "* t\n"
     ".subckt SRC out vss\n"
