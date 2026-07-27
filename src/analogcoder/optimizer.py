@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable
 
+from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area import total_area
 from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
 from analogcoder.judge_tools import (
@@ -228,6 +229,7 @@ def _result(
     rejected: int = 0,
     pvt_sweep: dict | None = None,
     corner_failure: str | None = None,
+    failure: str | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -250,6 +252,11 @@ def _result(
         # 스윕이 정상적으로 돌고 "실패"라고 답한 경우는 여기가 None이다:
         # 그때는 pvt_sweep 자체가 무엇이 왜 실패했는지 들고 있다.
         "corner_failure": corner_failure,
+        # 이 단계 자체가 **터져서** 접힌 사유. corner_failure는 스윕 하나가 못
+        # 돈 것이고, 이쪽은 최적화가 통째로 중단된 것이다 - 둘은 다른 사실이라
+        # 한 필드에 뭉치면 "코너를 못 쟀다"와 "LLM 호출이 실패했다"가 같은
+        # 모양이 된다. 정상 경로에서는 언제나 None이다.
+        "failure": failure,
         "final_netlist_paths": state.current_netlist_paths(),
     }
 
@@ -501,6 +508,41 @@ async def _search(
 
 
 async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
+    """최적화 단계의 공개 진입점. 어떤 실패도 결과를 크래시로 바꾸지 않는다.
+
+    _run_simulation과 _run_sweep은 각자 예외를 삼키지만, 이 모듈의 **유일한
+    LLM 호출**(agents.propose)에는 그 보호가 없었다. ClaudeSDKBackend.run은
+    오류 ResultMessage 어디에서나 AgentExecutionError를 던진다 - 레이트 리밋,
+    전송 오류, structured_output이 None, 그리고 약한 로컬 모델이 스키마를
+    못 맞추는 경우(CLAUDE.md가 **예상된** 경우로 적어 둔 것이다). 그것이
+    새어 나가면 cli.main의 asyncio.run까지 올라가 write_result_json /
+    write_report_md가 아예 돌지 않는다 - **이미 PASS한 실행이** result.json도
+    report.md도 없이 트레이스백으로 끝난다.
+
+    ValueError를 함께 잡는 것은 orchestrator.run_orchestration과 같은
+    belt-and-braces다: 주소 지정 게이트는 canonical 원문만 보므로, 다른
+    테스트벤치 덱에서만 모호한 refdes는 apply_changes의 ValueError로 나온다.
+
+    되돌리기까지 해야 계약이 완성된다. 예외가 터진 시점에 이미 밀어 넣은
+    버전이 있으면 그것은 **확인되지 않은** 덱이므로, 시작 버전까지 롤백한
+    뒤에야 결과를 돌려준다 - "최적화는 시작보다 나쁜 결과를 내지 않는다"."""
+    progress: dict = {}
+    try:
+        return await _optimize(netlist_texts, spec, state, agents, progress)
+    except (AgentExecutionError, ValueError) as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        state.log_event("optimize_failed", {"reason": reason})
+        if progress.get("safe_index") is not None:
+            _rollback_to(state, spec.canonical.name, progress["safe_index"])
+        area_before = progress.get("area_before", 0.0)
+        return _result(
+            "UNCHANGED", state, None, None, area_before, area_before, failure=reason
+        )
+
+
+async def _optimize(
+    netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict
+) -> dict:
     """이미 모든 기준을 통과한 회로의 남은 마진을 목적값에 쓰는 결정론적 탐색.
 
     기존 루프의 verify_post를 쓰지 않는다. 그쪽 계약은 "나빠졌으면 롤백"인데
@@ -516,10 +558,15 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     진입 스윕은 앵커(되돌아갈 안전한 지점)이자 실측 여유분의 출처이고, 확인
     스윕이 실패하면 다시 탐색하지 않고 통과하는 마지막 버전으로 이분 탐색해
     내려간다. **최적화는 시작보다 나쁜 결과를 내지 않는다** - 이것이 없으면
-    최적화를 돌렸다는 이유로 통과하던 설계가 실패로 끝난다."""
+    최적화를 돌렸다는 이유로 통과하던 설계가 실패로 끝난다.
+
+    progress는 run_optimization의 예외 처리기가 읽는 쓰기 전용 메모다 - 예외가
+    터진 시점에 "어느 버전까지 되돌려야 하는가"와 "시작 면적이 얼마였는가"는
+    여기서만 알 수 있다."""
     canonical_name = spec.canonical.name
     start_text = netlist_texts[canonical_name]
     area_before = total_area(start_text).area
+    progress["area_before"] = area_before
 
     if spec.optimize is None:
         state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
@@ -533,6 +580,8 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     # 되고, state가 비어 있으면 첫 롤백에서 터진다.
     if state.current_netlist_texts() != netlist_texts:
         state.push_netlist_version(netlist_texts)
+    # 여기가 "돌아갈 수 있는 가장 이른 지점"이다 - 예외 경로의 착지점.
+    progress["safe_index"] = _version_index(state, canonical_name)
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)

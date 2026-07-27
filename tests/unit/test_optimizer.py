@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.spec import Criterion, OptimizeSpec
 from analogcoder.state import RunState
@@ -493,3 +494,88 @@ async def test_every_step_is_recorded_with_its_outcome(tmp_path):
     for e in steps:
         assert "refdes" in e and "param" in e and "accepted" in e
         assert "objective" in e and "area" in e
+
+
+# --- 최종 리뷰 Finding 1: 이 모듈의 유일한 LLM 호출이 무방비였다 ------------
+# _run_simulation과 _run_sweep은 각각 "이 단계에는 FAIL 결말이 없다"는 계약
+# 때문에 bare Exception을 삼킨다. agents.propose에는 그 보호가 없었다.
+# ClaudeSDKBackend.run은 오류 ResultMessage 어디에서나 AgentExecutionError를
+# 던지고(레이트 리밋, 전송 오류, structured_output이 None, 약한 로컬 모델의
+# 스키마 실패 - 마지막 것은 CLAUDE.md가 예상된 경우로 적어 둔 것이다),
+# 그것이 새어 나가면 cli.main의 asyncio.run까지 올라가 write_result_json /
+# write_report_md가 아예 돌지 않는다. **이미 PASS한 실행이** result.json도
+# report.md도 없이 트레이스백으로 끝난다.
+
+
+def _raising_propose(exc):
+    async def propose(structure_view, margins, objective, netlist_view):
+        raise exc
+
+    return propose
+
+
+@pytest.mark.asyncio
+async def test_a_propose_that_raises_is_not_a_crash(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, calls = _agents([235.0])
+    agents.propose = _raising_propose(
+        AgentExecutionError("backend returned output that does not match the schema")
+    )
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"  # FAIL이라는 결말은 존재하지 않는다
+    assert "does not match the schema" in result["failure"]
+    assert state.current_netlist_texts()["tb"] == DECK
+    events = [json.loads(line) for line in open(state.history_path)]
+    failed = [e for e in events if e["step"] == "optimize_failed"]
+    assert failed and "AgentExecutionError" in failed[0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_value_error_from_applying_a_change_is_not_a_crash(tmp_path, monkeypatch):
+    # 주소 지정 게이트는 canonical 원문만 본다. 비-canonical 테스트벤치 덱에서
+    # refdes가 모호하면 apply_changes가 ValueError를 던지고, 그 경로는 게이트가
+    # 막지 못한다 - orchestrator가 같은 이유로 ValueError를 함께 잡는 것과
+    # 정확히 같은 belt-and-braces다.
+    import analogcoder.optimizer as optimizer_module
+
+    def boom(text, changes):
+        raise ValueError("refdes 'M1' is ambiguous")
+
+    monkeypatch.setattr(optimizer_module, "apply_changes", boom)
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "ambiguous" in result["failure"]
+    assert state.current_netlist_texts()["tb"] == DECK
+
+
+@pytest.mark.asyncio
+async def test_a_failed_optimization_result_is_still_shaped_like_a_normal_one(tmp_path):
+    # cli.py:167-188은 이 dict를 그대로 result["optimization"]에 넣고
+    # pvt_sweep / corner_failure / final_criteria를 읽는다. 실패 경로가 키를
+    # 빼먹으면 크래시를 한 칸 옆으로 옮긴 것뿐이다.
+    async def run(subdir, propose_exc):
+        state = RunState(run_dir=str(tmp_path / subdir), testbench_names=["tb"])
+        state.push_netlist_version({"tb": DECK})
+        agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+        if propose_exc is not None:
+            agents.propose = _raising_propose(propose_exc)
+        return await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    healthy = await run("healthy", None)
+    failed = await run("failed", AgentExecutionError("rate limited"))
+
+    assert set(healthy) <= set(failed)
+    assert failed["pvt_sweep"] is None
+    assert failed["corner_confirmed"] is False
+    assert failed["final_netlist_paths"]
+    # 정상 경로는 실패 사유가 없다 - 두 경로가 구분되어야 한다.
+    assert healthy["failure"] is None
