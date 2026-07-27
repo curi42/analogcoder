@@ -12,6 +12,13 @@ a deterministic (non-LLM) Python orchestrator in `orchestrator.py`.
 The orchestrator never parses free text — every agent call returns JSON validated
 against a fixed schema (`schemas.py`).
 
+Most bullets below are not module summaries — they are facts a run or a review
+disproved an assumption with, kept because re-deriving them costs a
+45-corner sweep or a wrong tuning proposal. Where a bullet names a number,
+that number was measured.
+
+### Backends and agents
+
 - `agents/backend.py` — `AgentBackend` interface, `ToolSpec`, `AgentExecutionError`.
   All LLM execution is behind this interface; agent modules never call an LLM
   SDK directly.
@@ -31,6 +38,8 @@ against a fixed schema (`schemas.py`).
   system prompt + schema + tool declarations (`ToolSpec`, not
   provider-specific). Every public function takes a required `backend:
   AgentBackend` as its last positional arg.
+### Spec, topologies, and the area gate
+
 - `topologies.py` — a small curated library of pre-verified amplifier
   topologies the orchestrator can swap in as a last resort after repeated
   parameter-tuning rollbacks (`TOPOLOGY_SWITCH_THRESHOLD`), instead of only
@@ -81,6 +90,8 @@ against a fixed schema (`schemas.py`).
   always in lockstep (`push_netlist_version`/`rollback` operate on the whole
   set atomically — never partially applied across testbenches). See
   `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
+### The optimization phase
+
 - `optimizer.py` / `agents/optimizer.py` / `area.py` — a second phase that runs
   after the loop returns PASS and before the final PVT sweep, spending the
   spec's remaining margin on the objective declared in `spec.yaml`'s
@@ -169,8 +180,10 @@ against a fixed schema (`schemas.py`).
   `counted == 0, skipped == 2`). That silence is now recorded rather than
   merely true: `AreaTotal.counted`/`skipped`, the enforced flag and an explicit
   reason go into the `optimize_baseline` event and `result["area_coverage"]`.
-  This gate has been silently inert three times in this repo and no run log
-  ever showed it.
+  This is the **fourth** silently-inert area gate in this repo (`.option scale`
+  read as metres, include-only wrapper cells, wrapper instance parameters, and
+  now a zero baseline), and the first three were invisible in every run log.
+  A new gate ships with the record of when it did nothing, not just the rule.
 - **The optimization phase has no FAIL outcome, and that has to include
   crashing.** `_run_simulation` and `_run_sweep` each swallow a bare
   `Exception` for that reason; the module's one LLM call (`agents.propose`) did
@@ -180,12 +193,16 @@ against a fixed schema (`schemas.py`).
   case). It escaped `asyncio.run` in `main()`, so `write_result_json` and
   `write_report_md` never ran: a run that had already PASSed ended as a
   traceback with no `result.json` and no `report.md`. `run_optimization` is now
-  a guard wrapping `_optimize` in `except (AgentExecutionError, ValueError)` —
-  the same pair as `run_orchestration`, `ValueError` for an `apply_changes`
+  a guard wrapping `_optimize` in
+  `except (AgentExecutionError, ValueError, OSError)`. The first two are
+  `run_orchestration`'s documented pair (`ValueError` for an `apply_changes`
   failure on a *non-canonical* deck, which the addressing gates cannot see
-  because they only read the canonical text. It rolls back to the version the
-  phase started from, logs `optimize_failed`, and returns a well-formed
-  `UNCHANGED`.
+  because they only read the canonical text). **`OSError` is a third that only
+  this phase needs**: bisection re-reads a version deck from disk (`_texts_at`),
+  and a failed `open` is neither of the other two — `run_orchestration` never
+  re-reads, so it has no such case. The guard rolls back to the version the
+  phase started from (an unconfirmed pushed version must never be what the run
+  returns), logs `optimize_failed`, and returns a well-formed `UNCHANGED`.
 - **The guard band can be infeasible at the baseline, and then no candidate can
   ever be accepted.** `benchmarks/bandgap/spec.yaml` is the measured case (see
   the ratio-fallback entry above). The condition is *not* "`pvt_corners` is
@@ -210,6 +227,8 @@ against a fixed schema (`schemas.py`).
   section (objective/area before→after, steps, corner confirmation, and the
   guard-infeasible / area-coverage / phase-failure reasons — without those the
   run still says PASS while the phase did nothing).
+### Deterministic netlist derivation, and what the tuner is shown
+
 - `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
   `structure_view.py` — the deterministic replacement for what used to be an
   LLM `analyzer` agent. That agent contributed nothing measurable: a run
@@ -484,10 +503,16 @@ reasoning/capability gap, not a pipeline defect.
 being set — it's the fastest way to re-verify the OpenAICompatibleBackend path
 against a real server.
 
-## Known limitations / gotchas for weaker (local) models
+## Gotchas found by running, not by inspection
 
-Found by actually running the pipeline against Ollama, not by inspection —
-worth reading before assuming a weak-model failure is a code bug:
+Every entry below cost a real run, a real sweep, or a review that reproduced
+it. The section began as weak-model notes and outgrew that: most of it is now
+SPICE/PDK behaviour and parser facts that bite any model.
+
+### Weak (local) models and the agent loop
+
+Found by actually running the pipeline against Ollama — worth reading before
+assuming a weak-model failure is a code bug.
 
 - **`response_format` + `tools` together breaks tool-calling on some
   OpenAI-compatible servers** (observed on Ollama): the model skips calling the
@@ -544,6 +569,23 @@ worth reading before assuming a weak-model failure is a code bug:
   change), matching the existing philosophy for a missing baseline value —
   not by rejecting it, which would have been a different, larger behavior
   change. If you touch `check_area_growth`, keep this guard.
+- Local models are noticeably more reliable at agents with **no tool calls**
+  (tuner, verifier) than at tool-calling agents (simulator, judge). (Observed
+  when the analyzer agent still existed; it's since been replaced by
+  deterministic derivation — see `structure.py` above — so this comparison no
+  longer has a third no-tool-call agent to include.)
+  If a weak-model run fails, check which agent failed before assuming the
+  whole pipeline is unreliable.
+- If an agent's structured output still doesn't validate after retries,
+  `orchestrator.py` catches `AgentExecutionError` and returns a clean
+  `{"status": "FAIL", ...}` result instead of crashing — this is intentional
+  (see `run_orchestration`'s try/except). Don't remove it. The same try also
+  catches `ValueError` for the same reason (belt-and-braces against a
+  `ValueError` from the netlist-apply path, e.g. an ambiguous refdes that
+  somehow bypassed `check_refdes_resolution`) — don't remove that either.
+
+### SPICE, sky130, and circuit physics
+
 - **sky130 device models are binned and exceeding a bin is a hard error.**
   `wmax`/`lmax` are 100 µm. `W=120` aborts the run with `could not find a
   valid modelname` — not a warning, not a bad number.
@@ -574,20 +616,9 @@ worth reading before assuming a weak-model failure is a code bug:
   scale from `pdk_corner.inc` alone reads `W=30` as thirty *metres* — which is
   exactly how the area gate's size tiers came to be inert on every PDK-backed
   benchmark.
-- Local models are noticeably more reliable at agents with **no tool calls**
-  (tuner, verifier) than at tool-calling agents (simulator, judge). (Observed
-  when the analyzer agent still existed; it's since been replaced by
-  deterministic derivation — see `structure.py` above — so this comparison no
-  longer has a third no-tool-call agent to include.)
-  If a weak-model run fails, check which agent failed before assuming the
-  whole pipeline is unreliable.
-- If an agent's structured output still doesn't validate after retries,
-  `orchestrator.py` catches `AgentExecutionError` and returns a clean
-  `{"status": "FAIL", ...}` result instead of crashing — this is intentional
-  (see `run_orchestration`'s try/except). Don't remove it. The same try also
-  catches `ValueError` for the same reason (belt-and-braces against a
-  `ValueError` from the netlist-apply path, e.g. an ambiguous refdes that
-  somehow bypassed `check_refdes_resolution`) — don't remove that either.
+
+### Netlist parsing, parameters, and the area gate
+
 - **An inline `$` or `;` comment is stripped before parsing, and re-appended
   by `apply_changes`.** Leaving it in used to swallow the model name into the
   node list, and made `param="value"` replace the comment's last word instead
@@ -693,9 +724,10 @@ worth reading before assuming a weak-model failure is a code bug:
   `neutral` (nothing to bound: `nf`), `blind` (the component instantiates a
   subckt this deck does not define, so no trace is possible;
   `Component.undefined_subckt`), `unjudged` (a value could not be resolved).
-  This gate has been silently inert twice in this repo's history and neither
-  time was visible in a run log. A sky130 primitive is `bounded`, not `blind` —
-  it is classified by its model name and tiered on geometry.
+  This gate had by then been silently inert twice, neither time visible in a
+  run log; it has happened four times now (the running count is under
+  `optimizer.py`/`area.py` in Architecture). A sky130 primitive is `bounded`,
+  not `blind` — it is classified by its model name and tiered on geometry.
 - **Per-instance parameter resolution is a different tool from
   `build_param_envs`.** The latter resolves per subckt *definition* and
   deliberately drops any name the instances disagree on — and in wrapper-cell
