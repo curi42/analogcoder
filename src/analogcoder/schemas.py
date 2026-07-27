@@ -95,6 +95,7 @@ OPTIMIZER_SCHEMA = {
                     "reasoning": {"type": "string"},
                 },
                 "required": ["refdes", "param", "direction", "reasoning"],
+                "additionalProperties": False,
             },
         },
         "overall_reasoning": {"type": "string"},

@@ -43,6 +43,8 @@ async def test_the_agent_receives_the_objective_and_the_margins():
     assert "iq_ua" in user
     assert "235" in user
     assert "AMP" in user
+    # netlist_view itself must reach the prompt, not just structure_view/margins/objective.
+    assert "w=2e-6" in user
 
 
 @pytest.mark.asyncio
@@ -52,10 +54,19 @@ async def test_the_agent_is_told_not_to_propose_numbers():
     await propose_candidates("s", [], "iq_ua", "n", backend)
 
     system = backend.calls[0]["system"]
-    assert "direction" in system.lower()
-    # 수치를 내지 말라는 지시가 프롬프트에 있어야 한다. 약한 모델이
-    # two_stage_opamp에서 Cc를 거꾸로 움직여 10 iteration을 태운 전력이 있다.
-    assert "value" in system.lower()
+    # Pin the actual instruction, not mere word co-occurrence: "direction" and
+    # "value" both appear in innocuous sentences too (e.g. "consider the value
+    # each candidate brings"), so checking for the words alone would still pass
+    # with the prohibition itself deleted. These two phrases are the
+    # division-of-labour statement: deleting either must fail this test.
+    assert "do not propose a numeric value" in system.lower()
+    assert "deterministic search decides how far" in system.lower()
+
+
+def test_the_prompt_tells_the_model_not_to_touch_testbench_sources():
+    from analogcoder.agents.optimizer import OPTIMIZER_SYSTEM_PROMPT
+
+    assert "testbench's own sources" in OPTIMIZER_SYSTEM_PROMPT
 
 
 def test_the_schema_forbids_a_numeric_proposal():
@@ -64,3 +75,23 @@ def test_the_schema_forbids_a_numeric_proposal():
     assert set(item["required"]) == {"refdes", "param", "direction", "reasoning"}
     assert "new_value" not in item["properties"]
     assert item["properties"]["direction"]["enum"] == ["increase", "decrease"]
+
+
+def test_the_schema_structurally_rejects_an_extra_field_like_new_value():
+    # required/properties alone only makes new_value non-required - jsonschema
+    # permits extra keys by default, so a model could still smuggle a numeric
+    # new_value through validation. additionalProperties: false is what makes
+    # a numeric proposal actually structurally impossible, per the plan.
+    import jsonschema
+
+    candidate = {
+        "refdes": "M1",
+        "param": "w",
+        "direction": "decrease",
+        "reasoning": "x",
+        "new_value": "5u",
+    }
+    payload = {"candidates": [candidate], "overall_reasoning": "y"}
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, OPTIMIZER_SCHEMA)
