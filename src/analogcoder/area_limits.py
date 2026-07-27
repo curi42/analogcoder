@@ -94,6 +94,26 @@ def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = 
     return tiers[-1].allowed_multiplier
 
 
+def annotate_resolved_params(component: Component, envs: dict[str | None, dict[str, float]]) -> None:
+    """component.params(원본 문자열)를 component.resolved_params(수치)로 채운다.
+
+    parse_netlist는 파싱만 하고 해소는 하지 않는다 - resolved_params는 이
+    함수를 거치기 전까지 항상 비어 있다. index_baseline_components(면적
+    게이트)와 area.total_area(면적 합산) 둘 다 이 함수를 쓴다 - 예전에는
+    두 곳에 같은 6줄이 복제돼 있었는데, 이 저장소는 넷리스트 해소 로직이
+    두 갈래로 갈라져 조용히 어긋난 사고를 이미 여러 번 겪었다 (`.option
+    scale` 미반영, MiM 캡 단위 불일치, `+` 연속줄 오파싱 등 - CLAUDE.md
+    참고). 복제된 두 줄은 오늘은 우연히 똑같지만, 한쪽에만 새 폴백 규칙이
+    붙으면 그 순간부터 남몰래 갈라진다 - 그래서 한 함수로 합쳤다."""
+    env = envs.get(component.scope, envs[None])
+    for name, raw in component.params.items():
+        value = resolve_value(raw, env)
+        if value is not None:
+            component.resolved_params[name] = value
+    if component.value is not None:
+        component.resolved_value = resolve_value(component.value, env)
+
+
 def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     """Keyed by "<path>.<refdes>" for components declared inside a subckt
     (path is the dotted nesting path, e.g. "OUTER.INNER"), plus a plain
@@ -109,20 +129,11 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     parsed = parse_netlist(netlist_text)
     envs = build_param_envs(netlist_text)
 
-    def _annotate(component: Component) -> None:
-        env = envs.get(component.scope, envs[None])
-        for name, raw in component.params.items():
-            value = resolve_value(raw, env)
-            if value is not None:
-                component.resolved_params[name] = value
-        if component.value is not None:
-            component.resolved_value = resolve_value(component.value, env)
-
     for component in parsed.top_components:
-        _annotate(component)
+        annotate_resolved_params(component, envs)
     for subckt in parsed.subckts.values():
         for component in subckt.components:
-            _annotate(component)
+            annotate_resolved_params(component, envs)
 
     # 인스턴스 줄에서 크기가 정해지는 덱(래퍼 셀 스타일)을 위해, 각
     # 인스턴스 파라미터가 실제로 도달하는 소자/토큰을 여기서 한 번 계산해

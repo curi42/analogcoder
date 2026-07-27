@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from analogcoder.area_limits import multiplicity, resolved_token
+from analogcoder.area_limits import annotate_resolved_params, multiplicity, resolved_token
 from analogcoder.netlist import Component, parse_netlist
-from analogcoder.params import build_param_envs, has_token, resolve_value
+from analogcoder.params import build_param_envs, has_token
 
 
 @dataclass(frozen=True)
@@ -19,25 +19,6 @@ class AreaTotal:
     skipped: int
 
 
-def _annotate(component: Component, envs: dict[str | None, dict[str, float]]) -> None:
-    """component.params(원본 문자열)를 component.resolved_params(수치)로 채운다.
-
-    parse_netlist는 파싱만 하고 해소는 하지 않는다 - resolved_params는
-    이 단계 전까지 항상 비어 있다. area_limits.index_baseline_components의
-    내부 _annotate와 같은 구조다 (build_param_envs/resolve_value 호출도
-    동일): 그쪽은 이 함수를 공개하지 않으므로, 같은 배선을 새로 얻는 대신
-    여기서 다시 쓴다. 두 자리 다 build_param_envs/resolve_value라는
-    같은 해소기를 호출하므로 결과가 갈릴 여지는 없다 - 갈릴 수 있는 별도
-    해소 로직을 새로 만드는 것과는 다르다."""
-    env = envs.get(component.scope, envs[None])
-    for name, raw in component.params.items():
-        value = resolve_value(raw, env)
-        if value is not None:
-            component.resolved_params[name] = value
-    if component.value is not None:
-        component.resolved_value = resolve_value(component.value, env)
-
-
 def _dimension(component: Component, token: str) -> float | None:
     value = resolved_token(component, token)
     if value is None:
@@ -47,14 +28,20 @@ def _dimension(component: Component, token: str) -> float | None:
 
 def total_area(netlist_text: str) -> AreaTotal:
     """소자별 `w x l x m`의 합. nf는 제외한다 - 핑거 분할은 총 폭을
-    바꾸지 않으므로 면적 중립이다."""
+    바꾸지 않으므로 면적 중립이다.
+
+    파라미터 해소는 area_limits.annotate_resolved_params를 쓴다 -
+    index_baseline_components(면적 게이트)도 같은 함수를 쓴다. 예전에는
+    이 배선을 여기서 따로 복제했는데, 그 복제가 오늘은 우연히 똑같아도
+    한쪽에만 새 규칙이 붙는 순간 두 총합이 말없이 갈라질 수 있었다 - 그래서
+    한 함수로 합쳤다."""
     parsed = parse_netlist(netlist_text)
     envs = build_param_envs(netlist_text)
     components = list(parsed.top_components) + [
         c for subckt in parsed.subckts.values() for c in subckt.components
     ]
     for component in components:
-        _annotate(component, envs)
+        annotate_resolved_params(component, envs)
 
     area = 0.0
     counted = 0
