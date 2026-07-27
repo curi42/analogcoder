@@ -96,6 +96,35 @@ def test_a_corner_value_that_is_missing_yields_no_allowance_rather_than_zero():
     assert corner_allowances({"iq_ua": 235.0}, {"criteria": []}, crit) == {}
 
 
+def test_a_corner_actual_that_is_nan_yields_no_allowance_rather_than_zero():
+    # run_full_pvt_sweep은 값이 없는 경우 항목을 통째로 빼지 않는다 - 모든
+    # criterion에 대해 evaluate_criteria를 호출하고, 값을 못 구한 코너는
+    # actual=NaN인 항목으로 채운다 (pvt.py, evaluate_criteria의
+    # missing-measurement 경로). corner_allowances가 실제로 마주치는 "값 없음"
+    # 모양은 빈 리스트가 아니라 이 NaN 항목이다.
+    from analogcoder.judge_tools import corner_allowances
+
+    crit = [_c("iq", "iq_ua", "<=", 300.0)]
+    sweep = {"criteria": [{"name": "iq", "actual": float("nan")}]}
+
+    allowances = corner_allowances({"iq_ua": 235.0}, sweep, crit)
+
+    assert "iq" not in allowances
+
+
+def test_a_nan_nominal_value_yields_no_allowance_rather_than_zero():
+    # 대칭 케이스: 코너 값은 멀쩡한데 nominal 쪽이 NaN인 경우도 "0" 이 아니라
+    # 부재로 처리되어야 한다.
+    from analogcoder.judge_tools import corner_allowances
+
+    crit = [_c("iq", "iq_ua", "<=", 300.0)]
+    sweep = {"criteria": [{"name": "iq", "actual": 268.0}]}
+
+    allowances = corner_allowances({"iq_ua": float("nan")}, sweep, crit)
+
+    assert "iq" not in allowances
+
+
 def test_ratio_allowances_are_the_fallback_when_corners_cannot_be_measured():
     from analogcoder.judge_tools import ratio_allowances
 
