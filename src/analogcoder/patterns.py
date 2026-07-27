@@ -119,16 +119,21 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
                 detail=f"shared gate {na['g']}, {diode.refdes} is diode-connected",
             ))
 
-    # 캐스코드 판정의 알려진 한계: source follower(신호가 게이트로 들어와
-    # 소스로 나오는 소자) 위에 전류원이 얹힌 모양과, 파워 게이팅 스위치가
-    # 소자 하나를 켜고 끄는 모양은 이 지역 서브그래프만 보면 진짜
-    # 캐스코드와 구별되지 않는다 - 어느 넷이 "바이어스"고 어느 넷이
-    # "신호"인지는 명명 규칙을 봐야 아는데, 그건 이 모듈이 금지하는
-    # 바로 그 추측이다("전원 레일"을 이름으로 알아보는 것도 마찬가지
-    # 추측이라 채택하지 않는다). 그래서 고치지 않고 문서화만 한다 -
-    # test_a_source_follower_over_a_current_sink_matches_cascode_known_limitation과
-    # test_a_power_gating_switch_matches_cascode_known_limitation이 현재
-    # 동작을 그대로 고정해 둔다.
+    # 직렬 스택(stacked_pair): 한 소자의 소스가 다른 소자의 드레인에 얹혀
+    # 있다. 이것을 "cascode"라 부르지 않는 이유가 있다 - source follower
+    # (신호가 게이트로 들어와 소스로 나오는 소자) 위에 전류원이 얹힌 모양,
+    # 파워 게이팅 스위치가 소자 하나를 켜고 끄는 모양, 그리고 진짜 캐스코드는
+    # 이 지역 서브그래프만 보면 완전히 같다. 셋을 가르려면 어느 넷이
+    # "바이어스"고 어느 넷이 "신호"인지를 알아야 하는데 그건 명명 규칙을
+    # 보는 일이고, 이 모듈이 금지하는 바로 그 추측이다("전원 레일"을 이름으로
+    # 알아보는 것도 마찬가지라 채택하지 않는다).
+    #
+    # 예전에는 그래서 "cascode"라고 부르고 두 오탐을 테스트로 문서화만 했다.
+    # 그러나 거짓 양성 0이 기준이라면 답은 "침묵 아니면 참인 이름"이지
+    # "틀린 이름 + 각주"가 아니다. stacked_pair는 셋 모두에 대해 참이고,
+    # 매처가 추측하면 안 되는 명명 지식(이게 캐스코드인가 소스 팔로워인가)은
+    # 넷리스트 원문을 함께 받는 LLM이 얹으면 된다. detail도 같은 규율을
+    # 따른다 - 게이트 넷을 "bias"라 부르지 않고 연결 관계만 낸다.
     for upper, lower in combinations(mos, 2):
         for top, bottom in ((upper, lower), (lower, upper)):
             nt, nbm = _nets(top), _nets(bottom)
@@ -153,9 +158,12 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
                 and _source_fanout(nt["s"], mos) == 1
             ):
                 matches.append(PatternMatch(
-                    kind="cascode", block=block.path,
+                    kind="stacked_pair", block=block.path,
                     members=tuple(sorted((top.refdes, bottom.refdes))),
-                    detail=f"{top.refdes} stacked on {bottom.refdes} at {nt['s']}, bias {nt['g']}",
+                    detail=(
+                        f"{top.refdes}.s == {bottom.refdes}.d at {nt['s']}, "
+                        f"{top.refdes}.g on {nt['g']}"
+                    ),
                 ))
 
     # 밀러 보상: 커패시터가 어떤 이득단의 입력 게이트와 출력 드레인을 잇는다.
@@ -209,16 +217,16 @@ def find_patterns(structure: NetlistStructure) -> list[PatternMatch]:
     {"a": "b"}를 채워 넣던 것의 정확한 반대편이며, 받아들이는 기준도 재현율이
     아니라 거짓 양성 0이다.
 
-    세 파생 모듈 중 유일하게 틀릴 수 있는 부분이므로 따로 두었다.
+    내는 kind는 diff_pair, current_mirror, stacked_pair, miller_compensation
+    넷이다. 세 파생 모듈 중 유일하게 틀릴 수 있는 부분이므로 따로 두었다.
     서브프로젝트 F(토폴로지 라이브러리 확장)가 자라날 자리이기도 하다.
 
-    알려진, 의도적으로 고치지 않은 한계: 캐스코드 판정은 지역 서브그래프만
-    본다. source follower 위에 전류원이 얹힌 모양이나 파워 게이팅 스위치가
-    소자 하나를 켜고 끄는 모양은 진짜 캐스코드와 그래프 모양이 동일해서
-    구별할 수 없다 - 어느 넷이 바이어스고 어느 넷이 신호인지는 이름을 봐야
-    아는데, "전원 레일"을 이름으로 알아보는 것도 똑같은 추측이라 채택하지
-    않는다. 이 한계는 _find_in_block의 캐스코드 루프 주석과
-    test_patterns.py의 두 "known_limitation" 테스트가 기록한다."""
+    stacked_pair가 "cascode"가 아닌 이유는 이 규율의 직접적인 귀결이다:
+    캐스코드, source follower 위의 전류원, 파워 게이팅 스위치는 지역
+    서브그래프가 완전히 같아 구별할 수 없고, 구별하려면 넷 이름을 읽어야
+    하는데 그건 금지된 추측이다. 거짓 양성 0이 기준이면 답은 "침묵 아니면
+    참인 이름"이므로, 셋 모두에 대해 참인 이름을 낸다 - 어느 쪽인지는
+    넷리스트 원문을 함께 받는 LLM이 판단할 몫이다."""
     matches: list[PatternMatch] = []
     for path in sorted(structure.blocks, key=lambda p: (p is not None, p or "")):
         matches += _find_in_block(structure.blocks[path])

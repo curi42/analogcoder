@@ -169,7 +169,7 @@ def test_a_mos_capacitor_does_not_mirror_a_diode_connected_device_on_its_gate():
     assert not any(kind == "current_mirror" for kind, _ in _kinds(deck))
 
 
-def test_a_device_stacked_on_another_drain_with_a_bias_gate_is_a_cascode():
+def test_a_device_stacked_on_another_drain_is_a_stacked_pair():
     deck = (
         "* t\n"
         "M1 mid vin vss vss NMOS W=10 L=1\n"
@@ -177,10 +177,10 @@ def test_a_device_stacked_on_another_drain_with_a_bias_gate_is_a_cascode():
         ".end\n"
     )
 
-    assert ("cascode", ("M1", "M2")) in _kinds(deck)
+    assert ("stacked_pair", ("M1", "M2")) in _kinds(deck)
 
 
-def test_a_differential_pair_stacked_on_its_tail_current_source_is_not_a_cascode():
+def test_a_differential_pair_stacked_on_its_tail_current_source_is_not_a_stacked_pair():
     # 실제 벤치마크(two_stage_opamp/bandgap 둘 다)에서 발견된 거짓 양성: 차동쌍의
     # 두 소자가 tail 전류원의 드레인을 공통 소스로 문다. s(top)==d(bottom)라는
     # 조건만 보면 캐스코드처럼 보이지만, 진짜 캐스코드는 그 노드를 소스로 무는
@@ -195,13 +195,13 @@ def test_a_differential_pair_stacked_on_its_tail_current_source_is_not_a_cascode
         ".end\n"
     )
 
-    assert not any(kind == "cascode" for kind, _ in _kinds(deck))
+    assert not any(kind == "stacked_pair" for kind, _ in _kinds(deck))
     # 차동쌍 자체는 여전히 잡혀야 한다 - 이 테스트가 캐스코드 조건을 지나치게
     # 좁혀서 diff_pair까지 함께 죽이지 않았는지 확인한다.
     assert ("diff_pair", ("M1", "M2")) in _kinds(deck)
 
 
-def test_a_folded_cascode_fold_node_is_still_a_cascode():
+def test_a_folded_cascode_fold_node_is_still_a_stacked_pair():
     # 실제 bandgap 벤치마크로 확인된 규칙: 폴디드 캐스코드의 폴드 노드는
     # 드레인을 정확히 둘(입력 소자 + 접는 소자, 서로 다른 극성) 무는 게
     # 구조상 정상이다. 캐스코드 판정에서 bottom의 드레인 팬아웃까지
@@ -215,17 +215,17 @@ def test_a_folded_cascode_fold_node_is_still_a_cascode():
         ".end\n"
     )
 
-    assert ("cascode", ("Mcas", "Mload")) in _kinds(deck)
+    assert ("stacked_pair", ("Mcas", "Mload")) in _kinds(deck)
     # 폴드 노드의 다른 쪽(입력 소자, 극성이 다름)은 캐스코드로 잡히면 안
     # 된다 - 이게 바로 _same_kind가 캐스코드 루프에서 하는 일이다. 이
     # 클래스를 지우면 실제 bandgap 넷리스트 4개 증폭기 전체에서 폴드당
     # 하나씩, 총 8개의 거짓 캐스코드가 나온다(리뷰어가 뮤테이션으로 확인).
     assert not any(
-        kind == "cascode" and "M1" in members for kind, members in _kinds(deck)
+        kind == "stacked_pair" and "M1" in members for kind, members in _kinds(deck)
     )
 
 
-def test_a_shared_gate_stack_is_not_a_cascode():
+def test_a_shared_gate_stack_is_not_a_stacked_pair():
     # top과 bottom이 게이트를 공유하면 직렬로 쌓인 게 아니라 병렬로 같은
     # 신호를 보는 것이다 - 진짜 캐스코드의 캐스코드 게이트는 스택 아래
     # 소자의 게이트와 다른 고정 바이어스다.
@@ -236,17 +236,18 @@ def test_a_shared_gate_stack_is_not_a_cascode():
         ".end\n"
     )
 
-    assert not any(kind == "cascode" for kind, _ in _kinds(deck))
+    assert not any(kind == "stacked_pair" for kind, _ in _kinds(deck))
 
 
-def test_a_source_follower_over_a_current_sink_matches_cascode_known_limitation():
-    # 알려진, 의도적으로 고치지 않은 한계: source follower(게이트로 신호가
-    # 들어와 소스로 나오는 소자) 위에 전류 싱크가 얹힌 모양은 진짜
-    # 캐스코드와 지역 그래프 모양이 완전히 같다 - 어느 넷이 "바이어스"고
-    # 어느 넷이 "신호"인지는 이름을 봐야 아는데, 이름으로 판단하는 것은
-    # 이 모듈이 금지하는 추측이다. 이 테스트는 그 한계를 고치는 대신
-    # 현재 동작(매칭됨)을 고정해 둔다 - 나중에 누군가 "고치려는" 시도를
-    # 하기 전에 이 모양을 눈에 띄게 남겨 두기 위해서다.
+def test_a_source_follower_over_a_current_sink_is_labelled_stacked_pair_not_cascode():
+    # source follower(게이트로 신호가 들어와 소스로 나오는 소자) 위에 전류
+    # 싱크가 얹힌 모양은 진짜 캐스코드와 지역 그래프 모양이 완전히 같다 -
+    # 어느 넷이 "바이어스"고 어느 넷이 "신호"인지는 이름을 봐야 아는데,
+    # 이름으로 판단하는 것은 이 모듈이 금지하는 추측이다. 예전에는 이 모양을
+    # "cascode"로 부르고 그 오류를 문서화만 했지만, 거짓 양성 0이 기준이라면
+    # 답은 "침묵 아니면 참인 이름"이지 "틀린 이름"이 아니다. stacked_pair는
+    # 캐스코드에도, source follower에도, 파워 스위치에도 참이다 - 매처가
+    # 추측하면 안 되는 명명 지식은 LLM이 얹으면 된다.
     deck = (
         "* t\n"
         "Mf vdd vin nout vss NMOS W=10 L=1\n"
@@ -254,13 +255,15 @@ def test_a_source_follower_over_a_current_sink_matches_cascode_known_limitation(
         ".end\n"
     )
 
-    assert ("cascode", ("Mf", "Msink")) in _kinds(deck)
+    kinds = _kinds(deck)
+
+    assert ("stacked_pair", ("Mf", "Msink")) in kinds
+    assert not any(kind == "cascode" for kind, _ in kinds)
 
 
-def test_a_power_gating_switch_matches_cascode_known_limitation():
-    # 같은 한계의 다른 예: 파워 게이팅 하이사이드 스위치가 소자 하나를
-    # 켜고 끄는 모양도 캐스코드와 그래프 모양이 같다. 고치지 않고
-    # 문서화만 한다 - 위 테스트와 같은 이유.
+def test_a_power_gating_switch_is_labelled_stacked_pair_not_cascode():
+    # 같은 이유의 다른 예: 파워 게이팅 하이사이드 스위치가 소자 하나를
+    # 켜고 끄는 모양도 캐스코드와 그래프 모양이 같다.
     deck = (
         "* t\n"
         "Mdev nsw vin vss vss NMOS W=10 L=1\n"
@@ -268,7 +271,27 @@ def test_a_power_gating_switch_matches_cascode_known_limitation():
         ".end\n"
     )
 
-    assert ("cascode", ("Mdev", "Msw")) in _kinds(deck)
+    kinds = _kinds(deck)
+
+    assert ("stacked_pair", ("Mdev", "Msw")) in kinds
+    assert not any(kind == "cascode" for kind, _ in kinds)
+
+
+def test_the_stacked_pair_detail_states_the_connection_not_an_interpretation():
+    # detail이 게이트 넷을 "bias"라고 부르면 kind에서 걷어낸 바로 그 추측을
+    # 한 칸 옆에서 다시 한다. 낼 수 있는 사실은 연결 관계뿐이다.
+    deck = (
+        "* t\n"
+        "M1 mid vin vss vss NMOS W=10 L=1\n"
+        "M2 out ncas mid vss NMOS W=10 L=1\n"
+        ".end\n"
+    )
+    match = next(
+        m for m in find_patterns(derive_structure(deck, "t")) if m.kind == "stacked_pair"
+    )
+
+    assert match.detail == "M2.s == M1.d at mid, M2.g on ncas"
+    assert "bias" not in match.detail
 
 
 def test_a_cap_between_a_gain_stage_input_gate_and_its_output_drain_is_miller():

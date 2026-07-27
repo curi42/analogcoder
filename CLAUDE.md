@@ -90,11 +90,17 @@ against a fixed schema (`schemas.py`).
   a measurement resolving to a rail seeded every block at once. Recognising a
   rail by *name* (`vdd`/`vss`/`gnd`/`0`) would be the forbidden guess; "a
   top-level independent source connects here" is a parsed fact.
-  `patterns.py` matches differential pairs, current mirrors, cascodes and
-  Miller compensation. **Patterns never guess** - a match is a fact, a
-  non-match is silence, and the acceptance bar is zero false positives, not
-  recall. It is the only one of the three that can be wrong, which is why it
-  is a separate module. See
+  `patterns.py` matches differential pairs, current mirrors, **stacked
+  pairs** and Miller compensation. **Patterns never guess** - a match is a
+  fact, a non-match is silence, and the acceptance bar is zero false
+  positives, not recall. `stacked_pair` is deliberately not called `cascode`:
+  a cascode, a source follower over a current sink and a power-gating switch
+  have an identical local subgraph, and telling them apart means reading net
+  names, which is the forbidden guess. Under a zero-false-positive bar the
+  answer is silence or a truthful label, never a wrong label with a footnote -
+  so the matcher states the connection (`M2.s == M1.d at mid, M2.g on ncas`)
+  and leaves the naming to the LLM, which has the netlist. It is the only one
+  of the three modules that can be wrong, which is why it is separate. See
   `docs/superpowers/specs/2026-07-27-netlist-structure-derivation-design.md`.
 - **The prompt is focused; the gates never are.** `structure_view.py` picks
   the blocks reachable from the failing criteria's nets (via
