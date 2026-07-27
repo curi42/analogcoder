@@ -754,6 +754,30 @@ async def test_a_failing_optimization_sweep_still_turns_the_run_into_a_fail(tmp_
 
 
 @pytest.mark.asyncio
+async def test_the_reported_netlist_paths_follow_the_version_optimization_landed_on(tmp_path):
+    # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로가 그것을
+    # 따라가지 않으면 report가 최적화 **이전** 덱을 가리킨다 - 실제로 실린
+    # 회로와 보고된 회로가 다른 상태다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            state.push_netlist_version({"ac_loop_gain": "* optimized\n.end\n"})
+            captured["landed"] = state.current_netlist_paths()
+            return _optimization_result(status="OPTIMIZED", steps_accepted=1, pvt_sweep=passing)
+
+        return run
+
+    result, _, captured = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o9"), fake_optimization, passing
+    )
+
+    assert result["final_netlist_paths"] == captured["landed"]
+    with open(result["final_netlist_paths"]["ac_loop_gain"]) as f:
+        assert f.read() == "* optimized\n.end\n"
+
+
+@pytest.mark.asyncio
 async def test_the_optimizer_proposal_runs_on_the_optimizer_agent_backend(tmp_path):
     # propose가 다른 에이전트의 백엔드에 배선되면 --agent-model optimizer=...가
     # 아무 데도 닿지 않는다. 모델을 갈라 두고 실제로 넘어간 백엔드를 본다.
