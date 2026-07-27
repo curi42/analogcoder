@@ -12,6 +12,35 @@ class CornerSet:
     probe_order: tuple[CornerPoint, ...]  # 집합 밖, severity 오름차순
     probe_index: int = 0
 
+    def __post_init__(self) -> None:
+        # 이 세 불변식은 이 하위 프로젝트 전체가 딛고 서는 기반이다 -
+        # seed_from_sweep/grown_with/promote는 지금 이 불변식을 지키며 서로
+        # 맞물리지만, 이 클래스는 public이고 frozen dataclass 기본 __init__을
+        # 그대로 노출한다. 나중 태스크가 run state에서 CornerSet을
+        # 역직렬화하거나 재개된 실행을 위해 직접 하나 만들면, 이 파일의
+        # 함수를 하나도 거치지 않고 불변식이 깨진 값을 만들 수 있다 - 예를
+        # 들어 probe_order에 이미 corners 안에 있는 코너가 남아 있으면
+        # next_probe가 그 코너를 또 골라 이 프로젝트가 막으려는 낭비된
+        # 시뮬레이션을 정확히 만들어 낸다. patterns.PatternMatch가 같은
+        # 이유로 __post_init__에서 자기 자신과 짝지어지는 매치를 막는 것과
+        # 같은 구조 - 여기서도 생성 자체를 막아 미래의 호출부가 개별적으로
+        # 이 불변식을 지키는 데 의존하지 않게 한다. frozen이므로 여기서
+        # 값을 고치지 않는다 - 고치는 대신 거부한다.
+        if not self.corners or self.corners[0] is not NOMINAL:
+            raise ValueError(
+                f"CornerSet.corners[0] must be NOMINAL: {self.corners!r}"
+            )
+        if len(set(self.corners)) != len(self.corners):
+            raise ValueError(
+                f"CornerSet.corners must not contain a duplicate corner: {self.corners!r}"
+            )
+        overlap = set(self.probe_order) & set(self.corners)
+        if overlap:
+            raise ValueError(
+                f"CornerSet.probe_order must not overlap corners, found {overlap!r} "
+                f"in both corners={self.corners!r} and probe_order={self.probe_order!r}"
+            )
+
 
 def label(point: CornerPoint | None) -> str:
     """사람이 읽는 코너 이름. NOMINAL은 "(deck)" - 어떤 코너 렌더링도 거치지
@@ -49,7 +78,13 @@ def seed_from_sweep(sweep: dict, spec) -> CornerSet:
     뜻이고, 회로가 거기서 동작하지 않는다는 가장 강한 증거다.
 
     진입 스윕의 overall_pass는 보지 않는다 - 실패한 설계의 최악 코너도
-    최악 코너이고, 오히려 중간 루프가 봐야 할 코너다."""
+    최악 코너이고, 오히려 중간 루프가 봐야 할 코너다.
+
+    spec 인자는 지정된 인터페이스라서 유지하지만, 이 함수는 그 안의 어떤
+    것도 읽지 않는다 - worst_case_corners의 각 항목이 spec.pvt_corners가
+    선언한 교차곱 안에 실제로 있는지 검증하지 않는다. 오늘은 무해하지만
+    (sweep은 항상 all_corners(spec.pvt_corners)에서 나온 코너로 채워진다),
+    다른 출처의 sweep을 받는 순간 조용히 틀린 코너를 받아들일 수 있다."""
     chosen: list[CornerPoint] = []
     for raw in sweep.get("worst_case_corners", {}).values():
         point = _as_point(raw)

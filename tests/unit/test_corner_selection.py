@@ -166,3 +166,37 @@ def test_label_of_nominal_is_deck():
 
 def test_label_of_a_real_corner_shows_process_voltage_temperature():
     assert label(FS) == "fs/1.98/125.0"
+
+
+def test_growth_dedupes_when_two_failing_criteria_share_a_worst_corner(_spec):
+    # 성장 쪽의 씨앗-쪽 test_two_criteria_sharing_a_worst_corner_do_not_duplicate_it
+    # 대응 짝. gain과 pm이 둘 다 FS를 최악 코너로 지목하면 added에는 FS가
+    # 한 번만 들어가야 한다 - 두 번 들어가면 corners에도 FS가 중복으로
+    # 붙어, 성장 없는 재시도 판정(added가 비었는지)과 중복 없는 집합이라는
+    # 이 프로젝트 전체의 전제를 둘 다 깬다.
+    cs = CornerSet(corners=(NOMINAL,), probe_order=())
+    sweep = _sweep({"gain": _wc(FS, -1.0), "pm": _wc(FS, -2.0)})
+    _, added = grown_with(cs, sweep, ["gain", "pm"])
+    assert added == [FS]
+
+
+def test_corner_set_rejects_a_construction_where_nominal_is_not_first():
+    # CornerSet은 public이고 frozen dataclass 기본 __init__을 그대로
+    # 노출한다 - seed_from_sweep/grown_with/promote를 거치지 않고 나중
+    # 태스크(run state 역직렬화 등)가 직접 만들 수 있다. NOMINAL이 [0]이
+    # 아니면 "덱 그대로"라는 기준점이 조용히 사라진다.
+    with pytest.raises(ValueError, match="NOMINAL"):
+        CornerSet(corners=(FS, SF), probe_order=())
+
+
+def test_corner_set_rejects_a_duplicate_corner():
+    with pytest.raises(ValueError, match="duplicate"):
+        CornerSet(corners=(NOMINAL, FS, FS), probe_order=())
+
+
+def test_corner_set_rejects_a_corner_in_both_the_set_and_the_probe_order():
+    # 이 상태에서 next_probe를 부르면 이미 매 반복 도는 코너(FS)를 또
+    # 탐침으로 골라, 이 하위 프로젝트가 막으려는 낭비된 시뮬레이션을
+    # 정확히 만들어 낸다.
+    with pytest.raises(ValueError, match="overlap"):
+        CornerSet(corners=(NOMINAL, FS), probe_order=(FS, SF))
