@@ -100,6 +100,10 @@ async def _run(args) -> dict:
             result = await agent_simulate(paths[tb.name], tb.control_block, sim_backend, agent_backends["simulator"])
             merged_measurements.update(result["measurements"])
             by_testbench[tb.name] = result
+            # 기본값 "success"에 도달하는 경로는 오늘 없다 - SIMULATION_SCHEMA가
+            # status를 required로 두고 run_agent가 검증한다. 그래도 기본값을 두는
+            # 것은, 없는 키를 실패로 읽으면 스키마가 느슨해지는 날 시뮬레이터
+            # 에이전트 전체가 조용히 실패로 접히기 때문이다.
             tb_status = result.get("status", "success")
             if status == "success" and tb_status != "success":
                 status = tb_status
@@ -145,7 +149,12 @@ async def _run(args) -> dict:
         propose_topology=propose_topology_fn,
     )
 
-    if spec.pvt_corners is not None:
+    # "코너를 잴 수 있는가"를 한 번만 적는다. 세 군데에 같은 조건을 따로 쓰면
+    # 한 곳만 바뀌었을 때 baseline은 재는데 최적화에는 None이 가는 식으로
+    # 조용히 어긋난다. optimizer.py도 같은 이름(corner_capable)을 쓴다.
+    corner_capable = spec.pvt_corners is not None
+
+    if corner_capable:
         baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
         state.log_event("pvt_baseline_sweep", baseline_sweep)
 
@@ -157,6 +166,11 @@ async def _run(args) -> dict:
     # 확인하지 않은 넷리스트로 실행이 끝난다.
     if result["status"] == "PASS":
         optimization = await run_optimization(
+            # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인 루프가
+            # 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면, run_optimization이
+            # 인자와 state가 어긋난 것을 보고 원본을 새 버전으로 밀어 넣어
+            # (optimizer.py:534) 튜닝 결과를 통째로 되돌린다 - 그리고 그 덱이
+            # 확정되고 보고된다.
             state.current_netlist_texts(),
             spec,
             state,
@@ -165,7 +179,7 @@ async def _run(args) -> dict:
                 simulate=simulate_fn,
                 # 코너를 잴 수단이 없으면 None을 준다. run_optimization은 그때
                 # 확인이 없었다고 보고한다 - 빈 스윕을 지어내지 않는다.
-                verify_corners=verify_corners_fn if spec.pvt_corners is not None else None,
+                verify_corners=verify_corners_fn if corner_capable else None,
             ),
         )
         result["optimization"] = optimization
@@ -173,7 +187,7 @@ async def _run(args) -> dict:
         # 착지한 버전이어야 한다.
         result["final_netlist_paths"] = state.current_netlist_paths()
 
-    if spec.pvt_corners is not None:
+    if corner_capable:
         # 최적화가 코너를 확인했으면 그 스윕이 곧 이 넷리스트의 최종 스윕이다.
         # 착지 지점은 정의상 스윕을 통과한 버전이므로(_bisect_last_passing은
         # 통과가 확인된 인덱스에만 착지한다) 다시 도는 것은 같은 덱에 같은
@@ -185,17 +199,26 @@ async def _run(args) -> dict:
         confirmed = (result.get("optimization") or {}).get("pvt_sweep")
         if confirmed is not None:
             final_sweep = confirmed
+            sweep_label = "PVT sweep from the optimization phase"
+            # 재사용해도 이력에는 같은 이름으로 남긴다. history.jsonl에서
+            # pvt_final_sweep을 찾는 사람이, 하필 스윕을 가장 많이 돌린
+            # 실행에서 빈손으로 돌아가면 안 된다. reused가 그것이 새로 돈
+            # 스윕이 아님을 말한다.
+            state.log_event("pvt_final_sweep", {"reused_from_optimization": True, **final_sweep})
         else:
             final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
-            state.log_event("pvt_final_sweep", final_sweep)
+            sweep_label = "final PVT sweep"
+            state.log_event("pvt_final_sweep", {"reused_from_optimization": False, **final_sweep})
         result["pvt_sweep"] = final_sweep
         # 재사용 경로에서 이 판정이 FAIL로 뒤집히는 일은 사실상 없다(착지
         # 지점은 통과한 버전이다). 그래도 조건을 걸어 두는 것은, 최적화가
         # **진입** 스윕에서 이미 실패한 코너를 그대로 실어 보낼 수 있고 그때는
-        # 최적화를 돌리지 않았을 때와 똑같이 FAIL이어야 하기 때문이다.
+        # 최적화를 돌리지 않았을 때와 똑같이 FAIL이어야 하기 때문이다. 그
+        # 경우 최종 스윕은 돌지 않았으므로 사유도 그렇게 적는다 - 돌지 않은
+        # 스윕이 실패했다고 적으면 history.jsonl과 대조하는 사람이 헤맨다.
         if not final_sweep["overall_pass"]:
             result["status"] = "FAIL"
-            result["failure_reason"] = f"final PVT sweep failed: {final_sweep['summary']}"
+            result["failure_reason"] = f"{sweep_label} failed: {final_sweep['summary']}"
 
     return result
 

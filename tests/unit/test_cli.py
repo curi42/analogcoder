@@ -1,4 +1,6 @@
 import inspect
+import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -78,16 +80,25 @@ OPTIMIZE_NO_CORNERS_SPEC_YAML = (
 )
 
 
-def _orchestration(result, captured: dict | None = None):
-    """run_orchestration 대역. **v0을 push한다.**
+# 메인 루프가 고쳐 놓은 덱. 원본과 **내용이 달라야** 한다 - 최적화가 어느
+# 쪽을 받는지는 키 집합으로는 구별되지 않기 때문이다(둘 다 테스트벤치 이름이
+# 키다). 이 상수가 없으면 원본을 넘기는 배선 실수가 전 테스트를 통과한다.
+TUNED_TEXT = "* tuned by the main loop\nM1 d g 0 0 nch W=44 L=1\n.end\n"
 
-    진짜 run_orchestration은 첫 줄에서 state.push_netlist_version을 부른다.
-    그것을 흉내내지 않는 mock은 프로덕션에 존재하지 않는 모양(버전이 하나도
-    없는 RunState)을 남기고, 그 뒤에 오는 단계들은 그 모양을 상대로 테스트되어
-    실제 배선을 확인하지 못한다."""
+
+def _orchestration(result, captured: dict | None = None):
+    """run_orchestration 대역. **v0을 push하고 그 위에 튜닝된 v1을 push한다.**
+
+    진짜 run_orchestration은 첫 줄에서 state.push_netlist_version을 부르고
+    (orchestrator.py:61) 그 뒤로 튜닝이 적용될 때마다 새 버전을 민다. 그것을
+    흉내내지 않는 mock은 프로덕션에 존재하지 않는 모양(버전이 없거나, 현재
+    덱이 원본과 똑같은 RunState)을 남긴다. 후자가 특히 위험하다: 최적화에
+    현재 덱 대신 원본을 넘기는 배선 실수가 그 상태에서는 아무 테스트도 깨지
+    않고, 실제 실행에서는 튜닝 결과를 통째로 버린 덱이 확정되고 보고된다."""
 
     async def fake(initial_netlist_texts, spec, state, agents):
         state.push_netlist_version(initial_netlist_texts)
+        state.push_netlist_version({name: TUNED_TEXT for name in initial_netlist_texts})
         if captured is not None:
             captured["spec"] = spec
             captured["state"] = state
@@ -95,6 +106,15 @@ def _orchestration(result, captured: dict | None = None):
         return result
 
     return fake
+
+
+def _one_history_event(run_dir: str, step: str) -> dict:
+    """history.jsonl에서 그 step 이벤트 하나를 꺼낸다. 없거나 둘 이상이면 실패."""
+    with open(os.path.join(run_dir, "history.jsonl")) as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    matching = [e for e in events if e["step"] == step]
+    assert len(matching) == 1, f"expected exactly one {step!r} event, got {len(matching)}"
+    return matching[0]
 
 
 def _pass_result(run_dir: str) -> dict:
@@ -169,7 +189,13 @@ async def test_run_wires_orchestration_and_returns_its_result(tmp_path):
     with patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)):
         result = await _run(args)
 
-    assert result == fake_result
+    # `result == fake_result`로는 아무것도 못 지킨다 - _run은 같은 dict를
+    # 제자리에서 고치므로 어떤 키를 더해도 그 비교는 참이다. 오케스트레이션이
+    # 낸 값이 그대로 통과했는지를 키별로 본다.
+    assert result["status"] == "PASS"
+    assert result["run_dir"] == str(tmp_path / "runs" / "r1")
+    assert result["iterations_used"] == 1
+    assert result["final_criteria"] == []
 
 
 @pytest.mark.asyncio
@@ -273,10 +299,9 @@ async def test_run_overrides_pass_to_fail_when_final_pvt_sweep_fails(tmp_path):
         "worst_case_corners": {"gain": {"process": "tt", "voltage": 1.8, "temperature": 27, "value": 5.0}},
     }
 
-    # run_orchestration is mocked out entirely, so it never calls
-    # state.push_netlist_version - RunState.current_netlist_texts() then
-    # naturally returns {} (no versions tracked), which is fine here since
-    # run_full_pvt_sweep is also mocked and ignores its netlist_texts arg.
+    # 이 스펙에는 optimize 블록이 없으므로 최적화는 SKIPPED로 지나가고
+    # (pvt_sweep=None) 최종 스윕이 실제로 돈다 - 재사용 경로가 아니다.
+    # run_full_pvt_sweep은 mock이라 넷리스트 인자를 보지 않는다.
     with (
         patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)),
         patch("analogcoder.cli.run_full_pvt_sweep", return_value=fake_final_sweep) as mock_sweep,
@@ -584,8 +609,11 @@ async def test_optimization_runs_after_pass_and_before_the_final_pvt_sweep(tmp_p
 
     assert captured["sweeps_before_optimization"] == 1  # baseline만 돌았다
     assert mock_sweep.call_count == 2  # 최적화가 코너를 확인하지 못했으니 최종 스윕이 돈다
-    # 최적화는 실행의 **현재** 넷리스트 위에서 돈다 - 원본 파일이 아니다.
-    assert set(captured["netlist_texts"]) == {"ac_loop_gain"}
+    # 최적화는 실행의 **현재** 넷리스트 위에서 돈다 - 파일에서 읽은 원본이
+    # 아니다. 키 집합은 둘이 같으므로 **내용**을 본다. 원본을 넘기면
+    # run_optimization이 인자와 state의 불일치를 보고 원본을 새 버전으로
+    # 밀어 넣어(optimizer.py:534) 메인 루프의 수리를 되돌린다.
+    assert captured["netlist_texts"] == {"ac_loop_gain": TUNED_TEXT}
     # 메인 루프가 쓰던 것과 **같은** simulate여야 한다. 최적화 전용 래퍼를 따로
     # 두면 status 병합 같은 규칙이 한쪽에만 붙는다.
     assert captured["optimizer_simulate"] is captured["agents"].simulate
@@ -697,6 +725,11 @@ async def test_a_confirmed_optimization_sweep_is_reused_as_the_final_sweep(tmp_p
     # 두 결과가 같은 키 이름을 쓴다. 어느 쪽도 다른 쪽을 덮지 않는다.
     assert result["optimization"]["pvt_sweep"] is confirmed
     assert result["optimization"]["corner_confirmed"] is True
+    # 재사용해도 이력에는 남는다 - history.jsonl에서 pvt_final_sweep을 찾는
+    # 사람이 하필 스윕을 가장 많이 돌린 실행에서 빈손이 되면 안 된다.
+    event = _one_history_event(str(tmp_path / "runs" / "o5"), "pvt_final_sweep")
+    assert event["reused_from_optimization"] is True
+    assert event["summary"] == "all corners passed"
 
 
 @pytest.mark.asyncio
@@ -725,6 +758,9 @@ async def test_an_unconfirmed_optimization_keeps_its_corner_failure_and_still_sw
         == "corner sweep raised RuntimeError: ngspice died"
     )
     assert result["optimization"]["pvt_sweep"] is None
+    # 실제로 돈 스윕은 재사용이 아니라고 말한다.
+    event = _one_history_event(str(tmp_path / "runs" / "o6"), "pvt_final_sweep")
+    assert event["reused_from_optimization"] is False
 
 
 @pytest.mark.asyncio
@@ -750,7 +786,12 @@ async def test_a_failing_optimization_sweep_still_turns_the_run_into_a_fail(tmp_
 
     assert mock_sweep.call_count == 1  # 같은 덱을 두 번 재지 않는다
     assert result["status"] == "FAIL"
-    assert result["failure_reason"] == "final PVT sweep failed: one or more criteria failed"
+    # 사유는 **실제로 일어난 일**을 말해야 한다. 이 경로에서 최종 스윕은 돌지
+    # 않았으므로 "final PVT sweep failed"라고 적으면 history.jsonl과 대조하는
+    # 사람이 있지도 않은 스윕을 찾게 된다.
+    assert result["failure_reason"] == (
+        "PVT sweep from the optimization phase failed: one or more criteria failed"
+    )
 
 
 @pytest.mark.asyncio
