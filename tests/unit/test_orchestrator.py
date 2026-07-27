@@ -273,7 +273,14 @@ async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_
     assert result["status"] == "PASS"
     assert result["iterations_used"] == 4
     assert len(propose_topology_calls) == 1
-    assert set(propose_topology_calls[0]) == {"miller_basic", "miller_nulling_resistor"}
+    # 오케스트레이터는 아직 포트 적합성으로 후보를 거르지 않는다 (그 필터링은
+    # 이 서브프로젝트의 다른 태스크) - 시도하지 않은 라이브러리 항목 전체가 넘어온다.
+    assert set(propose_topology_calls[0]) == {
+        "miller_basic",
+        "miller_nulling_resistor",
+        "folded_cascode_nmos_in_cs",
+        "folded_cascode_pmos_in_cs",
+    }
     assert len(state.netlist_versions["ac_loop_gain"]) == 2  # v0 initial + v1 after the kept topology swap
 
 

@@ -79,6 +79,8 @@ async def test_propose_topology_swap_calls_run_agent_with_available_topologies()
             description="adds Rz to cancel the RHP zero",
             subckt_body="Cc outA vnull 2p\nRz vnull vout 500\n",
             addresses=["phase_margin"],
+            ports=["vinp", "vinn", "vout", "vdd", "vss"],
+            assumes_scale=1e-6,
         ),
     ]
     with patch("analogcoder.agents.tuner.run_agent", new=AsyncMock(return_value=fake_result)) as mock_run:
@@ -101,7 +103,14 @@ async def test_propose_topology_swap_calls_run_agent_with_available_topologies()
 async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
     fake_backend = object()
     topologies = [
-        Topology(id="miller_basic", description="baseline", subckt_body="", addresses=[]),
+        Topology(
+            id="miller_basic",
+            description="baseline",
+            subckt_body="",
+            addresses=[],
+            ports=["vinp", "vinn", "vout", "vdd", "vss"],
+            assumes_scale=1e-6,
+        ),
     ]
     with patch(
         "analogcoder.agents.tuner.run_agent",
