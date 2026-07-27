@@ -520,9 +520,13 @@ worth reading before assuming a weak-model failure is a code bug:
   twice (`xl1`/`xl2` → `LEAF.ma1`) returns two targets holding the **same
   `Component` object**, and without the chain their one shared ratio was
   multiplied twice — a legitimate 2.5× was reported and fed back to the tuner
-  as 6.25×. Growing one knob that sizes two devices does grow total area more,
-  but each device still only grows 2.5×, and 2.5× per device is what the tier
-  table bounds.
+  as 6.25×. **`ratio^N` is not a quantity at all**, and it was never a
+  conservative reading of a total-area budget: if both devices grow 2.5×, the
+  per-device ratio is 2.5× *and* the total-area ratio is 2.5× (2·2.5A / 2·A).
+  What N multiplies is the absolute increment, not any ratio — so under either
+  reading, per-device or total, the answer is 2.5×, and the code lands on the
+  only defensible number. Do not "restore" the squaring thinking it was the
+  safe choice.
 - **`m` multiplies the tier baseline for every device class except `Q`.** It
   is a count of parallel devices, so a MiM cap with `m=4` occupies four times
   the area of one — tiering it on the single-unit `w` handed it the loosest

@@ -11,8 +11,10 @@ from analogcoder.area_limits import (
 from tests.unit.wrapper_decks import (
     CONTESTED_NAME_DECK,
     INCLUDE_ONLY_DECK,
+    PARTIAL_REACH_DECK,
     POSITIONAL_VALUE_DECK,
     SIBLING_INSTANCE_DECK,
+    UNRESOLVABLE_M_DECK,
     WRAPPER_DECK,
 )
 
@@ -871,3 +873,119 @@ def test_a_mim_cap_is_tiered_on_its_multiplicity_too():
     # 10u로 티어링하면 3.0x 티어라 2.5x 성장이 통과했다. 40u면 2.0x 티어다.
     assert ok is False
     assert "2.0x" in feedback
+
+
+# --- 시야 상태는 도달점 전체에 대한 주장이다 ---------------------------------
+
+
+def test_a_half_judged_change_is_not_reported_as_bounded():
+    # N1 회귀: wn이 ma1(총 폭 8u, 티어 있음)과 mb1(총 폭 확정 불가, 실제로
+    # 무제약)에 동시에 도달한다. "티어가 하나라도 붙었으면 bounded"라고 하면
+    # 로그가 절반의 무제약을 감춘다 - 로그로 무력화를 감사할 수 있게 하는 것이
+    # 이 상태의 유일한 존재 이유다.
+    components = index_baseline_components(PARTIAL_REACH_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "5e-6"}]
+    )
+
+    assert result.approved is True  # 판정 자체는 그대로 - 막지 않는다
+    assert result.states == {"xin1.wn": "unjudged"}
+
+
+def test_a_fully_judged_change_is_still_reported_as_bounded():
+    # 위 수정이 "도달점이 둘이면 무조건 unjudged"로 무너지지 않았는지 못박는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "3e-6"}]
+    )
+
+    assert result.states == {"xin1.wn": "bounded"}
+
+
+# --- 해소되지 않는 m은 1이 아니다 --------------------------------------------
+
+
+def test_an_unresolvable_m_does_not_silently_become_one():
+    # N2 회귀: `1.0 if m is None else m`은 "m 토큰이 없다"와 "m 토큰은 있는데
+    # 모른다"를 구별하지 않아, 8배짜리 소자를 1배로 티어링했다 (3.0x 티어 →
+    # 2.5x 성장 통과). 이 추측은 **항상** 티어를 느슨한 쪽으로 틀린다.
+    components = index_baseline_components(UNRESOLVABLE_M_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "25e-6"}]
+    )
+
+    assert result.states == {"xc1.wn": "unjudged"}
+
+
+def test_the_same_deck_without_the_contest_honours_m_and_blocks():
+    # 위 테스트가 진짜로 "m을 못 풀어서"인지 못박는다. 경합만 없애면 m=8이
+    # 반영돼 총 폭 80u → 1.5x 티어 → 같은 2.5x 제안이 거부된다.
+    deck = UNRESOLVABLE_M_DECK.replace(".param mm=8\n", "")
+    components = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "25e-6"}]
+    )
+
+    assert ok is False
+    assert "1.5x" in feedback
+
+
+def test_a_directly_addressed_device_with_an_unresolvable_m_is_not_tiered_either():
+    # 같은 원칙의 나머지 반쪽: 직접 주소지정 경로(_multiplicity)도 모르는 m을
+    # 1로 가정했다. 한쪽만 고치면 같은 구멍이 반쪽 남는다.
+    deck = "* direct unresolvable m\nM1 d g s b NMOS W=10u L=1u m=unknown_name\n.end\n"
+    components = index_baseline_components(deck)
+
+    assert _tier_baseline_value(components["M1"]) is None
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "M1", "param": "W", "new_value": "25u"}]
+    )
+
+    assert result.states == {"M1.W": "unjudged"}
+
+
+def test_a_device_with_no_m_token_at_all_still_tiers_at_multiplicity_one():
+    # "토큰이 없다"는 여전히 1이다 - 위 수정이 m 없는 소자를 통째로 무제약으로
+    # 만들지 않았는지 못박는다.
+    deck = "* no m token\nM1 d g s b NMOS W=10u L=1u\n.end\n"
+    components = index_baseline_components(deck)
+
+    assert _tier_baseline_value(components["M1"]) == pytest.approx(10e-6)
+
+
+# --- 인용은 표기법이지 표현식이 아니다 ---------------------------------------
+
+
+@pytest.mark.parametrize("written", ["rv", "'rv'", "{rv}"])
+def test_a_quoted_bare_identifier_is_still_a_bare_identifier(written):
+    # N3 회귀: 맨 식별자 판정이 원본 토큰에 대고 이뤄져 `'rv'`와 `{rv}`가
+    # 표현식으로 오인됐다. 그 둘은 이 모듈 자신의 인용 관례일 뿐이므로
+    # ("비율이 같다고 가정할 수 없다"는 근거가 닿지 않는다) I2가 없애려던
+    # 모양 - 같은 성장이 표기법 하나로 정반대 판정 - 이 그대로 남아 있었다.
+    deck = POSITIONAL_VALUE_DECK.replace("R1 a b rv\n", f"R1 a b {written}\n")
+    components = index_baseline_components(deck)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1meg"}]
+    )
+
+    assert result.approved is False
+    assert result.states == {"xr1.rv": "bounded"}
+
+
+def test_a_genuine_expression_positional_value_is_still_refused():
+    # 인용을 벗기는 것이 표현식까지 받아들이는 것으로 번지지 않았는지 못박는다.
+    deck = POSITIONAL_VALUE_DECK.replace("R1 a b rv\n", "R1 a b 'rv*2'\n")
+    components = index_baseline_components(deck)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1meg"}]
+    )
+
+    assert result.approved is True
+    assert result.states == {"xr1.rv": "unjudged"}

@@ -67,3 +67,27 @@ CONTESTED_NAME_DECK = (
     "xc1 a b c d CELL ln=1e-6\n"
     ".end\n"
 )
+
+# 한 인스턴스 파라미터가 두 소자에 도달하지만 한쪽의 총 폭만 확정된다
+# (mb1의 w가 덱 어디에도 없는 kfac를 참조한다). 절반만 판정된 변경이다.
+PARTIAL_REACH_DECK = (
+    "* synthetic partial-reach deck (shape only)\n"
+    ".subckt WRAP_PAIR b1 b2 d1 d2 g1 g2 s1 s2\n"
+    "ma1 d1 g1 s1 b1 TN33 w=wn l=ln m=4\n"
+    "mb1 d2 g2 s2 b2 TN33 w='wn*kfac' l=ln m=4\n"
+    ".ends WRAP_PAIR\n"
+    "xin1 vss vss dl dr gl gr com com WRAP_PAIR wn=2e-6 ln=3e-6\n"
+    ".end\n"
+)
+
+# m 토큰이 소자 줄에 **적혀 있는데** 그 이름이 경합해서 해소되지 않는다.
+# `.param mm=8` 줄을 빼면 경합이 사라져 m=8이 정상적으로 반영된다.
+UNRESOLVABLE_M_DECK = (
+    "* synthetic unresolvable-m deck (shape only)\n"
+    ".subckt CELL d g s b mm=8\n"
+    ".param mm=8\n"
+    "ma1 d g s b TN33 w=wn m=mm\n"
+    ".ends CELL\n"
+    "xc1 a b c d CELL wn=10e-6\n"
+    ".end\n"
+)

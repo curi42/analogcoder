@@ -61,6 +61,21 @@ def _eval(node: ast.AST, env: dict[str, float]) -> float:
     raise _Unresolvable()
 
 
+def _unquote(raw: str) -> str:
+    """이 모듈의 인용 관례(`'...'`, `{...}`)를 한 겹 벗긴다.
+
+    한 군데로 모아 둔 이유는 정확히 이 저장소가 반복해서 당한 실패 모드
+    때문이다: 값을 읽는 자리마다 인용 처리를 따로 하면 한 자리가 빠져도
+    아무도 못 알아채고, `rv`는 되는데 `'rv'`는 안 되는 - 표기법이 판정을
+    가르는 - 상태가 조용히 생긴다. 새 판독 지점을 추가할 때 여기를 거쳐라."""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] == "'":
+        return s[1:-1].strip()
+    if s.startswith("{") and s.endswith("}"):
+        return s[1:-1].strip()
+    return s
+
+
 def resolve_value(raw: str, env: dict[str, float]) -> float | None:
     """raw를 수치로 해소하거나, 이 모듈이 다루기로 한 범위 밖이면 None.
 
@@ -70,11 +85,7 @@ def resolve_value(raw: str, env: dict[str, float]) -> float | None:
     것이 이 프로젝트에서 세 번 반복된 교훈이다.
 
     평가는 ast 화이트리스트로 하며 eval을 쓰지 않는다."""
-    s = raw.strip()
-    if len(s) >= 2 and s[0] == s[-1] == "'":
-        s = s[1:-1].strip()
-    elif s.startswith("{") and s.endswith("}"):
-        s = s[1:-1].strip()
+    s = _unquote(raw)
     if not s:
         return None
     try:
@@ -284,11 +295,7 @@ def free_names(raw: str) -> set[str]:
     resolve_value와 같은 ast 화이트리스트를 쓰므로 판정 범위가 어긋나지
     않는다 - 여기서 이름이 보이는데 저기서 못 푸는 경우는 있어도 (그때는
     total_width가 None이 되어 판단 불가로 떨어진다) 그 반대는 없다."""
-    s = raw.strip()
-    if len(s) >= 2 and s[0] == s[-1] == "'":
-        s = s[1:-1].strip()
-    elif s.startswith("{") and s.endswith("}"):
-        s = s[1:-1].strip()
+    s = _unquote(raw)
     if not s:
         return set()
     try:
@@ -310,6 +317,14 @@ def _all_components(parsed: ParsedNetlist) -> list[Component]:
     return components
 
 
+def has_token(component: Component, token: str) -> bool:
+    """소자 줄에 이 토큰이 **적혀 있는가** (값이 풀리는지와 무관하게).
+
+    "토큰이 없다"와 "토큰은 있는데 값을 모른다"는 다른 사실이고, 후자를
+    전자로 취급하면 모르는 값을 1로 가정하는 추측이 된다."""
+    return any(name.lower() == token for name in component.params)
+
+
 def _token_value(component: Component, token: str, env: dict[str, float]) -> float | None:
     """소자가 쓴 토큰 값을 대소문자 무시로 찾아 env에서 해소한다.
 
@@ -321,6 +336,20 @@ def _token_value(component: Component, token: str, env: dict[str, float]) -> flo
     return None
 
 
+def _multiplier(device: Component, env: dict[str, float]) -> float | None:
+    """면적에 곱할 m. m 토큰이 아예 없으면 1.0, 있는데 못 풀면 None.
+
+    이 구분이 없을 때 `1.0 if m is None else m`은 "모르는 m"을 조용히 1로
+    가정했고, 그 가정은 항상 티어를 **느슨한 쪽으로** 틀리게 만든다 (총 폭이
+    m배만큼 작게 보이므로). 경합하는 이름을 해소하지 않기로 한 규칙이 그
+    경로를 새로 도달 가능하게 만들면서 실제로 드러났다: 8배짜리 소자가
+    1배로 티어링돼 1.5x 티어 대신 3.0x 티어를 받았다."""
+    m = _token_value(device, "m", env)
+    if m is not None:
+        return m
+    return None if has_token(device, "m") else 1.0
+
+
 def _total_width(device: Component, env: dict[str, float]) -> float | None:
     """이 인스턴스에서 device의 총 폭 = w x m, `.option scale` 반영.
 
@@ -330,8 +359,10 @@ def _total_width(device: Component, env: dict[str, float]) -> float | None:
     w = _token_value(device, "w", env)
     if w is None:
         return None
-    m = _token_value(device, "m", env)
-    return w * device.geometry_scale * (1.0 if m is None else m)
+    m = _multiplier(device, env)
+    if m is None:
+        return None
+    return w * device.geometry_scale * m
 
 
 def _instance_env(
@@ -397,15 +428,21 @@ def _positional_target(device: Component, param: str, env: dict[str, float], cha
     맨 식별자 하나일 때만 인정한다. `{rv*2}` 같은 표현식까지 받으면 인스턴스
     파라미터의 비율이 소자 값의 비율과 같다는 보장이 없어지는데, 그것을
     가정하는 것은 이 모듈이 금지한 추측이다. X 줄은 제외한다 - 그 위치 인자는
-    값이 아니라 서브회로 이름이다."""
+    값이 아니라 서브회로 이름이다.
+
+    "맨 식별자"는 이 모듈의 인용 관례를 벗긴 뒤에 판정한다: `'rv'`와 `{rv}`는
+    표현식이 아니라 같은 맨 식별자다. 원본 토큰에 대고 판정하면 위 근거가
+    닿지 않는 것들이 걸러져, I2가 없애려던 바로 그 모양 - 같은 성장이 표기법
+    하나로 정반대 판정을 받는 것 - 이 그대로 남는다."""
     if device.ctype == "X" or device.value is None:
         return None
-    if _BARE_IDENT_RE.match(device.value.strip()) is None or device.value.strip() != param:
+    bare = _unquote(device.value)
+    if _BARE_IDENT_RE.match(bare) is None or bare != param:
         return None
     value = resolve_value(device.value, env)
     if value is not None:
-        m = _token_value(device, "m", env)
-        value *= 1.0 if m is None else m
+        m = _multiplier(device, env)
+        value = None if m is None else value * m
     return TracedTarget(
         device=device, token="value", total_width=None, positional_value=value, chain=chain
     )

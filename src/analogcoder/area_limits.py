@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from analogcoder.netlist import Component, TracedTarget, parse_netlist
-from analogcoder.params import annotate_traced_params, build_param_envs, resolve_value
+from analogcoder.params import annotate_traced_params, build_param_envs, has_token, resolve_value
 
 
 _SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
@@ -187,10 +187,18 @@ def _resolved_token(component: Component, token: str) -> float | None:
     return None
 
 
-def _multiplicity(component: Component) -> float:
-    """m이 없으면 1. m은 개수이므로 `.option scale`을 곱하지 않는다."""
+def _multiplicity(component: Component) -> float | None:
+    """m이 없으면 1, m 토큰이 있는데 값을 못 풀면 None. m은 개수이므로
+    `.option scale`을 곱하지 않는다.
+
+    "m 토큰이 없다"와 "m 토큰은 있는데 모른다"를 구별하지 않으면 모르는 값을
+    1로 가정하게 되고, 그 추측은 **항상 티어를 느슨한 쪽으로** 틀린다 (소자가
+    실제보다 작아 보인다). params._multiplier와 같은 규칙, 같은 이유다 -
+    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다."""
     m = _resolved_token(component, "m")
-    return 1.0 if m is None or m <= 0 else m
+    if m is None:
+        return None if has_token(component, "m") else 1.0
+    return 1.0 if m <= 0 else m
 
 
 def _tier_baseline_value(component: Component) -> float | None:
@@ -224,13 +232,18 @@ def _tier_baseline_value(component: Component) -> float | None:
             # m is an emitter-area count, not a length - it must not be
             # scaled, and it is already the tier key itself.
             return raw
-        return raw * component.geometry_scale * _multiplicity(component)
+        mult = _multiplicity(component)
+        return None if mult is None else raw * component.geometry_scale * mult
     if ctype == "M":
         w = _resolved_token(component, "w")
-        return w * component.geometry_scale * _multiplicity(component) if w is not None else None
+        if w is None:
+            return None
+        mult = _multiplicity(component)
+        return None if mult is None else w * component.geometry_scale * mult
     if component.resolved_value is None:
         return None
-    return component.resolved_value * _multiplicity(component)
+    mult = _multiplicity(component)
+    return None if mult is None else component.resolved_value * mult
 
 
 @dataclass(frozen=True)
@@ -300,6 +313,7 @@ def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
             # 주소지정했을 때와 같은 티어 표를 써야, 감쌌다는 이유만으로
             # 같은 성장이 정반대 판정을 받지 않는다.
             if traced_target.positional_value is None:
+                targets.append(_Target(key, label, allowed=None, counts=False))
                 continue
             targets.append(
                 _Target(
@@ -316,6 +330,10 @@ def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
             if traced_target.total_width is None:
                 # 이 소자의 총 폭을 확정하지 못했다 - 면적 영향을 판단할 수
                 # 없으므로 막지 않는다 (해소 불가 베이스라인과 같은 폴백).
+                # 그래도 **버리지는 않는다**: 조용히 빼면 이 도달점이 아예
+                # 없었던 것처럼 보여, 반쪽만 판정한 변경이 로그에 "bounded"로
+                # 남는다 (_visibility 참고). 티어도 곱도 없으니 판정은 그대로다.
+                targets.append(_Target(key, label, allowed=None, counts=False))
                 continue
             targets.append(
                 _Target(
@@ -366,15 +384,29 @@ def _visibility(component: Component | None, targets: list[_Target], ratio_known
                 원리적으로 불가능하다.
     - unjudged: 볼 수는 있었는데 숫자를 확정하지 못했다 (해소 불가 베이스라인,
                 크기가 아닌 토큰, 베이스라인에 없는 refdes).
-    """
+
+    도달점이 여럿이면 **가장 약한 상태**를 보고한다. 하나라도 티어를 못 받은
+    도달점이 있으면 그 변경은 bounded가 아니다: 한 파라미터가 ma1(총 폭 확정)과
+    mb1(w='wn*kfac'라 확정 불가)에 동시에 도달하면 mb1은 실제로 무제약인데,
+    "티어가 하나라도 붙었으면 bounded"라고 하면 로그가 절반의 무제약을 감춘다 -
+    로그로 무력화를 감사할 수 있게 하는 것이 이 상태의 유일한 존재 이유이므로
+    그건 자기 부정이다. 그래서 _traced_targets도 확정 못 한 도달점을 버리지
+    않고 티어 없는 _Target으로 남긴다.
+
+    blind가 가장 먼저인 이유: 그 소자는 애초에 무엇에 도달하는지 알 수 없으므로
+    파라미터 **이름**으로 nf/기하를 읽어내는 것 자체가 금지된 추측이다."""
     if component is None:
         return "unjudged"
-    if any(t.counts and t.allowed is not None for t in targets) and ratio_known:
-        return "bounded"
-    if targets and all(t.neutral for t in targets):
-        return "neutral"
     if component.undefined_subckt and _classify_ctype(component) == "X":
         return "blind"
+    if not targets:
+        return "unjudged"
+    if all(t.neutral for t in targets):
+        return "neutral"
+    if ratio_known and all(
+        t.counts and t.allowed is not None for t in targets if not t.neutral
+    ):
+        return "bounded"
     return "unjudged"
 
 
