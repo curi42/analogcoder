@@ -8,6 +8,8 @@
 부른다 — `run_full_pvt_sweep`과 같은 자리이자 같은 패턴이다. LLM 에이전트는
 *어느 노브를 어느 방향으로* 줄일지 순위만 매기고, 파이썬이 적용·측정·수락을
 전부 결정론적으로 처리한다. 수락 규칙은 `verify_post`를 쓰지 않는다.
+코너 확인과 이분 탐색은 `run_optimization`의 계약 안에 있다 — `cli.py`를
+루프로 만들지 않기 위해서다.
 
 **Tech Stack:** Python 3, dataclasses, pytest. 새 런타임 의존성 없음.
 
@@ -39,7 +41,8 @@
 | `tests/unit/test_guard_band.py` | Task 3 |
 | `tests/unit/test_optimizer_agent.py` | Task 4 |
 | `tests/unit/test_optimizer.py` | Task 5 |
-| `tests/unit/test_optimizer_bandgap_ngspice.py` | Task 7 |
+| `tests/unit/test_optimizer_corners.py` | Task 6 |
+| `tests/unit/test_optimizer_bandgap_ngspice.py` | Task 8 |
 
 **수정**
 
@@ -53,10 +56,14 @@
 
 ## Task 순서의 이유
 
-값싸고 독립적인 결정론 조각(면적, 가드밴드, 스펙 표면)을 먼저 만든다. 그것들이
+값싸고 독립적인 결정론 조각(면적, 여유분, 스펙 표면)을 먼저 만든다. 그것들이
 있어야 루프의 수락 규칙을 테스트할 수 있다. 에이전트는 루프보다 먼저 만들어
-루프가 가짜가 아닌 실제 스키마를 상대로 테스트되게 한다. 실제 시뮬레이션이
-필요한 종단 테스트는 마지막이다.
+루프가 가짜가 아닌 실제 스키마를 상대로 테스트되게 한다.
+
+**Task 5와 6을 나눈 이유:** 5는 코너를 모르는 탐색이고 6은 그 위에 앵커·확인·
+이분 탐색을 얹는다. 나누면 5의 수락 규칙을 코너 없이 단독으로 테스트할 수
+있고, 6이 붙어도 5의 테스트가 전부 그대로 통과해야 한다는 것이 회귀 검사가
+된다. 실제 시뮬레이션이 필요한 종단 테스트는 마지막이다.
 
 ---
 
@@ -356,13 +363,20 @@ git commit -m "feat: compute total device area without simulating"
 
 **Interfaces:**
 - Consumes: `spec.Criterion`
-- Produces: `guard_band_violations(measurements: dict, criteria: list[Criterion], guard_band: float) -> list[str]`
-  — 빈 목록이면 전부 가드밴드를 지킨 것
+- Produces:
+  - `guard_band_violations(measurements: dict, criteria: list[Criterion], allowances: dict[str, float]) -> list[str]`
+    — 빈 목록이면 전부 여유분을 지킨 것. `allowances`는 **기준 이름 → 남겨야 할
+    절대량**(측정 단위)이며, 없는 기준은 여유분 0으로 본다
+  - `corner_allowances(nominal: dict, sweep: dict) -> dict[str, float]` —
+    코너 스윕 결과와 nominal 측정에서 기준별 실측 스프레드를 뽑는다
+  - `ratio_allowances(criteria: list[Criterion], guard_band: float) -> dict[str, float]` —
+    코너를 잴 수 없는 스펙용 대체물, `g·|T|`
 
-**공식은 `T ± g·|T|`이지 `T·(1±g)`가 아니다.** 후자는 음수 임계값에서
-뒤집힌다: `psr_plus_db <= -10`에 `T·(1-0.2)`를 적용하면 `<= -8`이 되어 원래보다
-**느슨해진다**. `T - g·|T|`는 `<= -12`가 되어 제대로 엄격해지고, `iq_ua <= 300`
-에서는 240이라 스펙의 예시와 같은 답이다.
+**여유분은 절대량이지 비율이 아니다.** 비율을 임계값에 곱하는 형태(`T·(1±g)`)는
+음수 임계값에서 뒤집힌다: `psr_plus_db <= -10`에 `T·(1-0.2)`를 적용하면 `<= -8`
+이 되어 원래보다 **느슨해진다**. 절대량을 빼고 더하는 형태는 부호와 무관하게
+항상 엄격해지는 방향이다. `ratio_allowances`가 `g·|T|`로 절대량을 만들어 주므로
+`guard_band_violations` 자신은 부호 문제를 아예 만나지 않는다.
 
 각 criterion을 **자기 임계값에 대해 따로** 판정한다. 같은 measurement에 `>=`와
 `<=`가 걸리는 양쪽 창을 하나로 뭉개면 한쪽이 사라지는데, `pvt.py`에서 정확히
@@ -384,32 +398,32 @@ def _c(name, measurement, operator, threshold):
 def test_a_comfortable_measurement_does_not_violate():
     crit = [_c("iq", "iq_ua", "<=", 300.0)]
 
-    assert guard_band_violations({"iq_ua": 200.0}, crit, 0.2) == []
+    assert guard_band_violations({"iq_ua": 200.0}, crit, {"iq": 60.0}) == []
 
 
-def test_a_measurement_inside_the_band_violates_even_though_it_passes():
-    # 250은 기준을 통과하지만 240이라는 가드밴드 안에 있다.
+def test_a_measurement_inside_the_allowance_violates_even_though_it_passes():
+    # 250은 기준을 통과하지만 240이라는 여유선 안에 있다.
     crit = [_c("iq", "iq_ua", "<=", 300.0)]
 
-    violations = guard_band_violations({"iq_ua": 250.0}, crit, 0.2)
+    violations = guard_band_violations({"iq_ua": 250.0}, crit, {"iq": 60.0})
 
     assert len(violations) == 1 and "iq" in violations[0]
 
 
-def test_the_band_tightens_a_negative_threshold_instead_of_loosening_it():
-    # psr <= -10 에 T*(1-g) 를 쓰면 <= -8 이 되어 더 느슨해진다.
-    # 올바른 형태는 T - g*|T| = -12 이다.
+def test_an_allowance_tightens_a_negative_threshold_instead_of_loosening_it():
+    # psr <= -10, 여유분 2 이면 허용선은 -12 이다. 비율을 곱하는 형태였다면
+    # -8 이 되어 원래보다 느슨해졌을 것이다.
     crit = [_c("psr", "psr_db", "<=", -10.0)]
 
-    assert guard_band_violations({"psr_db": -11.0}, crit, 0.2) != []
-    assert guard_band_violations({"psr_db": -13.0}, crit, 0.2) == []
+    assert guard_band_violations({"psr_db": -11.0}, crit, {"psr": 2.0}) != []
+    assert guard_band_violations({"psr_db": -13.0}, crit, {"psr": 2.0}) == []
 
 
 def test_a_lower_bound_tightens_upward():
     crit = [_c("gain", "gain_db", ">=", 20.0)]
 
-    assert guard_band_violations({"gain_db": 22.0}, crit, 0.2) != []
-    assert guard_band_violations({"gain_db": 25.0}, crit, 0.2) == []
+    assert guard_band_violations({"gain_db": 22.0}, crit, {"gain": 4.0}) != []
+    assert guard_band_violations({"gain_db": 25.0}, crit, {"gain": 4.0}) == []
 
 
 def test_both_sides_of_a_two_sided_window_are_judged_separately():
@@ -420,7 +434,9 @@ def test_both_sides_of_a_two_sided_window_are_judged_separately():
         _c("vbg_max", "vbg", "<=", 1.28),
     ]
 
-    violations = guard_band_violations({"vbg": 1.21}, crit, 0.1)
+    violations = guard_band_violations(
+        {"vbg": 1.21}, crit, {"vbg_min": 0.02, "vbg_max": 0.02}
+    )
 
     assert len(violations) == 1 and "vbg_min" in violations[0]
 
@@ -428,15 +444,57 @@ def test_both_sides_of_a_two_sided_window_are_judged_separately():
 def test_a_missing_measurement_is_a_violation_not_a_pass():
     crit = [_c("iq", "iq_ua", "<=", 300.0)]
 
-    assert guard_band_violations({}, crit, 0.2) != []
+    assert guard_band_violations({}, crit, {"iq": 60.0}) != []
 
 
-def test_a_zero_threshold_has_no_band_and_is_reported_as_such():
-    # T가 0이면 |T|도 0이라 밴드가 없다. 조용히 통과시키되 그 사실을 남긴다.
-    crit = [_c("z", "z", "<=", 0.0)]
+def test_a_criterion_without_an_allowance_only_has_to_pass():
+    crit = [_c("iq", "iq_ua", "<=", 300.0)]
 
-    assert guard_band_violations({"z": -1.0}, crit, 0.2) == []
+    assert guard_band_violations({"iq_ua": 299.0}, crit, {}) == []
+
+
+def test_corner_allowances_are_the_measured_spread_per_criterion():
+    # 스윕의 criteria[].actual 은 기준별 최악 코너 값이다. nominal 과의 거리가
+    # 그 기준이 코너에서 밀려나는 양이고, 그것이 곧 남겨야 할 여유분이다.
+    from analogcoder.judge_tools import corner_allowances
+
+    nominal = {"iq_ua": 235.0, "vbg": 1.24}
+    sweep = {
+        "criteria": [
+            {"name": "iq", "actual": 268.0},
+            {"name": "vbg_min", "actual": 1.196},
+        ]
+    }
+    crit = [_c("iq", "iq_ua", "<=", 300.0), _c("vbg_min", "vbg", ">=", 1.20)]
+
+    allowances = corner_allowances(nominal, sweep, crit)
+
+    assert allowances["iq"] == pytest.approx(33.0)
+    assert allowances["vbg_min"] == pytest.approx(0.044)
+
+
+def test_a_corner_value_that_is_missing_yields_no_allowance_rather_than_zero():
+    # 0 을 넣으면 "코너가 이 기준을 전혀 안 움직인다"는 거짓 사실이 된다.
+    # 없는 것은 없는 채로 둔다 - 호출부가 그것을 구분할 수 있어야 한다.
+    from analogcoder.judge_tools import corner_allowances
+
+    crit = [_c("iq", "iq_ua", "<=", 300.0)]
+
+    assert corner_allowances({"iq_ua": 235.0}, {"criteria": []}, crit) == {}
+
+
+def test_ratio_allowances_are_the_fallback_when_corners_cannot_be_measured():
+    from analogcoder.judge_tools import ratio_allowances
+
+    crit = [_c("iq", "iq_ua", "<=", 300.0), _c("psr", "psr_db", "<=", -10.0)]
+
+    allowances = ratio_allowances(crit, 0.2)
+
+    assert allowances["iq"] == pytest.approx(60.0)
+    assert allowances["psr"] == pytest.approx(2.0)  # |T| 를 쓰므로 부호와 무관
 ```
+
+`import pytest`를 파일 상단에 넣는다.
 
 - [ ] **Step 2: 테스트를 돌려 실패를 확인한다**
 
@@ -453,20 +511,21 @@ _UPPER_BOUND = ("<=", "<")
 
 
 def guard_band_violations(
-    measurements: dict, criteria: list[Criterion], guard_band: float
+    measurements: dict, criteria: list[Criterion], allowances: dict[str, float]
 ) -> list[str]:
-    """가드밴드를 지키지 못한 기준의 설명 목록. 빈 목록이면 전부 지킨 것.
+    """여유분을 지키지 못한 기준의 설명 목록. 빈 목록이면 전부 지킨 것.
 
-    최적화는 마진을 의도적으로 소비하므로, "통과했는가"만으로는 부족하다.
+    최적화는 마진을 의도적으로 소비하므로 "통과했는가"만으로는 부족하다.
     임계값에 바짝 붙은 채로 멈추면 코너와 모델 변동에서 무너진다.
 
-    밴드는 `T ± g·|T|`이지 `T·(1±g)`가 아니다. 후자는 음수 임계값에서
-    뒤집힌다 - `psr <= -10`에 `T·(1-0.2)`를 적용하면 `<= -8`이 되어 원래보다
-    느슨해진다. `T - g·|T|`는 `<= -12`가 되어 제대로 엄격해진다.
+    allowances는 기준 이름 → 남겨야 할 **절대량**이다. 비율을 임계값에 곱하는
+    형태였다면 음수 임계값에서 뒤집혔을 것이다 - `psr <= -10`에 `T·(1-0.2)`는
+    `<= -8`이라 원래보다 느슨하다. 절대량을 빼고 더하는 형태는 부호와 무관하게
+    항상 엄격해지는 방향이다.
 
-    각 criterion을 자기 임계값에 대해 따로 판정한다. 같은 measurement에
-    `>=`와 `<=`가 걸린 양쪽 창을 하나로 뭉개면 한쪽이 사라지는데, pvt.py에서
-    그 모양의 결함이 두 번 있었다."""
+    여유분이 없는 기준은 통과만 하면 된다. 각 criterion을 자기 임계값에 대해
+    따로 판정한다 - 같은 measurement에 `>=`와 `<=`가 걸린 양쪽 창을 하나로
+    뭉개면 한쪽이 사라지는데, pvt.py에서 그 모양의 결함이 두 번 있었다."""
     violations: list[str] = []
 
     for c in criteria:
@@ -475,36 +534,74 @@ def guard_band_violations(
             violations.append(f"{c.name}: measurement {c.measurement!r} is missing")
             continue
 
-        band = guard_band * abs(c.threshold)
+        allowance = allowances.get(c.name, 0.0)
         if c.operator in _UPPER_BOUND:
-            limit = c.threshold - band
+            limit = c.threshold - allowance
             if actual > limit:
                 violations.append(
                     f"{c.name}: {actual:g} exceeds the guarded limit {limit:g} "
-                    f"(threshold {c.threshold:g}, guard band {guard_band:g})"
+                    f"(threshold {c.threshold:g}, allowance {allowance:g})"
                 )
         elif c.operator in _LOWER_BOUND:
-            limit = c.threshold + band
+            limit = c.threshold + allowance
             if actual < limit:
                 violations.append(
                     f"{c.name}: {actual:g} is below the guarded limit {limit:g} "
-                    f"(threshold {c.threshold:g}, guard band {guard_band:g})"
+                    f"(threshold {c.threshold:g}, allowance {allowance:g})"
                 )
-        # "==" 에는 의미 있는 밴드가 없다 - 통과 여부는 evaluate_criteria가 본다.
+        # "==" 에는 의미 있는 여유분이 없다 - 통과 여부는 evaluate_criteria가 본다.
 
     return violations
+
+
+def corner_allowances(
+    nominal: dict, sweep: dict, criteria: list[Criterion]
+) -> dict[str, float]:
+    """기준별로 코너가 nominal에서 밀어내는 실측 거리.
+
+    균일한 비율을 추측하는 대신, 이미 값을 치른 코너 스윕에서 읽는다. 코너에
+    둔감한 기준은 여유를 더 쓸 수 있고 민감한 기준은 자동으로 보수적이 된다 -
+    숫자 하나로는 못 하는 구분이다.
+
+    스윕에 값이 없는 기준은 **넣지 않는다.** 0을 넣으면 "코너가 이 기준을
+    전혀 안 움직인다"는 거짓 사실이 되고, 그건 이 저장소가 반복해서 당한
+    조용한 무력화와 같은 모양이다."""
+    by_name = {c.name: c for c in criteria}
+    allowances: dict[str, float] = {}
+
+    for entry in sweep.get("criteria", []):
+        criterion = by_name.get(entry.get("name"))
+        worst = entry.get("actual")
+        if criterion is None or worst is None:
+            continue
+        nominal_value = nominal.get(criterion.measurement)
+        if nominal_value is None or math.isnan(worst) or math.isnan(nominal_value):
+            continue
+        allowances[criterion.name] = abs(worst - nominal_value)
+
+    return allowances
+
+
+def ratio_allowances(criteria: list[Criterion], guard_band: float) -> dict[str, float]:
+    """코너를 잴 수 없는 스펙용 대체 여유분, `g·|T|`.
+
+    `|T|`를 쓰므로 임계값의 부호와 무관하게 양수 절대량이 나오고, 그래서
+    guard_band_violations 쪽이 부호 문제를 아예 만나지 않는다."""
+    return {c.name: guard_band * abs(c.threshold) for c in criteria}
 ```
+
+`import math`가 파일 상단에 이미 있다.
 
 - [ ] **Step 4: 테스트를 돌려 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_guard_band.py -q`
-Expected: PASS (7 passed)
+Expected: PASS (10 passed)
 
 - [ ] **Step 5: 커밋**
 
 ```bash
 git add src/analogcoder/judge_tools.py tests/unit/test_guard_band.py
-git commit -m "feat: judge a guarded margin without inverting on a negative threshold"
+git commit -m "feat: derive each criterion's margin allowance from measured corners"
 ```
 
 ---
@@ -715,10 +812,23 @@ git commit -m "feat: add an optimizer agent that ranks knobs without naming valu
   `patterns.find_patterns`, `structure_view.*`, `state.RunState`
 - Produces:
   `run_optimization(netlist_texts: dict[str, str], spec, state: RunState, agents: OptimizerAgents) -> dict`
-  where `OptimizerAgents(propose: Callable, simulate: Callable)` and the result is
+  where `OptimizerAgents(propose: Callable, simulate: Callable, verify_corners: Callable | None = None)`
+  and the result is
   `{"status": "OPTIMIZED" | "UNCHANGED" | "SKIPPED", "objective_before": float | None,
     "objective_after": float | None, "area_before": float, "area_after": float,
-    "steps_accepted": int, "steps_rejected": int, "final_netlist_paths": dict}`
+    "steps_accepted": int, "steps_rejected": int, "corner_confirmed": bool,
+    "final_netlist_paths": dict}`
+
+이 Task는 **코너를 모르는 탐색**까지만 만든다. 여유분은
+`judge_tools.ratio_allowances(spec.all_criteria, spec.optimize.guard_band)`로
+구하고, `corner_confirmed`는 항상 `False`다. 코너 확인과 이분 탐색, 그리고
+실측 여유분으로의 전환은 Task 6이 이 위에 얹는다.
+
+`verify_corners`는 여기서 쓰이지 않지만 dataclass에 미리 둔다 — Task 6이
+시그니처를 바꾸지 않게 하려는 것이다.
+
+**가짜 spec에 `pvt_corners=None`을 반드시 넣을 것.** 없으면 Task 6이 붙는
+순간 `AttributeError`가 난다.
 
 **단계 크기:** 감소는 ×0.9, 증가는 ÷0.9. 정수 파라미터(`m`, `nf`)는 그 방향으로
 다음 정수로 가고 1 미만으로 내려가지 않는다. `m=4`의 감소는 3이다. 더 갈 수
@@ -762,6 +872,7 @@ def _spec(**overrides):
     base = dict(
         circuit_name="demo",
         testbenches=[tb],
+        pvt_corners=None,   # Task 6이 이 속성을 읽는다. 없으면 AttributeError.
         optimize=OptimizeSpec(objective="iq_ua", area_budget=1.10, guard_band=0.2),
     )
     base.update(overrides)
@@ -998,7 +1109,190 @@ git commit -m "feat: spend spec margin on the objective with a deterministic acc
 
 ---
 
-### Task 6: CLI 배선
+### Task 6: 코너 확인과 이분 탐색
+
+**Files:**
+- Modify: `src/analogcoder/optimizer.py`
+- Test: `tests/unit/test_optimizer_corners.py`
+
+**Interfaces:**
+- Consumes: Task 5의 `run_optimization`, `judge_tools.corner_allowances`
+- Produces: `OptimizerAgents.verify_corners: Callable | None`가 실제로 쓰인다.
+  결과 dict에 `"corner_confirmed": bool`와 `"pvt_sweep": dict | None`이 담긴다.
+
+**바닥 규칙: 최적화는 절대 시작보다 나쁜 결과를 내지 않는다.** 이게 없으면
+최적화를 돌렸다는 이유로 통과하던 설계가 실패로 끝난다.
+
+동작:
+
+1. `spec.pvt_corners is None` 또는 `agents.verify_corners is None` — Task 5
+   그대로. 비율 여유분, `corner_confirmed=False`. **검증하지 않은 것을 검증된
+   것처럼 보고하지 않는다.**
+2. 그렇지 않으면 **진입 스윕**을 한 번 돈다. 이것은 추가 비용이 아니라 앵커다 —
+   "실패하면 시작점으로 되돌린다"가 안전하려면 시작점이 코너를 통과한다는 것을
+   알아야 한다.
+   - 진입 스윕이 실패하면 최적화를 하지 않는다. 코너를 못 버티는 설계에서
+     마진을 더 깎을 이유가 없다. `UNCHANGED`, 사유 기록.
+   - 통과하면 nominal 기준선 측정과 함께 `corner_allowances`로 기준별 실측
+     여유분을 만든다.
+3. 그 여유분으로 탐색한다(Task 5의 루프).
+4. 수락이 하나도 없으면 `UNCHANGED`, 진입 스윕을 `pvt_sweep`으로 돌려준다.
+5. 수락이 있으면 **확인 스윕**을 돈다. 통과하면 `OPTIMIZED`,
+   `corner_confirmed=True`.
+6. 실패하면 **이분 탐색한다.** `state.netlist_versions`가 수락된 버전을 전부
+   들고 있다. 앵커 인덱스는 통과하고 끝 인덱스는 실패하므로, 통과하는 마지막
+   인덱스를 이분 탐색한다. 착지 지점이 앵커면 `UNCHANGED`, 아니면 `OPTIMIZED`.
+   스윕 횟수는 `ceil(log2(수락 단계 수)) + 2`를 넘지 않는다.
+
+`state`를 특정 버전으로 되돌리는 수단이 `rollback()`(한 단계씩)뿐이면 반복
+호출로 충분하다. 새 상태 API를 만들지 말 것.
+
+- [ ] **Step 1: 실패하는 테스트를 작성한다**
+
+`tests/unit/test_optimizer_corners.py`. Task 5의 `_spec`/`_agents` 헬퍼를
+`tests/unit/test_optimizer.py`에서 import하거나, 공유 헬퍼로 옮기고 양쪽에서
+쓴다(중복 정의하지 말 것 — 하나가 반드시 드리프트한다).
+
+```python
+def _corner_spec():
+    spec = _spec()
+    spec.pvt_corners = SimpleNamespace(process=["tt"], voltage=[1.8], temperature=[27.0])
+    return spec
+
+
+def _sweep(overall_pass, iq_actual):
+    return {"overall_pass": overall_pass, "summary": "x",
+            "criteria": [{"name": "iq", "actual": iq_actual}], "worst_case_corners": {}}
+
+
+@pytest.mark.asyncio
+async def test_without_corners_the_result_says_it_was_not_corner_confirmed(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["corner_confirmed"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_starting_design_that_fails_corners_is_not_optimized(tmp_path):
+    # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, calls = _agents([235.0])
+    agents.verify_corners = lambda texts: _sweep(False, 320.0)
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert result["steps_accepted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_allowance_comes_from_the_measured_corner_spread(tmp_path):
+    # nominal 235, 최악 코너 268 -> 여유분 33. 그러면 허용선은 267 이고,
+    # 목적값이 내려가도 267 을 넘는 단계는 수락되면 안 된다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 270.0, 270.0, 270.0])
+    agents.verify_corners = lambda texts: _sweep(True, 268.0)
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    # 270 은 iq<=300 을 통과하지만 267 이라는 실측 허용선을 넘는다.
+    assert result["status"] == "UNCHANGED"
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_optimization_reports_the_sweep_it_passed(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+    agents.verify_corners = lambda texts: _sweep(True, 240.0)
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert result["status"] == "OPTIMIZED"
+    assert result["corner_confirmed"] is True
+    assert result["pvt_sweep"]["overall_pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_confirmation_bisects_back_to_the_last_passing_version(tmp_path):
+    # 진입은 통과, 확인은 실패. 이분 탐색이 통과하는 마지막 지점에 착지해야
+    # 하고, 시작점보다 나빠지면 안 된다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 220.0, 210.0, 200.0, 200.0, 200.0])
+    sweeps = {"n": 0}
+
+    def verify(texts):
+        sweeps["n"] += 1
+        # 진입 통과, 이후 m=2 이하로 내려간 것만 실패한다고 본다.
+        failing = "m=2" in texts["tb"] or "m=1" in texts["tb"]
+        return _sweep(not failing, 268.0)
+
+    agents.verify_corners = verify
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert result["pvt_sweep"]["overall_pass"] is True
+    assert "m=3" in state.current_netlist_texts()["tb"]
+    assert sweeps["n"] <= 6  # 진입 + 확인 + log2 회 정도
+
+
+@pytest.mark.asyncio
+async def test_when_no_step_survives_corners_the_start_is_returned_unchanged(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0])
+    entry = {"n": 0}
+
+    def verify(texts):
+        entry["n"] += 1
+        return _sweep(entry["n"] == 1, 268.0)  # 진입만 통과
+
+    agents.verify_corners = verify
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+```
+
+`OptimizerAgents`가 frozen dataclass면 `agents.verify_corners = ...` 대입이
+안 되므로, 헬퍼가 `verify_corners`를 인자로 받게 고치거나 dataclass를 가변으로
+둔다. 어느 쪽이든 하나를 고르고 일관되게 쓸 것.
+
+- [ ] **Step 2: 테스트를 돌려 실패를 확인한다**
+
+Run: `.venv/bin/python -m pytest tests/unit/test_optimizer_corners.py -q`
+Expected: FAIL — `KeyError: 'corner_confirmed'` 등
+
+- [ ] **Step 3: 구현한다**
+
+Task 5의 루프를 내부 함수로 밀어 넣고, `run_optimization`이 위 1–6단계를
+수행하게 만든다. 이분 탐색은 `state.netlist_versions[canonical]`의 인덱스
+구간에 대해 표준 이분법으로 쓴다 — 앵커 인덱스는 통과가 보장되고 끝 인덱스는
+실패가 확인된 상태이므로 불변식이 성립한다.
+
+- [ ] **Step 4: 테스트를 돌려 통과를 확인한다**
+
+Run: `.venv/bin/python -m pytest tests/unit/test_optimizer_corners.py tests/unit/test_optimizer.py -q`
+Expected: PASS — Task 5의 테스트도 전부 그대로 통과해야 한다.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/analogcoder/optimizer.py tests/unit/test_optimizer_corners.py
+git commit -m "feat: anchor optimization on a corner sweep and bisect back on failure"
+```
+
+---
+
+### Task 7: CLI 배선
 
 **Files:**
 - Modify: `src/analogcoder/cli.py`
@@ -1049,15 +1343,44 @@ AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
                 structure_view, margins, objective, netlist_view, agent_backends["optimizer"]
             )
 
+        def verify_corners_fn(netlist_texts):
+            return run_full_pvt_sweep(netlist_texts, spec, sim_backend)
+
         optimization = await run_optimization(
             state.current_netlist_texts(),
             spec,
             state,
-            OptimizerAgents(propose=propose_fn, simulate=simulate_fn),
+            OptimizerAgents(
+                propose=propose_fn,
+                simulate=simulate_fn,
+                verify_corners=verify_corners_fn if spec.pvt_corners is not None else None,
+            ),
         )
         result["optimization"] = optimization
         result["final_netlist_paths"] = state.current_netlist_paths()
 ```
+
+**최종 스윕은 한 번만 돈다.** 최적화가 코너를 확인했으면 그 결과를 그대로
+쓰고 다시 돌지 않는다 — bandgap 기준 286초짜리를 중복으로 태우지 않기 위해서다.
+기존 `if spec.pvt_corners is not None:` 최종 스윕 블록을 이렇게 고친다:
+
+```python
+    if spec.pvt_corners is not None:
+        confirmed = (result.get("optimization") or {}).get("pvt_sweep")
+        if confirmed is not None:
+            final_sweep = confirmed
+        else:
+            final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
+            state.log_event("pvt_final_sweep", final_sweep)
+        result["pvt_sweep"] = final_sweep
+        if not final_sweep["overall_pass"]:
+            result["status"] = "FAIL"
+            result["failure_reason"] = f"final PVT sweep failed: {final_sweep['summary']}"
+```
+
+최적화가 착지시킨 지점은 정의상 스윕을 통과한 것이므로, 이 경로에서
+`status`가 `FAIL`로 바뀌는 일은 없다 — 최적화를 돌리지 않았거나 코너가
+선언되지 않은 경우에만 기존 동작이 그대로 유지된다.
 
 import를 파일 상단에 더한다:
 
@@ -1085,7 +1408,7 @@ git commit -m "feat: run optimization after PASS and before the final PVT sweep"
 
 ---
 
-### Task 7: bandgap 종단 검증과 문서
+### Task 8: bandgap 종단 검증과 문서
 
 **Files:**
 - Create: `tests/unit/test_optimizer_bandgap_ngspice.py`
@@ -1093,7 +1416,7 @@ git commit -m "feat: run optimization after PASS and before the final PVT sweep"
 - Test: 위 파일
 
 **Interfaces:**
-- Consumes: Task 1–6 전부, `simulators.ngspice.NgspiceBackend`
+- Consumes: Task 1–7 전부, `simulators.ngspice.NgspiceBackend`
 
 `benchmarks/bandgap/spec.yaml`의 `quiescent_current`는 `iq_ua <= 300`인데
 실측이 193–235 µA다. 그 스펙에는 이 작업을 위해 여유를 남겨 뒀다는 주석이
@@ -1235,6 +1558,9 @@ git commit -m "test+docs: optimize bandgap against real ngspice"
 - [ ] 공급 전압을 낮추는 제안이 시뮬레이션 전에 막힘
 - [ ] 가드밴드가 음수 임계값에서 엄격해지는 방향으로 동작함
 - [ ] bandgap 종단 테스트가 통과하고, `UNCHANGED`면 그 이유가 기록됨
+- [ ] 최적화가 시작보다 나쁜 결과를 내지 않음 — 확인 실패 시 이분 탐색이
+      통과하는 마지막 지점(최악의 경우 시작점)에 착지함
+- [ ] 코너가 선언되지 않은 스펙에서 `corner_confirmed`가 False로 보고됨
 - [ ] `history.jsonl`에 `optimize_step`이 단계마다 남음
 
 ## 이 계획이 다루지 않는 것
@@ -1243,7 +1569,5 @@ git commit -m "test+docs: optimize bandgap against real ngspice"
   최적화는 스펙의 "알려진 한계"에 기록돼 있다.
 - **코너 축소.** 탐색 중 nominal만 쓰는 것을 개선하는 일은 서브프로젝트 B다.
 - **면적을 목적으로 하는 모드.** `objective`는 하나이고 전류다.
-- **PVT 재탐색 루프.** 스펙은 최종 스윕이 실패하면 가드밴드를 올려 다시
-  탐색한다고 적었으나, 이번 범위에서는 최종 스윕이 실패하면 기존 CLI 동작대로
-  `status`를 `FAIL`로 바꾸고 끝낸다. 재탐색은 후속 작업으로 남긴다 — 그것을
-  넣으면 CLI의 제어 흐름이 루프가 되어 이 계획의 두 배가 된다.
+- **가드밴드를 올린 재탐색.** 스펙의 초판에 있었으나 이분 탐색으로 대체됐다.
+  재탐색은 더 큰 추측으로 하는 재시도이고 비용 상한이 없다.
