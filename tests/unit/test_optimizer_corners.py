@@ -1,9 +1,10 @@
 import json
+import math
 
 import pytest
 
-from analogcoder.optimizer import run_optimization
-from analogcoder.spec import OptimizeSpec
+from analogcoder.optimizer import OptimizerAgents, run_optimization
+from analogcoder.spec import Criterion, OptimizeSpec
 from analogcoder.state import RunState
 from types import SimpleNamespace
 
@@ -37,15 +38,25 @@ async def test_without_corners_the_result_says_it_was_not_corner_confirmed(tmp_p
 @pytest.mark.asyncio
 async def test_a_starting_design_that_fails_corners_is_not_optimized(tmp_path):
     # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다.
+    #
+    # 측정 시퀀스가 [235.0] 하나뿐이면 첫 단계가 "목적값 미개선"으로 거절되어
+    # 진입 게이트가 없어도 이 테스트가 통과한다(브리프 원본이 그랬고, 게이트를
+    # 지운 변이가 실제로 통과하는 것을 확인했다). 200 을 붙여 **수락될 단계가
+    # 존재하게** 만들어야 게이트가 유일한 원인이 된다.
     state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
     state.push_netlist_version({"tb": DECK})
-    agents, calls = _agents([235.0])
+    agents, calls = _agents([235.0, 200.0, 200.0, 200.0])
     agents.verify_corners = lambda texts: _sweep(False, 320.0)
 
     result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
 
     assert result["status"] == "UNCHANGED"
     assert result["steps_accepted"] == 0
+    assert "m=4" in state.current_netlist_texts()["tb"]  # 한 단계도 밟지 않았다
+    assert calls["n"] == 1  # 기준선 측정 한 번뿐 - 탐색 자체가 시작되지 않았다
+    # 스윕은 돌았고 "실패"라고 답했다. 못 돈 것이 아니므로 corner_failure는 없다.
+    assert result["corner_failure"] is None
+    assert result["pvt_sweep"]["overall_pass"] is False
 
 
 @pytest.mark.asyncio
@@ -109,6 +120,105 @@ async def test_a_corner_sensitive_criterion_gets_less_room_than_the_ratio_guess(
     assert "m=4" in state.current_netlist_texts()["tb"]
 
 
+TWO_CRITERIA = [
+    Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0),
+    Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0),
+]
+
+
+def _two_criteria_spec():
+    tb = SimpleNamespace(name="tb", criteria=list(TWO_CRITERIA), control_block="")
+    return _corner_spec(testbenches=[tb])
+
+
+def _two_measurement_agents(seq):
+    calls = {"n": 0}
+
+    async def simulate(netlist_texts, spec_arg):
+        value = seq[min(calls["n"], len(seq) - 1)]
+        calls["n"] += 1
+        return {"measurements": dict(value), "status": "success", "warnings": []}
+
+    async def propose(structure_view, margins, objective, netlist_view):
+        return {
+            "candidates": [{"refdes": "AMP.M1", "param": "m", "direction": "decrease",
+                            "reasoning": "tail"}],
+            "overall_reasoning": "x",
+        }
+
+    return OptimizerAgents(propose=propose, simulate=simulate), calls
+
+
+# 실측 여유분 표에는 **구멍이 생길 수 있다**: corner_allowances는 스윕이나
+# nominal이 값을 주지 않은 기준을 의도적으로 뺀다. 그런데 소비자인
+# guard_band_violations는 없는 이름을 여유분 0(=가드밴드 없음)으로 읽는다.
+# 그대로 넘기면 코너 거동을 **모르는** 기준에서만 가드가 사라져, 대체하려던
+# 비율 가드보다 느슨해진다. 아래 세 테스트는 구멍이 생기는 세 경로를 각각
+# 잡는다 - 병합하지 않으면 셋 다 OPTIMIZED로 넘어간다.
+
+
+@pytest.mark.asyncio
+async def test_a_criterion_the_sweep_omits_keeps_the_ratio_guard(tmp_path):
+    # gain 은 스윕에 없다. 비율 여유분 0.2*40 = 8 -> 허용선 48. 42 는 gain>=40 을
+    # 통과하지만 48 을 못 지키므로 수락되면 안 된다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _two_measurement_agents([
+        {"iq_ua": 235.0, "gain_db": 60.0},
+        {"iq_ua": 200.0, "gain_db": 42.0},
+    ])
+    agents.verify_corners = lambda texts: _sweep(True, 268.0)  # criteria 에 iq 뿐
+
+    result = await run_optimization({"tb": DECK}, _two_criteria_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+
+
+@pytest.mark.asyncio
+async def test_a_criterion_missing_from_the_nominal_baseline_keeps_the_ratio_guard(tmp_path):
+    # 스윕에는 gain 이 있지만 **기준선 측정**에 gain_db 가 없다. 두 값의 차를
+    # 낼 수 없으니 corner_allowances가 그 기준을 뺀다. 스윕 결함이 없어도
+    # 도달하는 경로다: 기준선은 cli.py의 LLM 매개 simulate_fn에서, 스윕은
+    # sim_backend.run 에서 나오는 서로 다른 추출 경로다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _two_measurement_agents([
+        {"iq_ua": 235.0},                      # gain_db 없음
+        {"iq_ua": 200.0, "gain_db": 42.0},
+    ])
+    agents.verify_corners = lambda texts: {
+        "overall_pass": True, "summary": "x", "worst_case_corners": {},
+        "criteria": [{"name": "iq", "actual": 268.0}, {"name": "gain", "actual": 55.0}],
+    }
+
+    result = await run_optimization({"tb": DECK}, _two_criteria_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+
+
+@pytest.mark.asyncio
+async def test_a_criterion_whose_corner_value_is_nan_keeps_the_ratio_guard(tmp_path):
+    # 어느 코너가 gain 을 아예 못 냈다 - pvt.py는 그것을 nan 으로 돌려준다.
+    # 코너 거동을 모른다는 뜻이므로 가드를 잃을 자리가 아니다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _two_measurement_agents([
+        {"iq_ua": 235.0, "gain_db": 60.0},
+        {"iq_ua": 200.0, "gain_db": 42.0},
+    ])
+    agents.verify_corners = lambda texts: {
+        "overall_pass": True, "summary": "x", "worst_case_corners": {},
+        "criteria": [{"name": "iq", "actual": 268.0}, {"name": "gain", "actual": math.nan}],
+    }
+
+    result = await run_optimization({"tb": DECK}, _two_criteria_spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "m=4" in state.current_netlist_texts()["tb"]
+
+
 @pytest.mark.asyncio
 async def test_a_confirmed_optimization_reports_the_sweep_it_passed(tmp_path):
     state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
@@ -144,7 +254,9 @@ async def test_a_failed_confirmation_bisects_back_to_the_last_passing_version(tm
 
     assert result["pvt_sweep"]["overall_pass"] is True
     assert "m=3" in state.current_netlist_texts()["tb"]
-    assert sweeps["n"] <= 6  # 진입 + 확인 + log2 회 정도
+    # 브리프의 `<= 6`은 선형 역주행(5회)도 통과시킨다. 실제 상한을 건다:
+    # 수락 3단계 -> 진입 1 + 확인 1 + 프로브 ceil(log2 3) = 4회, 정확히.
+    assert sweeps["n"] == math.ceil(math.log2(3)) + 2 == 4
 
 
 @pytest.mark.asyncio
@@ -195,6 +307,32 @@ async def test_an_entry_sweep_that_raises_stops_optimization_without_crashing(tm
     events = [json.loads(line) for line in open(state.history_path)]
     reasons = [e.get("reason") for e in events if e["step"] == "optimize_entry_sweep"]
     assert any("ngspice aborted" in (r or "") for r in reasons)
+    # 사유가 history.jsonl에만 있으면 결과 dict만 보는 쪽(Task 7)에서는
+    # "코너를 잴 수단이 없었다"와 구분되지 않는다 - 조용한 무력화가 한 층
+    # 위에서 되살아난다. 결과가 스스로 말해야 한다.
+    assert "ngspice aborted" in result["corner_failure"]
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_sweep_is_not_the_same_result_as_no_corners_configured(tmp_path):
+    async def run(subdir, spec, verify):
+        state = RunState(run_dir=str(tmp_path / subdir), testbench_names=["tb"])
+        state.push_netlist_version({"tb": DECK})
+        agents, _ = _agents([235.0, 235.0, 235.0])
+        agents.verify_corners = verify
+        return await run_optimization({"tb": DECK}, spec, state, agents)
+
+    def boom(texts):
+        raise RuntimeError("ngspice aborted")
+
+    crashed = await run("crashed", _corner_spec(), boom)
+    no_corners = await run("no_corners", _spec(), None)
+
+    # 둘 다 UNCHANGED / corner_confirmed=False / pvt_sweep=None 이지만,
+    # 하나는 "잴 수단이 없었다"이고 하나는 "재려다 터졌다"이다.
+    assert crashed["pvt_sweep"] is None and no_corners["pvt_sweep"] is None
+    assert crashed["corner_failure"] != no_corners["corner_failure"]
+    assert no_corners["corner_failure"] is None
 
 
 @pytest.mark.asyncio
@@ -218,6 +356,9 @@ async def test_a_confirmation_sweep_that_raises_walks_back_to_the_anchor(tmp_pat
     assert result["status"] == "UNCHANGED"
     assert "m=4" in state.current_netlist_texts()["tb"]
     assert result["pvt_sweep"]["overall_pass"] is True  # 앵커의 진입 스윕
+    # "코너가 깨져서 되돌아왔다"와 "스윕을 못 돌려서 되돌아왔다"는 다른
+    # 사실이고, 후자는 고칠 대상이 회로가 아니다.
+    assert "ngspice aborted" in result["corner_failure"]
 
 
 @pytest.mark.asyncio
@@ -227,7 +368,10 @@ async def test_the_entry_and_confirmation_sweeps_are_both_recorded(tmp_path):
     agents, _ = _agents([235.0, 220.0, 210.0, 200.0, 200.0, 200.0])
 
     def verify(texts):
-        return _sweep("m=2" not in texts["tb"] and "m=1" not in texts["tb"], 268.0)
+        sweep = _sweep("m=2" not in texts["tb"] and "m=1" not in texts["tb"], 268.0)
+        sweep["worst_case_corners"] = {"iq": {"process": "ss", "voltage": 1.62,
+                                              "temperature": 125.0, "value": 268.0}}
+        return sweep
 
     agents.verify_corners = verify
 
@@ -240,3 +384,10 @@ async def test_the_entry_and_confirmation_sweeps_are_both_recorded(tmp_path):
     probes = [e for e in events if e["step"] == "optimize_bisect_probe"]
     assert probes  # 어느 버전을 확인했는지가 이력에 남는다
     assert all("version" in e and "overall_pass" in e for e in probes)
+    # 어느 코너가 그 기준을 밀어냈는가 - "왜 여기서 멈췄나"를 묻는 사람이
+    # 실제로 원하는 것이고, 스윕의 worst_case_corners에만 있다.
+    sweep_events = [e for e in events if e["step"].startswith("optimize_") and "overall_pass" in e]
+    assert sweep_events
+    assert all(e["worst_case_corners"] == {
+        "iq": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": 268.0}
+    } for e in sweep_events)

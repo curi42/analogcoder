@@ -202,11 +202,16 @@ def _run_sweep(verify_corners, netlist_texts: dict[str, str]) -> tuple[dict | No
 
 
 def _sweep_event(sweep: dict | None, failure: str | None, **extra) -> dict:
-    """스윕 하나를 이력에 남길 모양. 실패한 스윕도 같은 모양으로 남는다."""
+    """스윕 하나를 이력에 남길 모양. 실패한 스윕도 같은 모양으로 남는다.
+
+    worst_case_corners까지 남긴다 - cli.py가 메인 루프의 최종 스윕을 통째로
+    기록하는 것과 같은 이유다. "어디서 멈췄나"를 묻는 사람이 실제로 원하는
+    것은 어느 코너가 그 기준을 밀어냈는가이고, 그것은 이 키에만 있다."""
     return {
         "overall_pass": bool(sweep and sweep.get("overall_pass")),
         "summary": sweep.get("summary") if sweep else None,
         "criteria": sweep.get("criteria") if sweep else None,
+        "worst_case_corners": sweep.get("worst_case_corners") if sweep else None,
         "reason": failure,
         **extra,
     }
@@ -222,6 +227,7 @@ def _result(
     accepted: int = 0,
     rejected: int = 0,
     pvt_sweep: dict | None = None,
+    corner_failure: str | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -237,6 +243,13 @@ def _result(
         # 사실에서 파생되므로 서로 어긋날 수 없다.
         "corner_confirmed": bool(pvt_sweep and pvt_sweep.get("overall_pass")),
         "pvt_sweep": pvt_sweep,
+        # 스윕이 **돌지 못한** 사유. pvt_sweep=None + corner_confirmed=False는
+        # "코너를 잴 수단이 없었다"와 "재려다 터졌다"가 같은 모양이라 결과
+        # dict만 보는 쪽(Task 7의 리포팅)이 둘을 구분하지 못한다 - 사유가
+        # history.jsonl에만 있으면 조용한 무력화가 한 층 위에서 되살아난다.
+        # 스윕이 정상적으로 돌고 "실패"라고 답한 경우는 여기가 None이다:
+        # 그때는 pvt_sweep 자체가 무엇이 왜 실패했는지 들고 있다.
+        "corner_failure": corner_failure,
         "final_netlist_paths": state.current_netlist_paths(),
     }
 
@@ -568,11 +581,31 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
             return _result(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,
+                corner_failure=entry_failure,
             )
         # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
         # 읽는다. nominal은 measurement로, 스윕은 기준 이름으로 색인되므로
         # 둘을 잇는 criteria 목록이 반드시 필요하다 - 인자가 셋인 이유다.
-        allowances = corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria)
+        #
+        # **비율 여유분 위에 덮어쓴다.** corner_allowances는 스윕이나 nominal이
+        # 값을 주지 않은 기준을 의도적으로 **뺀다**(0을 넣으면 "코너가 이 기준을
+        # 전혀 안 움직인다"는 거짓 사실이 되므로 그 규칙 자체는 옳다). 그런데
+        # 소비자인 guard_band_violations는 없는 이름을 `allowances.get(name, 0.0)`
+        # 으로 읽어 **여유분 0**, 즉 가드밴드 없음으로 처리한다. 그래서 구멍이
+        # 생길 수 있는 표를 그대로 넘기면, 하필 코너 거동을 모르는 기준에서만
+        # 가드가 사라져 대체하려던 비율 가드보다 엄격하게 느슨해진다. 실제로
+        # 재현된다: nominal 측정은 cli.py의 LLM 매개 simulate_fn에서, 스윕은
+        # sim_backend.run에서 나오는 서로 다른 추출 경로라, 한쪽에만 없는
+        # measurement가 생기면 그 기준은 가드를 통째로 잃는다.
+        #
+        # 병합하면 잰 것은 실측이 이기고(코너에 둔감한 기준은 여전히 더 작은
+        # 실측 여유분을 받는다 - 측정하는 이유가 보존된다) 못 잰 것은 비율
+        # 추측이 구멍을 막는다. 고칠 자리는 여기(이음매)이지 Task 3의 생략
+        # 규칙이 아니다.
+        allowances = {
+            **ratio_allowances(spec.all_criteria, spec.optimize.guard_band),
+            **corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria),
+        }
     else:
         allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
 
@@ -584,11 +617,15 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     rejected = outcome["rejected"]
     records = outcome["records"]
 
-    def _final(status: str, version: int, accepted_count: int, rejected_count: int, sweep) -> dict:
+    def _final(
+        status: str, version: int, accepted_count: int, rejected_count: int, sweep,
+        corner_failure: str | None = None,
+    ) -> dict:
         record = records[version]
         return _result(
             status, state, objective_before, record["objective"], area_before, record["area"],
             accepted=accepted_count, rejected=rejected_count, pvt_sweep=sweep,
+            corner_failure=corner_failure,
         )
 
     if not corner_capable:
@@ -630,4 +667,8 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     return _final(
         "UNCHANGED" if survived == 0 else "OPTIMIZED",
         landed, survived, rejected + (accepted - survived), landed_sweep,
+        # 확인 스윕이 아예 돌지 못했다면(터졌다면) 그 사유도 결과에 실린다 -
+        # "코너가 깨져서 되돌아왔다"와 "스윕을 못 돌려서 되돌아왔다"는
+        # 다른 사실이고, 후자는 고칠 대상이 회로가 아니다.
+        corner_failure=confirm_failure,
     )
