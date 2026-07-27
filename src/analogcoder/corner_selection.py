@@ -13,7 +13,7 @@ class CornerSet:
     probe_index: int = 0
 
     def __post_init__(self) -> None:
-        # 이 세 불변식은 이 하위 프로젝트 전체가 딛고 서는 기반이다 -
+        # 이 네 불변식은 이 하위 프로젝트 전체가 딛고 서는 기반이다 -
         # seed_from_sweep/grown_with/promote는 지금 이 불변식을 지키며 서로
         # 맞물리지만, 이 클래스는 public이고 frozen dataclass 기본 __init__을
         # 그대로 노출한다. 나중 태스크가 run state에서 CornerSet을
@@ -39,6 +39,10 @@ class CornerSet:
             raise ValueError(
                 f"CornerSet.probe_order must not overlap corners, found {overlap!r} "
                 f"in both corners={self.corners!r} and probe_order={self.probe_order!r}"
+            )
+        if len(set(self.probe_order)) != len(self.probe_order):
+            raise ValueError(
+                f"CornerSet.probe_order must not contain a duplicate corner: {self.probe_order!r}"
             )
 
 
@@ -109,6 +113,14 @@ def grown_with(
         if raw is None:
             continue
         point = _as_point(raw)
+        # "point not in added" 쪽은 여기서 두 실패 기준이 같은 최악 코너를
+        # 지목할 때를 잡는다 (예: gain과 pm 둘 다 FS) - 이게 없으면 added에
+        # FS가 두 번 들어가고, 그대로 corners = (*cs.corners, *added)에
+        # 실려 아래 CornerSet 생성에서 __post_init__의 중복 검사가 막아선다.
+        # 즉 __post_init__은 최후 방어선이고, 이 줄은 그 방어선에 걸려
+        # ValueError로 실행이 죽는 대신 애초에 올바른 결과를 돌려주기 위한
+        # 것이다 - apply_changes가 check_refdes_resolution 이후에도 모호한
+        # refdes에 대해 여전히 raise하는 것과 같은 이중 방어 구조.
         if point not in cs.corners and point not in added:
             added.append(point)
     if not added:

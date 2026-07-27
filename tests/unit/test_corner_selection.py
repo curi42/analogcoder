@@ -171,9 +171,18 @@ def test_label_of_a_real_corner_shows_process_voltage_temperature():
 def test_growth_dedupes_when_two_failing_criteria_share_a_worst_corner(_spec):
     # 성장 쪽의 씨앗-쪽 test_two_criteria_sharing_a_worst_corner_do_not_duplicate_it
     # 대응 짝. gain과 pm이 둘 다 FS를 최악 코너로 지목하면 added에는 FS가
-    # 한 번만 들어가야 한다 - 두 번 들어가면 corners에도 FS가 중복으로
-    # 붙어, 성장 없는 재시도 판정(added가 비었는지)과 중복 없는 집합이라는
-    # 이 프로젝트 전체의 전제를 둘 다 깬다.
+    # 한 번만 들어가야 한다.
+    #
+    # "and point not in added" (corner_selection.py의 grown_with)를 빼면 이
+    # 테스트는 실패하지만 - list 불일치(assert added == [FS])가 아니라
+    # __post_init__의 중복 ValueError로 실패한다. grown_with는 반환하기
+    # 전에 corners = (*cs.corners, *added)로 CornerSet을 그 자리에서
+    # 만들기 때문에, added 안의 중복은 구조적으로 corners 안의 중복이고,
+    # __post_init__이 항상 먼저 가로챈다 - grown_with의 가드만 따로 떼어
+    # 잡는 테스트는 이 함수 형태로는 애초에 만들 수 없다. 그래도 이건 실제
+    # 판별력이다: 가드가 없으면 grown_with가 올바른 결과를 돌려주는 대신
+    # 죽는다는 뜻이므로, 이 줄은 여전히 동작을 결정하는 코드고
+    # __post_init__은 그 뒤를 받치는 최후 방어선일 뿐이다.
     cs = CornerSet(corners=(NOMINAL,), probe_order=())
     sweep = _sweep({"gain": _wc(FS, -1.0), "pm": _wc(FS, -2.0)})
     _, added = grown_with(cs, sweep, ["gain", "pm"])
@@ -200,3 +209,11 @@ def test_corner_set_rejects_a_corner_in_both_the_set_and_the_probe_order():
     # 정확히 만들어 낸다.
     with pytest.raises(ValueError, match="overlap"):
         CornerSet(corners=(NOMINAL, FS), probe_order=(FS, SF))
+
+
+def test_corner_set_rejects_a_duplicate_within_the_probe_order():
+    # 앞의 세 검사와 같은 부류: probe_order 안에 같은 코너가 두 번 있으면
+    # next_probe의 회전이 그 코너를 실제보다 더 자주 골라, 세지 않은
+    # 코너를 상대적으로 덜 훑게 된다.
+    with pytest.raises(ValueError, match="duplicate"):
+        CornerSet(corners=(NOMINAL,), probe_order=(FS, FS))
