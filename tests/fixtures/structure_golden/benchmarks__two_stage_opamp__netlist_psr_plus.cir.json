@@ -1,0 +1,784 @@
+{
+  "blocks": {
+    "<top>": {
+      "components": [
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vdd",
+            "0",
+            "DC",
+            "1.8",
+            "AC"
+          ],
+          "refdes": "Vdd",
+          "terminals": []
+        },
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vss",
+            "0",
+            "DC"
+          ],
+          "refdes": "Vss",
+          "terminals": []
+        },
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vinp",
+            "0",
+            "DC"
+          ],
+          "refdes": "Vinp",
+          "terminals": []
+        },
+        {
+          "ctype": "L",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vout",
+            "vinn"
+          ],
+          "refdes": "Lfb",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "C",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vstim",
+            "vinn"
+          ],
+          "refdes": "Cin",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vstim",
+            "0",
+            "DC"
+          ],
+          "refdes": "Vstim",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "OPAMP2STAGE",
+          "nodes": [
+            "vinp",
+            "vinn",
+            "vout",
+            "vdd",
+            "vss"
+          ],
+          "refdes": "Xdut",
+          "terminals": []
+        },
+        {
+          "ctype": "C",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vout",
+            "0"
+          ],
+          "refdes": "Cload",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": []
+    },
+    "OPAMP2STAGE": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "pbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.Xp3",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.Xp4",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "pbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.Xn1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nbias",
+            "nbias",
+            "degn",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.Xn2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "R",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "degn",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.Rdeg",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "R",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vdd",
+            "nbias"
+          ],
+          "refdes": "OPAMP2STAGE.Rstart",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "n1",
+            "vinn",
+            "tail",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.X1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "outA",
+            "vinp",
+            "tail",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.X2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "n1",
+            "n1",
+            "vss",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.X3",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "outA",
+            "n1",
+            "vss",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.X4",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "tail",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.X5",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vout",
+            "outA",
+            "vss",
+            "vss"
+          ],
+          "refdes": "OPAMP2STAGE.X6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vout",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "OPAMP2STAGE.X7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "cap",
+          "model": "sky130_fd_pr__cap_mim_m3_1",
+          "nodes": [
+            "outA",
+            "vout"
+          ],
+          "refdes": "OPAMP2STAGE.Xcc",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "cap",
+          "model": "sky130_fd_pr__cap_mim_m3_1",
+          "nodes": [
+            "outA",
+            "0"
+          ],
+          "refdes": "OPAMP2STAGE.Xca",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss"
+      ]
+    }
+  },
+  "mismatches": [],
+  "net_blocks": {
+    "0": {
+      "Cload": "drive"
+    },
+    "vdd": {
+      "OPAMP2STAGE": "drive"
+    },
+    "vinn": {
+      "Cin": "drive",
+      "Lfb": "drive",
+      "OPAMP2STAGE": "sense"
+    },
+    "vinp": {
+      "OPAMP2STAGE": "sense"
+    },
+    "vout": {
+      "Cload": "drive",
+      "Lfb": "drive",
+      "OPAMP2STAGE": "drive"
+    },
+    "vss": {
+      "OPAMP2STAGE": "drive"
+    },
+    "vstim": {
+      "Cin": "drive"
+    }
+  },
+  "patterns": [
+    [
+      "current_mirror",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.X3",
+        "OPAMP2STAGE.X4"
+      ]
+    ],
+    [
+      "current_mirror",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.X5",
+        "OPAMP2STAGE.Xp3"
+      ]
+    ],
+    [
+      "current_mirror",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.X7",
+        "OPAMP2STAGE.Xp3"
+      ]
+    ],
+    [
+      "current_mirror",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.Xp3",
+        "OPAMP2STAGE.Xp4"
+      ]
+    ],
+    [
+      "diff_pair",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.X1",
+        "OPAMP2STAGE.X2"
+      ]
+    ],
+    [
+      "miller_compensation",
+      "OPAMP2STAGE",
+      [
+        "OPAMP2STAGE.X6",
+        "OPAMP2STAGE.Xcc"
+      ]
+    ]
+  ],
+  "tunable": [
+    [
+      "Cin",
+      "value"
+    ],
+    [
+      "Cload",
+      "value"
+    ],
+    [
+      "Lfb",
+      "value"
+    ],
+    [
+      "OPAMP2STAGE.Rdeg",
+      "value"
+    ],
+    [
+      "OPAMP2STAGE.Rstart",
+      "value"
+    ],
+    [
+      "OPAMP2STAGE.X1",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X1",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X2",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X2",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X3",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X3",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X4",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X4",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X5",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X5",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X6",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X6",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.X7",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.X7",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.Xca",
+      "l"
+    ],
+    [
+      "OPAMP2STAGE.Xca",
+      "mf"
+    ],
+    [
+      "OPAMP2STAGE.Xca",
+      "w"
+    ],
+    [
+      "OPAMP2STAGE.Xcc",
+      "l"
+    ],
+    [
+      "OPAMP2STAGE.Xcc",
+      "mf"
+    ],
+    [
+      "OPAMP2STAGE.Xcc",
+      "w"
+    ],
+    [
+      "OPAMP2STAGE.Xn1",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.Xn1",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.Xn2",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.Xn2",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.Xp3",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.Xp3",
+      "W"
+    ],
+    [
+      "OPAMP2STAGE.Xp4",
+      "L"
+    ],
+    [
+      "OPAMP2STAGE.Xp4",
+      "W"
+    ],
+    [
+      "Vdd",
+      "value"
+    ],
+    [
+      "Vinp",
+      "value"
+    ],
+    [
+      "Vss",
+      "value"
+    ],
+    [
+      "Vstim",
+      "value"
+    ]
+  ]
+}

@@ -1,0 +1,3606 @@
+{
+  "blocks": {
+    "<top>": {
+      "components": [
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vdd",
+            "0",
+            "DC"
+          ],
+          "refdes": "Vdd",
+          "terminals": []
+        },
+        {
+          "ctype": "V",
+          "device_class": null,
+          "model": null,
+          "nodes": [
+            "vss",
+            "0",
+            "DC"
+          ],
+          "refdes": "Vss",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "BANDGAP",
+          "nodes": [
+            "vbgout",
+            "vbg0",
+            "vbg1",
+            "vtop",
+            "vfb",
+            "vdd",
+            "vss",
+            "ampout",
+            "ampout",
+            "vfb",
+            "vbg1",
+            "vbg0"
+          ],
+          "refdes": "Xdut",
+          "terminals": []
+        },
+        {
+          "ctype": "I",
+          "device_class": null,
+          "model": "10u)",
+          "nodes": [
+            "vbg0",
+            "0",
+            "PULSE(0",
+            "10u",
+            "1u",
+            "1n",
+            "1n",
+            "30n"
+          ],
+          "refdes": "Istep0",
+          "terminals": []
+        },
+        {
+          "ctype": "I",
+          "device_class": null,
+          "model": "10u)",
+          "nodes": [
+            "vbg1",
+            "0",
+            "PULSE(0",
+            "10u",
+            "1u",
+            "1n",
+            "1n",
+            "30n"
+          ],
+          "refdes": "Istep1",
+          "terminals": []
+        }
+      ],
+      "instance_count": 1,
+      "ports": []
+    },
+    "BANDGAP": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "BGR_CORE",
+          "nodes": [
+            "vbgout",
+            "ampout",
+            "mpgate",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "refdes": "BANDGAP.Xcore",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "TRIMAMP",
+          "nodes": [
+            "vbgout",
+            "trm_i",
+            "vtop",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "refdes": "BANDGAP.Xtrim",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vtop",
+            "vfb",
+            "0"
+          ],
+          "refdes": "BANDGAP.XRl4",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vfb",
+            "vt12",
+            "0"
+          ],
+          "refdes": "BANDGAP.XRl3",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vt12",
+            "vt05",
+            "0"
+          ],
+          "refdes": "BANDGAP.XRl2",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vt05",
+            "vss",
+            "0"
+          ],
+          "refdes": "BANDGAP.XRl1",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "BUF_N",
+          "nodes": [
+            "vt12",
+            "b1_i",
+            "vbg1",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "refdes": "BANDGAP.Xb1",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "BUF_P",
+          "nodes": [
+            "vt05",
+            "b0_i",
+            "vbg0",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "refdes": "BANDGAP.Xb0",
+          "terminals": []
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vbgout",
+        "vbg0",
+        "vbg1",
+        "vtop",
+        "vfb",
+        "vdd",
+        "vss",
+        "ampout",
+        "mpgate",
+        "trm_i",
+        "b1_i",
+        "b0_i"
+      ]
+    },
+    "BGR_CORE": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vbgout",
+            "mpgate",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xmpout",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vbgout",
+            "na",
+            "0"
+          ],
+          "refdes": "BGR_CORE.XRpa",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vbgout",
+            "nb",
+            "0"
+          ],
+          "refdes": "BGR_CORE.XRpb",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pnp",
+          "model": "sky130_fd_pr__pnp_05v5_W3p40L3p40",
+          "nodes": [
+            "0",
+            "0",
+            "na",
+            "0"
+          ],
+          "refdes": "BGR_CORE.Xq1",
+          "terminals": [
+            [
+              "c",
+              "drive"
+            ],
+            [
+              "b",
+              "drive"
+            ],
+            [
+              "e",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "nb",
+            "ne8",
+            "0"
+          ],
+          "refdes": "BGR_CORE.XR1",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pnp",
+          "model": "sky130_fd_pr__pnp_05v5_W3p40L3p40",
+          "nodes": [
+            "0",
+            "0",
+            "ne8",
+            "0"
+          ],
+          "refdes": "BGR_CORE.Xq8",
+          "terminals": [
+            [
+              "c",
+              "drive"
+            ],
+            [
+              "b",
+              "drive"
+            ],
+            [
+              "e",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": null,
+          "model": "ERRAMP",
+          "nodes": [
+            "nb",
+            "na",
+            "ampout",
+            "vdd",
+            "vss",
+            "nbias",
+            "ncas",
+            "pbias",
+            "pcas"
+          ],
+          "refdes": "BGR_CORE.Xerr",
+          "terminals": []
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nbias",
+            "ampout",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xb1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xb2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ncas",
+            "ampout",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xb3",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ncas",
+            "ncas",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xb4",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "pbias",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xb5",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "pbias",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xb6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "pcas",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xb7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "pcas",
+            "pcas",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xb8",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nsu",
+            "vss",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xsu_r",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nsu",
+            "vbgout",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xsu_d",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ampout",
+            "nsu",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xsu_i",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nbias",
+            "vss",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BGR_CORE.Xsu_b",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vss",
+            "ampout",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BGR_CORE.Xcc",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vbgout",
+        "ampout",
+        "mpgate",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "BUF_N": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xt",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "refdes": "BUF_N.X1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "refdes": "BUF_N.X2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_N.Xp1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_N.Xp2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "refdes": "BUF_N.Xc1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "refdes": "BUF_N.Xc2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xn1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xn2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xm1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xm2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_N.X6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_N.X7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "refdes": "BUF_N.Xcc",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "refdes": "BUF_N.XRz",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vss",
+            "vout",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_N.Xcl",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "BUF_P": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "tail",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_P.Xt",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vdd"
+          ],
+          "refdes": "BUF_P.X1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vdd"
+          ],
+          "refdes": "BUF_P.X2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nx",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_P.Xn1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ny",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_P.Xn2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "np",
+            "ncas",
+            "nx",
+            "vss"
+          ],
+          "refdes": "BUF_P.Xc1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "outA",
+            "ncas",
+            "ny",
+            "vss"
+          ],
+          "refdes": "BUF_P.Xc2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "np",
+            "pcas",
+            "nr",
+            "vdd"
+          ],
+          "refdes": "BUF_P.Xp1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "outA",
+            "pcas",
+            "ns",
+            "vdd"
+          ],
+          "refdes": "BUF_P.Xp2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nr",
+            "np",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_P.Xm1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ns",
+            "np",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_P.Xm2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vout",
+            "outA",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_P.X6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vout",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "BUF_P.X7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "refdes": "BUF_P.Xcc",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "refdes": "BUF_P.XRz",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vss",
+            "vout",
+            "vss",
+            "vss"
+          ],
+          "refdes": "BUF_P.Xcl",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "ERRAMP": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "ERRAMP.Xt",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "refdes": "ERRAMP.X1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "refdes": "ERRAMP.X2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "ERRAMP.Xp1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "ERRAMP.Xp2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "refdes": "ERRAMP.Xc1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "refdes": "ERRAMP.Xc2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "refdes": "ERRAMP.Xn1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "refdes": "ERRAMP.Xn2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "ERRAMP.Xm1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "ERRAMP.Xm2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "ERRAMP.X6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "ERRAMP.X7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "refdes": "ERRAMP.Xcc",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "refdes": "ERRAMP.XRz",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    },
+    "TRIMAMP": {
+      "components": [
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "tail",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.Xt",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nx",
+            "vinn",
+            "tail",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.X1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ny",
+            "vinp",
+            "tail",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.X2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nx",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "TRIMAMP.Xp1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "ny",
+            "pbias",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "TRIMAMP.Xp2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "np",
+            "pcas",
+            "nx",
+            "vdd"
+          ],
+          "refdes": "TRIMAMP.Xc1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "outA",
+            "pcas",
+            "ny",
+            "vdd"
+          ],
+          "refdes": "TRIMAMP.Xc2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "np",
+            "ncas",
+            "nr",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.Xn1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "outA",
+            "ncas",
+            "ns",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.Xn2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "nr",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.Xm1",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "ns",
+            "np",
+            "vss",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.Xm2",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "vout",
+            "outA",
+            "vdd",
+            "vdd"
+          ],
+          "refdes": "TRIMAMP.X6",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "nfet",
+          "model": "sky130_fd_pr__nfet_01v8",
+          "nodes": [
+            "vout",
+            "nbias",
+            "vss",
+            "vss"
+          ],
+          "refdes": "TRIMAMP.X7",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "pfet",
+          "model": "sky130_fd_pr__pfet_01v8",
+          "nodes": [
+            "nz",
+            "outA",
+            "nz",
+            "nz"
+          ],
+          "refdes": "TRIMAMP.Xcc",
+          "terminals": [
+            [
+              "d",
+              "drive"
+            ],
+            [
+              "g",
+              "sense"
+            ],
+            [
+              "s",
+              "drive"
+            ],
+            [
+              "b",
+              "bulk"
+            ]
+          ]
+        },
+        {
+          "ctype": "X",
+          "device_class": "res",
+          "model": "sky130_fd_pr__res_high_po",
+          "nodes": [
+            "vout",
+            "nz",
+            "0"
+          ],
+          "refdes": "TRIMAMP.XRz",
+          "terminals": [
+            [
+              "1",
+              "drive"
+            ],
+            [
+              "2",
+              "drive"
+            ]
+          ]
+        }
+      ],
+      "instance_count": 1,
+      "ports": [
+        "vinp",
+        "vinn",
+        "vout",
+        "vdd",
+        "vss",
+        "nbias",
+        "ncas",
+        "pbias",
+        "pcas"
+      ]
+    }
+  },
+  "mismatches": [],
+  "net_blocks": {
+    "ampout": {
+      "BGR_CORE": "drive",
+      "ERRAMP": "drive"
+    },
+    "vbg0": {
+      "BUF_P": "drive"
+    },
+    "vbg1": {
+      "BUF_N": "drive"
+    },
+    "vbgout": {
+      "BGR_CORE": "drive",
+      "TRIMAMP": "sense"
+    },
+    "vfb": {
+      "BANDGAP": "drive",
+      "TRIMAMP": "sense"
+    },
+    "vss": {
+      "BANDGAP": "drive",
+      "BGR_CORE": "sense"
+    },
+    "vtop": {
+      "BANDGAP": "drive",
+      "TRIMAMP": "drive"
+    }
+  },
+  "patterns": [
+    [
+      "cascode",
+      "BUF_N",
+      [
+        "BUF_N.Xc1",
+        "BUF_N.Xp1"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_N",
+      [
+        "BUF_N.Xc2",
+        "BUF_N.Xp2"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_N",
+      [
+        "BUF_N.Xm1",
+        "BUF_N.Xn1"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_N",
+      [
+        "BUF_N.Xm2",
+        "BUF_N.Xn2"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_P",
+      [
+        "BUF_P.Xc1",
+        "BUF_P.Xn1"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_P",
+      [
+        "BUF_P.Xc2",
+        "BUF_P.Xn2"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_P",
+      [
+        "BUF_P.Xm1",
+        "BUF_P.Xp1"
+      ]
+    ],
+    [
+      "cascode",
+      "BUF_P",
+      [
+        "BUF_P.Xm2",
+        "BUF_P.Xp2"
+      ]
+    ],
+    [
+      "cascode",
+      "ERRAMP",
+      [
+        "ERRAMP.Xc1",
+        "ERRAMP.Xp1"
+      ]
+    ],
+    [
+      "cascode",
+      "ERRAMP",
+      [
+        "ERRAMP.Xc2",
+        "ERRAMP.Xp2"
+      ]
+    ],
+    [
+      "cascode",
+      "ERRAMP",
+      [
+        "ERRAMP.Xm1",
+        "ERRAMP.Xn1"
+      ]
+    ],
+    [
+      "cascode",
+      "ERRAMP",
+      [
+        "ERRAMP.Xm2",
+        "ERRAMP.Xn2"
+      ]
+    ],
+    [
+      "cascode",
+      "TRIMAMP",
+      [
+        "TRIMAMP.Xc1",
+        "TRIMAMP.Xp1"
+      ]
+    ],
+    [
+      "cascode",
+      "TRIMAMP",
+      [
+        "TRIMAMP.Xc2",
+        "TRIMAMP.Xp2"
+      ]
+    ],
+    [
+      "cascode",
+      "TRIMAMP",
+      [
+        "TRIMAMP.Xm1",
+        "TRIMAMP.Xn1"
+      ]
+    ],
+    [
+      "cascode",
+      "TRIMAMP",
+      [
+        "TRIMAMP.Xm2",
+        "TRIMAMP.Xn2"
+      ]
+    ],
+    [
+      "current_mirror",
+      "BGR_CORE",
+      [
+        "BGR_CORE.Xb2",
+        "BGR_CORE.Xb5"
+      ]
+    ],
+    [
+      "current_mirror",
+      "BGR_CORE",
+      [
+        "BGR_CORE.Xb2",
+        "BGR_CORE.Xb7"
+      ]
+    ],
+    [
+      "diff_pair",
+      "BUF_N",
+      [
+        "BUF_N.X1",
+        "BUF_N.X2"
+      ]
+    ],
+    [
+      "diff_pair",
+      "BUF_P",
+      [
+        "BUF_P.X1",
+        "BUF_P.X2"
+      ]
+    ],
+    [
+      "diff_pair",
+      "ERRAMP",
+      [
+        "ERRAMP.X1",
+        "ERRAMP.X2"
+      ]
+    ],
+    [
+      "diff_pair",
+      "TRIMAMP",
+      [
+        "TRIMAMP.X1",
+        "TRIMAMP.X2"
+      ]
+    ]
+  ],
+  "tunable": [
+    [
+      "BANDGAP.XRl1",
+      "l"
+    ],
+    [
+      "BANDGAP.XRl1",
+      "w"
+    ],
+    [
+      "BANDGAP.XRl2",
+      "l"
+    ],
+    [
+      "BANDGAP.XRl2",
+      "w"
+    ],
+    [
+      "BANDGAP.XRl3",
+      "l"
+    ],
+    [
+      "BANDGAP.XRl3",
+      "w"
+    ],
+    [
+      "BANDGAP.XRl4",
+      "l"
+    ],
+    [
+      "BANDGAP.XRl4",
+      "w"
+    ],
+    [
+      "BGR_CORE.XR1",
+      "l"
+    ],
+    [
+      "BGR_CORE.XR1",
+      "w"
+    ],
+    [
+      "BGR_CORE.XRpa",
+      "l"
+    ],
+    [
+      "BGR_CORE.XRpa",
+      "w"
+    ],
+    [
+      "BGR_CORE.XRpb",
+      "l"
+    ],
+    [
+      "BGR_CORE.XRpb",
+      "w"
+    ],
+    [
+      "BGR_CORE.Xb1",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb1",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb2",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb2",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb3",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb3",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb4",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb4",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb5",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb5",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb6",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb6",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb7",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb7",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xb8",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xb8",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xcc",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xcc",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xmpout",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xmpout",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xq8",
+      "m"
+    ],
+    [
+      "BGR_CORE.Xsu_b",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xsu_b",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xsu_d",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xsu_d",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xsu_i",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xsu_i",
+      "W"
+    ],
+    [
+      "BGR_CORE.Xsu_r",
+      "L"
+    ],
+    [
+      "BGR_CORE.Xsu_r",
+      "W"
+    ],
+    [
+      "BUF_N.X1",
+      "L"
+    ],
+    [
+      "BUF_N.X1",
+      "W"
+    ],
+    [
+      "BUF_N.X2",
+      "L"
+    ],
+    [
+      "BUF_N.X2",
+      "W"
+    ],
+    [
+      "BUF_N.X6",
+      "L"
+    ],
+    [
+      "BUF_N.X6",
+      "W"
+    ],
+    [
+      "BUF_N.X7",
+      "L"
+    ],
+    [
+      "BUF_N.X7",
+      "W"
+    ],
+    [
+      "BUF_N.XRz",
+      "l"
+    ],
+    [
+      "BUF_N.XRz",
+      "w"
+    ],
+    [
+      "BUF_N.Xc1",
+      "L"
+    ],
+    [
+      "BUF_N.Xc1",
+      "W"
+    ],
+    [
+      "BUF_N.Xc2",
+      "L"
+    ],
+    [
+      "BUF_N.Xc2",
+      "W"
+    ],
+    [
+      "BUF_N.Xcc",
+      "L"
+    ],
+    [
+      "BUF_N.Xcc",
+      "W"
+    ],
+    [
+      "BUF_N.Xcl",
+      "L"
+    ],
+    [
+      "BUF_N.Xcl",
+      "W"
+    ],
+    [
+      "BUF_N.Xm1",
+      "L"
+    ],
+    [
+      "BUF_N.Xm1",
+      "W"
+    ],
+    [
+      "BUF_N.Xm2",
+      "L"
+    ],
+    [
+      "BUF_N.Xm2",
+      "W"
+    ],
+    [
+      "BUF_N.Xn1",
+      "L"
+    ],
+    [
+      "BUF_N.Xn1",
+      "W"
+    ],
+    [
+      "BUF_N.Xn2",
+      "L"
+    ],
+    [
+      "BUF_N.Xn2",
+      "W"
+    ],
+    [
+      "BUF_N.Xp1",
+      "L"
+    ],
+    [
+      "BUF_N.Xp1",
+      "W"
+    ],
+    [
+      "BUF_N.Xp2",
+      "L"
+    ],
+    [
+      "BUF_N.Xp2",
+      "W"
+    ],
+    [
+      "BUF_N.Xt",
+      "L"
+    ],
+    [
+      "BUF_N.Xt",
+      "W"
+    ],
+    [
+      "BUF_P.X1",
+      "L"
+    ],
+    [
+      "BUF_P.X1",
+      "W"
+    ],
+    [
+      "BUF_P.X2",
+      "L"
+    ],
+    [
+      "BUF_P.X2",
+      "W"
+    ],
+    [
+      "BUF_P.X6",
+      "L"
+    ],
+    [
+      "BUF_P.X6",
+      "W"
+    ],
+    [
+      "BUF_P.X7",
+      "L"
+    ],
+    [
+      "BUF_P.X7",
+      "W"
+    ],
+    [
+      "BUF_P.XRz",
+      "l"
+    ],
+    [
+      "BUF_P.XRz",
+      "w"
+    ],
+    [
+      "BUF_P.Xc1",
+      "L"
+    ],
+    [
+      "BUF_P.Xc1",
+      "W"
+    ],
+    [
+      "BUF_P.Xc2",
+      "L"
+    ],
+    [
+      "BUF_P.Xc2",
+      "W"
+    ],
+    [
+      "BUF_P.Xcc",
+      "L"
+    ],
+    [
+      "BUF_P.Xcc",
+      "W"
+    ],
+    [
+      "BUF_P.Xcl",
+      "L"
+    ],
+    [
+      "BUF_P.Xcl",
+      "W"
+    ],
+    [
+      "BUF_P.Xm1",
+      "L"
+    ],
+    [
+      "BUF_P.Xm1",
+      "W"
+    ],
+    [
+      "BUF_P.Xm2",
+      "L"
+    ],
+    [
+      "BUF_P.Xm2",
+      "W"
+    ],
+    [
+      "BUF_P.Xn1",
+      "L"
+    ],
+    [
+      "BUF_P.Xn1",
+      "W"
+    ],
+    [
+      "BUF_P.Xn2",
+      "L"
+    ],
+    [
+      "BUF_P.Xn2",
+      "W"
+    ],
+    [
+      "BUF_P.Xp1",
+      "L"
+    ],
+    [
+      "BUF_P.Xp1",
+      "W"
+    ],
+    [
+      "BUF_P.Xp2",
+      "L"
+    ],
+    [
+      "BUF_P.Xp2",
+      "W"
+    ],
+    [
+      "BUF_P.Xt",
+      "L"
+    ],
+    [
+      "BUF_P.Xt",
+      "W"
+    ],
+    [
+      "ERRAMP.X1",
+      "L"
+    ],
+    [
+      "ERRAMP.X1",
+      "W"
+    ],
+    [
+      "ERRAMP.X2",
+      "L"
+    ],
+    [
+      "ERRAMP.X2",
+      "W"
+    ],
+    [
+      "ERRAMP.X6",
+      "L"
+    ],
+    [
+      "ERRAMP.X6",
+      "W"
+    ],
+    [
+      "ERRAMP.X7",
+      "L"
+    ],
+    [
+      "ERRAMP.X7",
+      "W"
+    ],
+    [
+      "ERRAMP.XRz",
+      "l"
+    ],
+    [
+      "ERRAMP.XRz",
+      "w"
+    ],
+    [
+      "ERRAMP.Xc1",
+      "L"
+    ],
+    [
+      "ERRAMP.Xc1",
+      "W"
+    ],
+    [
+      "ERRAMP.Xc2",
+      "L"
+    ],
+    [
+      "ERRAMP.Xc2",
+      "W"
+    ],
+    [
+      "ERRAMP.Xcc",
+      "L"
+    ],
+    [
+      "ERRAMP.Xcc",
+      "W"
+    ],
+    [
+      "ERRAMP.Xm1",
+      "L"
+    ],
+    [
+      "ERRAMP.Xm1",
+      "W"
+    ],
+    [
+      "ERRAMP.Xm2",
+      "L"
+    ],
+    [
+      "ERRAMP.Xm2",
+      "W"
+    ],
+    [
+      "ERRAMP.Xn1",
+      "L"
+    ],
+    [
+      "ERRAMP.Xn1",
+      "W"
+    ],
+    [
+      "ERRAMP.Xn2",
+      "L"
+    ],
+    [
+      "ERRAMP.Xn2",
+      "W"
+    ],
+    [
+      "ERRAMP.Xp1",
+      "L"
+    ],
+    [
+      "ERRAMP.Xp1",
+      "W"
+    ],
+    [
+      "ERRAMP.Xp2",
+      "L"
+    ],
+    [
+      "ERRAMP.Xp2",
+      "W"
+    ],
+    [
+      "ERRAMP.Xt",
+      "L"
+    ],
+    [
+      "ERRAMP.Xt",
+      "W"
+    ],
+    [
+      "TRIMAMP.X1",
+      "L"
+    ],
+    [
+      "TRIMAMP.X1",
+      "W"
+    ],
+    [
+      "TRIMAMP.X2",
+      "L"
+    ],
+    [
+      "TRIMAMP.X2",
+      "W"
+    ],
+    [
+      "TRIMAMP.X6",
+      "L"
+    ],
+    [
+      "TRIMAMP.X6",
+      "W"
+    ],
+    [
+      "TRIMAMP.X7",
+      "L"
+    ],
+    [
+      "TRIMAMP.X7",
+      "W"
+    ],
+    [
+      "TRIMAMP.XRz",
+      "l"
+    ],
+    [
+      "TRIMAMP.XRz",
+      "w"
+    ],
+    [
+      "TRIMAMP.Xc1",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xc1",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xc2",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xc2",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xcc",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xcc",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xm1",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xm1",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xm2",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xm2",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xn1",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xn1",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xn2",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xn2",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xp1",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xp1",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xp2",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xp2",
+      "W"
+    ],
+    [
+      "TRIMAMP.Xt",
+      "L"
+    ],
+    [
+      "TRIMAMP.Xt",
+      "W"
+    ],
+    [
+      "Vdd",
+      "value"
+    ],
+    [
+      "Vss",
+      "value"
+    ]
+  ]
+}
