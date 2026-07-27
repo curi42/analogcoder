@@ -98,35 +98,41 @@ def test_apply_topology_swap_raises_when_subckt_not_closed():
 NESTED_TOPOLOGY_NETLIST = """\
 * t
 .subckt OUTER a b
-.subckt INNER a b
-R1 a b 1k
+.subckt INNER ai bi
+R1 ai bi 1k
 .ends INNER
 Xi a b INNER
 .ends OUTER
-.subckt INNER a b
-R9 a b 9k
-.ends INNER
+.subckt INNER at bt
+R9 at bt 9k
+.ends
 .end
 """
+# The nested INNER and the top-level INNER are given distinct port names
+# (ai/bi vs at/bt) and distinct .ends spellings (named vs bare) on purpose:
+# an assertion like `".subckt INNER a b" in out` or `".ends INNER" in out`
+# would be satisfied by the *untouched* copy regardless of what happens to
+# the matched one, making the header/footer test vacuous. See the review
+# finding that caught this in the original (identical-port) fixture.
 
 
 def test_a_dotted_path_targets_the_nested_definition_not_the_top_level_one():
     # Mutation this catches: reverting to "first bare-name match wins" would
     # replace the top-level INNER (R9) instead of OUTER.INNER (R1).
-    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 a b 2k\n")
-    assert "R2 a b 2k" in out
-    assert "R9 a b 9k" in out  # top-level same-named definition untouched
-    assert "R1 a b 1k" not in out
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 ai bi 2k\n")
+    assert "R2 ai bi 2k" in out
+    assert "R9 at bt 9k" in out  # top-level same-named definition untouched
+    assert "R1 ai bi 1k" not in out
 
 
 def test_a_bare_name_targets_the_top_level_definition():
     # Mutation this catches: matching on bare name anywhere in the stack (or
     # taking the first occurrence in document order regardless of depth)
     # would hit the nested INNER (R1) instead of the top-level one (R9).
-    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "INNER", "R3 a b 3k\n")
-    assert "R1 a b 1k" in out  # nested definition left alone
-    assert "R9 a b 9k" not in out
-    assert "R3 a b 3k" in out
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "INNER", "R3 at bt 3k\n")
+    assert "R1 ai bi 1k" in out  # nested definition left alone
+    assert "R9 at bt 9k" not in out
+    assert "R3 at bt 3k" in out
 
 
 def test_a_partial_path_is_rejected_rather_than_guessed_at():
@@ -144,10 +150,14 @@ def test_an_unknown_path_raises():
 
 def test_the_header_and_footer_lines_are_preserved_verbatim():
     # Mutation this catches: an off-by-one in locating the matched .subckt's
-    # own header/footer line indices (as opposed to some ancestor's) would
-    # drop or duplicate these exact lines.
-    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 a b 2k\n")
-    assert ".subckt INNER a b" in out
+    # own header/footer line indices (as opposed to some ancestor's, or
+    # dropping them outright) would drop or duplicate these exact lines.
+    # ".subckt INNER ai bi" and the named ".ends INNER" only ever appear on
+    # the nested definition's own header/footer in this fixture — the
+    # top-level INNER uses different port names and a bare ".ends" — so
+    # these assertions can only be satisfied by the matched block itself.
+    out = apply_topology_swap(NESTED_TOPOLOGY_NETLIST, "OUTER.INNER", "R2 ai bi 2k\n")
+    assert ".subckt INNER ai bi" in out
     assert ".ends INNER" in out
 
 
