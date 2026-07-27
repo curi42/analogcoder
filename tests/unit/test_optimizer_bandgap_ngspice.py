@@ -183,7 +183,16 @@ def test_the_optimizer_lowers_iq_while_every_criterion_still_passes(tmp_path):
     So the honest headline is that the nominal search overshoots by more than
     half and the confirmation is what makes the phase safe. The saving itself
     is small (-0.74uA of 213) because exactly one knob is pinned here - a real
-    agent ranks several."""
+    agent ranks several.
+
+    **The failed confirmation is a measurement, not the contract.** The
+    contract is: iq falls, every criterion still passes, corners confirm the
+    deck that is returned, and the reported numbers describe THAT deck. Whether
+    bisection had to run depends on ngspice and the PDK, and a benign shift
+    that makes the confirmation pass would otherwise fail this test after 30
+    minutes and read as a correctness regression. So the value assertions are
+    unconditional and the bisection block is conditional, with the pass
+    outcome's own (equally real) contract asserted in the else branch."""
     spec, texts = _load("spec_pvt.yaml")
     backend = NgspiceBackend(timeout=180)
     state = RunState(run_dir=str(tmp_path), testbench_names=list(texts))
@@ -223,32 +232,62 @@ def test_the_optimizer_lowers_iq_while_every_criterion_still_passes(tmp_path):
     accepted = [s for s in steps if s["accepted"]]
     probes = _events(state, "optimize_bisect_probe")
     landing = _events(state, "optimize_bisect_result")
+    # 돌려주는 덱을 만든 단계. 되돌아온 실행에서는 마지막 수락 단계가 아니다.
+    survivor = accepted[result["steps_accepted"] - 1]
 
-    # 확인 스윕이 실패했으므로 이분 탐색이 돌았다. 이것이 이 테스트가 실제로
-    # 잡은 것이다: nominal 탐색이 수락한 단계 중 일부만 코너에서 살아남는다.
-    assert len(landing) == 1
-    assert len(probes) >= 1
-    assert landing[0]["steps_kept"] == result["steps_accepted"]
-    assert landing[0]["steps_walked_back"] > 0
-    assert landing[0]["steps_kept"] + landing[0]["steps_walked_back"] == len(accepted)
+    # **여기부터가 조건부다.** 위의 값 단언들 - iq가 내려갔고, 모든 기준이
+    # 여전히 통과하고, 코너가 확인되었다 - 이 이 테스트의 계약이고 그것들은
+    # 무조건 참이어야 한다. 반면 "이분 탐색이 돌았다"는 계약이 아니라 **측정
+    # 결과**다(2026-07-27 실측: 확인 스윕이 6개 기준에서 실패, 10단계 중 4단계
+    # 생존). ngspice나 PDK가 조금 움직여 확인 스윕이 통과하게 되면 계약은
+    # 그대로인데 이 30분짜리 테스트가 실패하고, 그것이 정확성 회귀로 읽힌다.
+    # 그래서 양쪽 결말을 각각 고정한다 - 어느 쪽이든 "돌려주는 덱을 결과가
+    # 설명한다"는 같은 사실을 검사한다.
+    if landing:
+        # 확인 스윕이 실패했다. 시작점에서 잰 가드밴드는 회로가 움직인 뒤에도
+        # 유효하지 않고, 이것이 이분 탐색이 존재하는 이유다.
+        assert len(landing) == 1
+        assert len(probes) >= 1
+        assert landing[0]["steps_kept"] == result["steps_accepted"]
+        assert landing[0]["steps_walked_back"] > 0
+        assert landing[0]["steps_kept"] + landing[0]["steps_walked_back"] == len(accepted)
+        # 착지 지점은 통과가 **관측된** 버전이다. 앵커는 진입 스윕이, 나머지는
+        # 프로브가 확인한 것뿐이다 - 확인되지 않은 버전에 착지하는 경로는 없다.
+        verified = {p["version"] for p in probes if p["overall_pass"]} | {landing[0]["anchor"]}
+        assert landing[0]["version"] in verified
+        assert survivor["objective"] > accepted[-1]["objective"]  # 마지막 단계가 아니다
+        walked_back = landing[0]["steps_walked_back"]
+    else:
+        # 확인 스윕이 통과했다. 되돌린 단계가 없으므로 돌려주는 덱은 마지막
+        # 수락 단계의 것이고, 수락 수도 그대로다. 이분 탐색은 아예 돌지 않는다.
+        assert not probes
+        assert result["corner_confirmed"] is True
+        assert result["steps_accepted"] == len(accepted)
+        assert survivor is accepted[-1]
+        assert result["objective_after"] == accepted[-1]["objective"]
+        walked_back = 0
+
     # 스윕 예산: 진입 + 확인 + 이분 탐색 프로브. 다른 경로로 스윕을 더 돌면
     # 이 테스트의 30분이 조용히 더 늘어난다.
     assert len(sweeps) == 2 + len(probes)
-    # 착지 지점은 통과가 **관측된** 버전이다. 앵커는 진입 스윕이, 나머지는
-    # 프로브가 확인한 것뿐이다 - 확인되지 않은 버전에 착지하는 경로는 없다.
-    verified = {p["version"] for p in probes if p["overall_pass"]} | {landing[0]["anchor"]}
-    assert landing[0]["version"] in verified
     assert result["pvt_sweep"] in sweeps
 
     # 보고된 수치가 **돌려주는 덱**을 설명하는가. 되돌아온 실행에서 결과가
     # 착지하지 않은(마지막) 버전의 값을 들고 있으면 여기서 깨진다.
     final_texts = state.current_netlist_texts()
-    survivor = accepted[result["steps_accepted"] - 1]
     assert result["final_netlist_paths"] == state.current_netlist_paths()
     assert total_area(final_texts[spec.canonical.name]).area == result["area_after"]
     assert float(_knob_width(final_texts[spec.canonical.name])) == survivor["after"]
     assert result["objective_after"] == survivor["objective"]
-    assert survivor["objective"] > accepted[-1]["objective"]  # 마지막 단계가 아니다
+    # 리포트가 쓰는 기준 판정도 **착지한 버전**에서 잰 것이어야 한다 - 최적화
+    # 전 덱의 판정을 실어 보내면 리포트가 서로 다른 두 회로를 나란히 적는다.
+    reported = {c["name"]: c for c in result["final_criteria"]}
+    assert reported and all(c["pass"] for c in reported.values())
+    objective_criteria = [
+        c.name for c in spec.all_criteria if c.measurement == spec.optimize.objective
+    ]
+    assert objective_criteria  # 목적값에 걸린 기준이 없으면 아래 검사가 무의미하다
+    assert all(reported[name]["actual"] == survivor["objective"] for name in objective_criteria)
 
     # 수락된 단계마다 목적값이 실제로 내려갔다 - 단조 감소.
     objectives = [s["objective"] for s in accepted]
@@ -264,6 +303,6 @@ def test_the_optimizer_lowers_iq_while_every_criterion_still_passes(tmp_path):
     assert last["accepted"] is False and last["gate"] is None
     assert "guarded limit" in last["reason"]
     # 되돌린 단계는 거절로 다시 센다 - 보고하는 수가 돌려주는 덱을 설명해야 한다.
-    assert result["steps_rejected"] == (len(steps) - len(accepted)) + landing[0]["steps_walked_back"]
+    assert result["steps_rejected"] == (len(steps) - len(accepted)) + walked_back
     # baseline + 한 단계당 하나. 스윕은 sim_backend를 직접 부르므로 여기 안 센다.
     assert len(calls) == len(steps) + 1
