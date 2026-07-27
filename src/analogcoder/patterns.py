@@ -26,8 +26,39 @@ def _same_kind(a: ComponentFact, b: ComponentFact) -> bool:
     return (a.model or a.ctype) == (b.model or b.ctype)
 
 
+def _param_ci(fact: ComponentFact, name: str) -> str | None:
+    """파라미터를 대소문자 구분 없이 찾는다. SPICE 파라미터 이름은 대소문자를
+    구분하지 않는데, 이 저장소도 한 덱 안에서 FET은 W=/L=, sky130의
+    res_high_po/cap_mim_m3_1은 w=/l=을 쓴다 (bandgap/netlist.cir,
+    two_stage_opamp/netlist.cir). params.get("W")를 그대로 쓰면 소문자로만
+    적힌 소자는 항상 None을 돌려주고, 두 소자 다 None이면 None == None이
+    그냥 통과해 크기가 실제로는 6배 다른 두 소자를 "크기가 같다"고
+    잘못 판정한다 - CLAUDE.md가 이미 두 번 기록한 결함(area_limits의
+    바인닝 안 된 W=30 문제)과 같은 종류다."""
+    lowered = name.lower()
+    for key, value in fact.params.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
+def _matching_size(a: ComponentFact, b: ComponentFact, name: str) -> bool:
+    """두 소자의 파라미터가 대소문자 무시하고 "둘 다 선언했고 같다"인가.
+    둘 다 모르면(예: 크기가 .model 카드에만 있어 여기 안 보이면) 같다고
+    보지 않는다 - 모르는 값끼리의 우연한 동등을 "같다"로 세면 그건 사실이
+    아니라 추측이다. 침묵이 정답이다."""
+    va, vb = _param_ci(a, name), _param_ci(b, name)
+    return va is not None and va == vb
+
+
 def _two_terminal_nets(fact: ComponentFact) -> tuple[str, str] | None:
-    if len(fact.nodes) != 2:
+    """소자의 두 신호 단자 넷. len(fact.nodes)로 세면 sky130의 res_high_po
+    같은 3노드 소자(포트 두 개 + 몸체/웰)가 조건을 만족하지 못해 밀러
+    널링 저항 홉이 PDK 덱에서는 죽는다. structure.py가 이미 res/cap
+    클래스에 2단자 표(_TWO_TERMINALS)를 매겨 두므로, 그 표(terminals)의
+    개수로 판정하고 앞의 두 노드(실제 신호 단자, 몸체는 항상 마지막
+    위치)만 취한다."""
+    if len(fact.terminals) < 2:
         return None
     return fact.nodes[0], fact.nodes[1]
 
@@ -55,8 +86,8 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
             na["s"] == nb["s"]
             and na["g"] != nb["g"]
             and na["d"] != nb["d"]
-            and a.params.get("W") == b.params.get("W")
-            and a.params.get("L") == b.params.get("L")
+            and _matching_size(a, b, "W")
+            and _matching_size(a, b, "L")
             # 소스 팬아웃이 정확히 2(이 둘뿐)여야 한다 - 아니면 흔한 레일을
             # 우연히 같은 크기로 공유하는 무관한 두 소자를 차동쌍으로
             # 잘못 부르게 된다.
@@ -67,8 +98,19 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
                 members=tuple(sorted((a.refdes, b.refdes))),
                 detail=f"common source {na['s']}, gates {na['g']}/{nb['g']}",
             ))
-        if na["g"] == nb["g"] and na["s"] == nb["s"] and (
-            na["g"] == na["d"] or nb["g"] == nb["d"]
+        if (
+            na["g"] == nb["g"]
+            and na["s"] == nb["s"]
+            and (na["g"] == na["d"] or nb["g"] == nb["d"])
+            # 드레인과 소스가 같은 넷에 묶인 소자는 도통 방향이 없다 - MOS를
+            # 커패시터로 쓸 때(d=s=b를 한 넷에 묶는 sky130 관용구) 나오는
+            # 모양이다. 그런 소자가 우연히 다이오드 노드에 게이트를 얹으면
+            # 이 조건이 없을 때 진짜 미러처럼 잡힌다 - bandgap의
+            # BGR_CORE.Xcc/BUF_N.Xcl/BUF_P.Xcl이 정확히 이 모양이고, 이번
+            # 덱에서는 게이트가 우연히 다이오드 노드가 아니라서 피했을
+            # 뿐이다(넷 이름 하나만 바뀌어도 거짓 매칭이 난다).
+            and na["d"] != na["s"]
+            and nb["d"] != nb["s"]
         ):
             diode = a if na["g"] == na["d"] else b
             matches.append(PatternMatch(
@@ -77,6 +119,16 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
                 detail=f"shared gate {na['g']}, {diode.refdes} is diode-connected",
             ))
 
+    # 캐스코드 판정의 알려진 한계: source follower(신호가 게이트로 들어와
+    # 소스로 나오는 소자) 위에 전류원이 얹힌 모양과, 파워 게이팅 스위치가
+    # 소자 하나를 켜고 끄는 모양은 이 지역 서브그래프만 보면 진짜
+    # 캐스코드와 구별되지 않는다 - 어느 넷이 "바이어스"고 어느 넷이
+    # "신호"인지는 명명 규칙을 봐야 아는데, 그건 이 모듈이 금지하는
+    # 바로 그 추측이다("전원 레일"을 이름으로 알아보는 것도 마찬가지
+    # 추측이라 채택하지 않는다). 그래서 고치지 않고 문서화만 한다 -
+    # test_a_source_follower_over_a_current_sink_matches_cascode_known_limitation과
+    # test_a_power_gating_switch_matches_cascode_known_limitation이 현재
+    # 동작을 그대로 고정해 둔다.
     for upper, lower in combinations(mos, 2):
         for top, bottom in ((upper, lower), (lower, upper)):
             nt, nbm = _nets(top), _nets(bottom)
@@ -118,15 +170,20 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
         # 적혔는지에 따라 매칭이 되기도 하고 안 되기도 한다.
         for near, other in (endpoints, tuple(reversed(endpoints))):
             for far_side, extra in _reachable(other, resistors):
-                for device in mos:
-                    nets = _nets(device)
-                    if {near, far_side} != {nets["g"], nets["d"]}:
-                        continue
-                    members = tuple(sorted((cap.refdes, device.refdes) + tuple(extra)))
-                    matches.append(PatternMatch(
-                        kind="miller_compensation", block=block.path, members=members,
-                        detail=f"{cap.refdes} bridges {nets['g']} and {nets['d']} of {device.refdes}",
-                    ))
+                target = {near, far_side}
+                candidates = [d for d in mos if {_nets(d)["g"], _nets(d)["d"]} == target]
+                if len(candidates) != 1:
+                    # 후보가 없으면 침묵. 둘 이상이면 어느 소자가 "그" 이득단인지
+                    # 추측하는 셈이라 역시 침묵한다 - 캐스코드나 미러의 출력
+                    # 레그를 우연히 가로지르는 커패시터가 통과하지 못하게 막는다.
+                    continue
+                device = candidates[0]
+                nets = _nets(device)
+                members = tuple(sorted((cap.refdes, device.refdes) + tuple(extra)))
+                matches.append(PatternMatch(
+                    kind="miller_compensation", block=block.path, members=members,
+                    detail=f"{cap.refdes} bridges {nets['g']} and {nets['d']} of {device.refdes}",
+                ))
 
     return matches
 
@@ -153,7 +210,15 @@ def find_patterns(structure: NetlistStructure) -> list[PatternMatch]:
     아니라 거짓 양성 0이다.
 
     세 파생 모듈 중 유일하게 틀릴 수 있는 부분이므로 따로 두었다.
-    서브프로젝트 F(토폴로지 라이브러리 확장)가 자라날 자리이기도 하다."""
+    서브프로젝트 F(토폴로지 라이브러리 확장)가 자라날 자리이기도 하다.
+
+    알려진, 의도적으로 고치지 않은 한계: 캐스코드 판정은 지역 서브그래프만
+    본다. source follower 위에 전류원이 얹힌 모양이나 파워 게이팅 스위치가
+    소자 하나를 켜고 끄는 모양은 진짜 캐스코드와 그래프 모양이 동일해서
+    구별할 수 없다 - 어느 넷이 바이어스고 어느 넷이 신호인지는 이름을 봐야
+    아는데, "전원 레일"을 이름으로 알아보는 것도 똑같은 추측이라 채택하지
+    않는다. 이 한계는 _find_in_block의 캐스코드 루프 주석과
+    test_patterns.py의 두 "known_limitation" 테스트가 기록한다."""
     matches: list[PatternMatch] = []
     for path in sorted(structure.blocks, key=lambda p: (p is not None, p or "")):
         matches += _find_in_block(structure.blocks[path])
