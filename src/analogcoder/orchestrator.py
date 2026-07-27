@@ -10,6 +10,7 @@ from analogcoder.netlist import (
     check_param_applicability,
     check_refdes_resolution,
     parse_netlist,
+    resolve_change_scopes,
 )
 from analogcoder.signal_path import build_signal_paths
 from analogcoder.state import RunState
@@ -72,6 +73,21 @@ async def run_orchestration(
 
         tuning_history: list[dict] = []
 
+        # criterion 이름 -> measurement 이름 -> 그 measurement가 보는 넷 집합,
+        # 두 단계로 실패 넷을 찾기 위한 매핑. spec의 criteria/control_block에서만
+        # 나오고 iteration마다 바뀌지 않으므로 루프 밖에서 한 번만 만든다.
+        # criterion은 넷이 아니라 measurement를 참조하므로(예: "gain")
+        # control_block의 meas/let에서만 그 measurement가 실제로 보는 넷을 알
+        # 수 있다. measurement_nets가 넷이 아니라 전압원 이름을 낼 수도 있는데
+        # (idd -> {"Vdd"}), net_blocks에는 그 이름이 없어 그냥 씨앗을 하나 안
+        # 내는 것으로 끝난다 - 별도 처리가 필요 없다.
+        measurement_by_criterion = {
+            c.name: c.measurement for tb in spec.testbenches for c in tb.criteria
+        }
+        nets_by_measurement: dict[str, set[str]] = {}
+        for tb in spec.testbenches:
+            nets_by_measurement.update(measurement_nets(tb.control_block))
+
         for outer_iter in range(1, MAX_OUTER_ITERATIONS + 1):
             netlist_texts = state.current_netlist_texts()
 
@@ -90,20 +106,6 @@ async def run_orchestration(
 
             if judge_result["overall_pass"]:
                 return _final_result("PASS", state, outer_iter, judge_result)
-
-            # criterion 이름 -> measurement 이름 -> 그 measurement가 보는 넷
-            # 집합, 두 단계로 실패 넷을 찾는다. criterion은 넷이 아니라
-            # measurement를 참조하므로(예: "gain") control_block의
-            # meas/let에서만 그 measurement가 실제로 보는 넷을 알 수 있다.
-            # measurement_nets가 넷이 아니라 전압원 이름을 낼 수도 있는데
-            # (idd -> {"Vdd"}), net_blocks에는 그 이름이 없어 그냥 씨앗을
-            # 하나 안 내는 것으로 끝난다 - 별도 처리가 필요 없다.
-            measurement_by_criterion = {
-                c.name: c.measurement for tb in spec.testbenches for c in tb.criteria
-            }
-            nets_by_measurement: dict[str, set[str]] = {}
-            for tb in spec.testbenches:
-                nets_by_measurement.update(measurement_nets(tb.control_block))
 
             failing_nets: set[str] = set()
             for criterion in judge_result["criteria"]:
@@ -243,7 +245,7 @@ async def run_orchestration(
                     rejection_feedback = param_feedback
                     continue
 
-                misses = focus_misses(focus, proposal["proposed_changes"])
+                misses = focus_misses(focus, proposal["proposed_changes"], netlist_texts[canonical_name])
                 if misses:
                     # 기록만 하고 흐름은 막지 않는다 - 초점이 틀렸다는 증거이지
                     # 제안이 틀렸다는 증거가 아니다.
@@ -252,7 +254,21 @@ async def run_orchestration(
                         {"outer_iter": outer_iter, "retry": retry, "refdes": misses},
                     )
 
-                review = await agents.verify_pre(structure_view, judge_result, proposal, netlist_view)
+                # verify_pre에는 초점을 제안이 실제로 지목한 블록까지 넓혀
+                # 넘긴다. 원래 초점만 넘기면, 비초점 서브회로는 본문이 접혀
+                # "* ... (N components elided)"로만 보이는데도 verify_pre의
+                # 프롬프트는 "넷리스트 위의 컴포넌트 줄에 없는 refdes/param은
+                # 거부하라"고 지시한다 - 접힌 블록을 지목한, 게이트를 이미
+                # 통과한 정상적인 제안이 그 문장 그대로 거부 대상처럼 보이게
+                # 되어 verify_pre가 초점 오류를 튜너의 잘못으로 오판한다.
+                # 튜너 쪽 뷰(netlist_view)는 그대로 둔다 - 넓혀야 하는 쪽은
+                # 지금 판정 중인 제안을 실제로 봐야 하는 verifier뿐이다.
+                resolved_blocks = resolve_change_scopes(
+                    netlist_texts[canonical_name], proposal["proposed_changes"]
+                )
+                verify_netlist_view = render_netlist(netlist_texts[canonical_name], focus | resolved_blocks)
+
+                review = await agents.verify_pre(structure_view, judge_result, proposal, verify_netlist_view)
                 state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
 
                 if review["approved"]:

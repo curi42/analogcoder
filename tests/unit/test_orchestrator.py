@@ -66,10 +66,10 @@ def make_agents(**overrides):
     async def default_judge(measurements, spec):
         return PASS_JUDGE
 
-    async def default_tune(structure_view, judge_result, history, rejection_feedback, netlist_text):
+    async def default_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return FAKE_PROPOSAL
 
-    async def default_verify_pre(structure_view, judge_result, proposal, netlist_text):
+    async def default_verify_pre(structure_view, judge_result, proposal, netlist_view):
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
     async def default_verify_post(prev_judge, new_judge, applied_changes):
@@ -127,7 +127,7 @@ async def test_fail_then_pass_after_tuning(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prereview_always_rejected_fails_run(tmp_path):
-    async def always_reject(analysis, judge_result, proposal, netlist_text):
+    async def always_reject(structure_view, judge_result, proposal, netlist_view):
         return {"approved": False, "concerns": ["not justified"], "feedback": "try again"}
 
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), verify_pre=always_reject)
@@ -221,7 +221,7 @@ async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(t
 async def test_topology_swap_never_offered_without_exactly_one_subckt(tmp_path):
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_spy(analysis, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
         propose_topology_calls["count"] += 1
         return FAKE_TOPOLOGY_PROPOSAL
 
@@ -260,7 +260,7 @@ async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_
 
     propose_topology_calls = []
 
-    async def propose_topology(analysis, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology(structure_view, judge_result, available_topologies, rejection_feedback):
         propose_topology_calls.append([t.id for t in available_topologies])
         return {"topology_id": available_topologies[0].id, "reasoning": "matches phase margin gap", "confidence": 90}
 
@@ -278,7 +278,7 @@ async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_
 
 @pytest.mark.asyncio
 async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
-    async def always_bad_topology(analysis, judge_result, available_topologies, rejection_feedback):
+    async def always_bad_topology(structure_view, judge_result, available_topologies, rejection_feedback):
         return {"topology_id": "not_a_real_topology", "reasoning": "x", "confidence": 50}
 
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
@@ -333,11 +333,11 @@ async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollbac
 async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
     verify_pre_calls = {"count": 0}
 
-    async def counting_verify_pre(analysis, judge_result, proposal, netlist_text):
+    async def counting_verify_pre(structure_view, judge_result, proposal, netlist_view):
         verify_pre_calls["count"] += 1
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
-    async def oversized_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+    async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return {
             "proposed_changes": [
                 {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
@@ -364,7 +364,7 @@ async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
 async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
     call_count = {"n": 0}
 
-    async def mixed_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+    async def mixed_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         call_count["n"] += 1
         if call_count["n"] % 2 == 1:
             new_value = "100u"  # oversized -> area-rejected, 2.5x
@@ -378,7 +378,7 @@ async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
             "confidence": 90,
         }
 
-    async def always_reject_verify_pre(analysis, judge_result, proposal, netlist_text):
+    async def always_reject_verify_pre(structure_view, judge_result, proposal, netlist_view):
         return {"approved": False, "concerns": ["not justified"], "feedback": "try again"}
 
     agents = make_agents(
@@ -396,7 +396,7 @@ async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
 
 @pytest.mark.asyncio
 async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
-    async def oversized_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+    async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return {
             "proposed_changes": [
                 {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
@@ -407,7 +407,7 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
 
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_spy(analysis, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
         propose_topology_calls["count"] += 1
         return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
 
@@ -447,11 +447,11 @@ async def test_ambiguous_refdes_proposal_is_rejected_without_crashing_or_calling
     # tuning-retry-exhausted path.
     verify_pre_calls = {"count": 0}
 
-    async def counting_verify_pre(analysis, judge_result, proposal, netlist_text):
+    async def counting_verify_pre(structure_view, judge_result, proposal, netlist_view):
         verify_pre_calls["count"] += 1
         return {"approved": True, "concerns": [], "feedback": "ok"}
 
-    async def ambiguous_tune(analysis, judge_result, history, rejection_feedback, netlist_text):
+    async def ambiguous_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return {
             "proposed_changes": [{"refdes": "Xcc", "param": "W", "old_value": "10", "new_value": "15", "reasoning": "x"}],
             "overall_reasoning": "x",
@@ -617,18 +617,32 @@ async def test_an_inapplicable_param_is_rejected_before_verify_pre_is_called(tmp
         return {"proposed_changes": [{"refdes": "Rf", "param": "width",
                                       "old_value": "10k", "new_value": "15k"}]}
 
+    # SUBCKT_NETLIST (a single subckt) rather than BASE_NETLIST: this also
+    # exercises that a param_check rejection that repeats every retry - like
+    # the area gate's identical shape - still escalates into a topology-swap
+    # attempt after enough consecutive rollbacks, rather than only ever
+    # reaching "tuning proposal repeatedly rejected". propose_topology_spy
+    # mirrors test_area_rejection_eventually_triggers_topology_swap.
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+
     agents = make_agents(
         tune=bad_tune,
         verify_pre=counting_verify_pre,
         judge=lambda m, s: _async(FAIL_JUDGE),
+        propose_topology=propose_topology_spy,
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+    await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
 
     assert verify_pre_calls["count"] == 0
     events = [json.loads(line) for line in open(state.history_path)]
     assert any(e["step"] == "param_check" and e["approved"] is False for e in events)
+    assert propose_topology_calls["count"] >= 1
 
 
 @pytest.mark.asyncio
@@ -642,3 +656,93 @@ async def test_the_focus_decision_is_logged_so_an_elision_is_never_invisible(tmp
     focus_events = [e for e in events if e["step"] == "focus"]
     assert focus_events
     assert focus_events[0]["blocks"] == ["AMP"]
+
+
+TWO_SUBCKT_NETLIST = (
+    "* two independent subckts - only AMP drives the measured net\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "R1 vinp mid 1k\n"
+    "R2 mid vout 2k\n"
+    ".ends AMP\n"
+    ".subckt BIAS vdd vss iref\n"
+    "Rb vdd iref 1k\n"
+    ".ends BIAS\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    "Xbias1 vdd vss iref BIAS\n"
+    ".end\n"
+)
+GAIN_CONTROL_BLOCK = ".control\nac dec 10 1 1meg\nmeas ac gain_db find vdb(vout) at=1k\n.endc\n"
+
+
+def _two_subckt_spec():
+    gain_criterion = SimpleNamespace(name="gain", measurement="gain_db", operator=">=", threshold=19.5)
+    tb = SimpleNamespace(name="ac_loop_gain", criteria=[gain_criterion], control_block=GAIN_CONTROL_BLOCK)
+    return SimpleNamespace(circuit_name="two_subckt", testbenches=[tb], canonical=tb)
+
+
+@pytest.mark.asyncio
+async def test_the_criterion_to_measurement_to_net_mapping_produces_a_non_degenerate_focus(tmp_path):
+    # Every other focus test in this file uses FAKE_SPEC/MULTI_SPEC, whose
+    # testbenches all have criteria=[] - so measurement_by_criterion is
+    # always {} and failing_nets is always set(), meaning select_focus
+    # always takes the "no seed -> expose every block" fallback. That
+    # fallback happens to look identical to a correctly-computed focus
+    # whenever there is only one subckt (as in SUBCKT_NETLIST), so swapping
+    # c.name/c.measurement, transposing the two dicts built from spec, or
+    # deleting the nets_by_measurement.update loop entirely would leave
+    # every existing orchestrator test green. A real criterion plus a
+    # control_block whose meas line names a net that only one of two
+    # subckts drives forces a genuine, non-fallback focus decision: if the
+    # mapping is broken, this asserts {"AMP", "BIAS"} instead of {"AMP"}.
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_SUBCKT_NETLIST}, _two_subckt_spec(), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    focus_events = [e for e in events if e["step"] == "focus"]
+    assert focus_events
+    assert focus_events[0]["blocks"] == ["AMP"]
+
+
+@pytest.mark.asyncio
+async def test_verify_pre_sees_the_full_body_of_an_out_of_focus_block_the_proposal_touches(tmp_path):
+    # Regression for a verify_pre-specific failure mode: render_netlist folds
+    # an out-of-focus subckt's body to "* ... (N components elided)", but
+    # verify_pre's own prompt instructs it to reject any refdes/param that
+    # isn't an exact token "in the netlist above" - so a proposal against a
+    # real, gate-approved component that merely lives in an out-of-focus
+    # block would look, from inside that folded view, exactly like the
+    # thing the verifier is told to reject. Here focus is {"AMP"} (BIAS
+    # never touches the failing net), and the proposal targets Rb inside
+    # BIAS - unqualified, so this also exercises resolving an unscoped
+    # refdes into its real (out-of-focus) subckt rather than guessing from
+    # a dotted prefix that doesn't exist here at all.
+    seen = {}
+    judge_calls = {"count": 0}
+
+    async def judge_fails_then_passes(measurements, spec):
+        judge_calls["count"] += 1
+        return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
+
+    async def spying_verify_pre(structure_view, judge_result, proposal, netlist_view):
+        seen["netlist_view"] = netlist_view
+        return {"approved": True, "concerns": [], "feedback": "ok"}
+
+    async def tune_bias(structure_view, judge_result, history, feedback, netlist_view):
+        return {
+            "proposed_changes": [
+                {"refdes": "Rb", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"}
+            ]
+        }
+
+    agents = make_agents(judge=judge_fails_then_passes, tune=tune_bias, verify_pre=spying_verify_pre)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_SUBCKT_NETLIST}, _two_subckt_spec(), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    focus_events = [e for e in events if e["step"] == "focus"]
+    assert focus_events[0]["blocks"] == ["AMP"]  # BIAS starts out of focus
+    assert "elided" not in seen["netlist_view"]
+    assert "Rb vdd iref 1k" in seen["netlist_view"]

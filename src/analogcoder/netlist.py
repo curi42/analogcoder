@@ -456,6 +456,38 @@ def check_param_applicability(text: str, changes: list[dict]) -> tuple[bool, str
     return True, None
 
 
+def resolve_change_scopes(text: str, changes: list[dict]) -> set[str]:
+    """제안된 변경들이 실제로 위치한 서브회로 정의 경로의 집합(최상위 스코프는
+    담지 않는다 - 최상위는 언제나 초점이므로 호출자가 신경 쓸 필요가 없다).
+
+    check_refdes_resolution/apply_changes와 같은 조회(_find_matches +
+    _line_scopes)를 그대로 써서 판정한다 - refdes 앞의 점만 잘라 스코프로
+    읽으면(문자열 분리) 언스코프 refdes("M6")가 실제로는 비초점 서브회로
+    안에 있어도 그 사실을 알 수 없다. 이미 스코프가 붙은 refdes
+    ("AMP.M6")는 그 서브회로가 실제로 존재하는지만 확인한다.
+
+    이 함수를 부르는 시점에는 보통 check_refdes_resolution이 이미 통과한
+    뒤라(따라서 각 refdes가 유일하게 해석된다) 결과가 스코프 하나뿐이지만,
+    방어적으로 여러 매치가 와도 전부의 스코프를 모아 돌려준다 - 판단은
+    호출자의 몫이다."""
+    parsed = parse_netlist(text)
+    lines = text.splitlines()
+    scopes = _line_scopes(lines)
+
+    resolved: set[str] = set()
+    for change in changes:
+        scope, refdes = split_scoped_refdes(change["refdes"])
+        if scope is not None:
+            if scope in parsed.subckts:
+                resolved.add(scope)
+            continue
+        for indices, _tokens in _find_matches(lines, scopes, None, refdes):
+            line_scope = scopes[indices[0]]
+            if line_scope is not None:
+                resolved.add(line_scope)
+    return resolved
+
+
 def _rewrite_line(lines: list[str], index: int, mutate) -> bool:
     """물리 줄 하나를 토큰 단위로 고쳐 쓴다. mutate(tokens)가 False를 돌려주면
     그 줄에는 대상이 없다는 뜻이므로 아무것도 바꾸지 않는다.

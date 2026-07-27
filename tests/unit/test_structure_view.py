@@ -149,4 +149,14 @@ def test_the_netlist_view_never_truncates_a_continued_subckt_header():
 def test_a_proposal_outside_focus_is_reported_so_a_wrong_focus_leaves_evidence():
     changes = [{"refdes": "SPARE.M9", "param": "W"}, {"refdes": "DRIVER.M1", "param": "W"}]
 
-    assert focus_misses({"DRIVER"}, changes) == ["SPARE.M9"]
+    assert focus_misses({"DRIVER"}, changes, CHAIN) == ["SPARE.M9"]
+
+
+def test_focus_misses_resolves_an_unqualified_refdes_via_the_netlist_not_the_dotted_prefix():
+    # M9 has no scope prefix at all, but it only exists inside SPARE. The old
+    # implementation split the dotted prefix off the refdes string itself, so
+    # an unqualified refdes could never be detected as living in an
+    # out-of-focus subckt - the very case this function exists to catch.
+    changes = [{"refdes": "M9", "param": "W"}]
+
+    assert focus_misses({"DRIVER"}, changes, CHAIN) == ["M9"]

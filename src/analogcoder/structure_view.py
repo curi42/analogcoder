@@ -7,7 +7,7 @@
 원칙 - 모든 `.subckt` 헤더는 남기되 초점 밖 블록은 본문만 접는다. 초점이
 틀려도 대가는 "관련성 저하"이지 "정답이 안 보임"이 아니다."""
 
-from analogcoder.netlist import logical_lines, split_tokens
+from analogcoder.netlist import logical_lines, resolve_change_scopes, split_tokens
 from analogcoder.signal_path import SignalPaths
 from analogcoder.structure import NetlistStructure
 
@@ -261,14 +261,18 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
     return "\n".join(out)
 
 
-def focus_misses(focus: set[str], changes: list[dict]) -> list[str]:
+def focus_misses(focus: set[str], changes: list[dict], netlist_text: str) -> list[str]:
     """초점 밖 블록을 지목한 제안의 refdes 목록. 그런 일이 일어났다는 것은
     초점 규칙이 원인 블록을 놓쳤다는 증거이므로 기록해 둔다 - 제안 자체는
-    이 함수와 무관하게 정상 적용된다."""
+    이 함수와 무관하게 정상 적용된다.
+
+    실제 위치는 netlist.resolve_change_scopes로 판정한다 - refdes 앞의 점만
+    잘라 스코프로 읽던 이전 구현은 언스코프 refdes("M6")가 비초점 서브회로
+    안에 있어도 놓쳤다(dotted 형태만 잡혔다). netlist_text가 필요한 이유가
+    그것이다: 문자열만 봐서는 "M6"이 어느 서브회로 소속인지 알 수 없다."""
     misses = []
     for change in changes:
-        refdes = change["refdes"]
-        scope = refdes.rpartition(".")[0]
-        if scope and scope not in focus:
-            misses.append(refdes)
+        scopes = resolve_change_scopes(netlist_text, [change])
+        if any(scope not in focus for scope in scopes):
+            misses.append(change["refdes"])
     return misses
