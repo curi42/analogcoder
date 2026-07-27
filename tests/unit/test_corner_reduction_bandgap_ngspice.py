@@ -163,33 +163,22 @@ async def test_the_judge_sees_a_worse_value_than_nominal_alone(entry_sweep, tmp_
     # 판정에 실제로 쓰이는 것은 씨앗 최악값이지 nominal이 아니다.
     assert nominal["corner_worst"]["quiescent_current"]["process"] == "(deck)"
 
-    # **양면 창(window)은 measurements 하나에 담기지 않는다 - 이 실행이 실제로
-    # 드러낸 사실이다.** vbgout_v에는 기준이 둘 붙어 있다(vbgout_min ">=",
-    # vbgout_max "<="). worst_case_measurements는 기준별로
-    # measurements[criterion.measurement]에 쓰므로 **뒤에 오는 기준이 이긴다** -
-    # 여기서는 vbgout_max의 최댓값(ss/1.62의 1.24512)이 남고, vbgout_min이
-    # 봐야 할 최솟값(ff/1.98의 1.233753)은 사라진다. 그래서 이 값은 덱 그대로의
-    # 1.238874보다 **크다**. 즉 중간 루프의 판정자는 양면 창의 한쪽만 본다.
+    # **양면 창(window)은 measurements 하나에 담기지 않는다 - 그래서 그 하나를
+    # 어떻게 고를지가 규칙이 되어야 했다.** vbgout_v에는 기준이 둘 붙어 있다
+    # (vbgout_min ">=", vbgout_max "<="). 판정자 계약은 측정값 이름당 float
+    # 하나이므로 두 최악값을 동시에 실을 수 없고, worst_case_measurements는
+    # **이름을 공유하는 기준 중 자기 최악값이 위배된 것**의 값을 싣는다. 전부
+    # 통과하면 마지막 기준의 값이 남는다.
     #
-    # 이것은 코너 축소가 아니라 **판정자 계약**의 문제다(judge는 측정값 이름으로
-    # 키가 잡힌 dict 하나를 받는다). run_full_pvt_sweep은 같은 함정을 기준
-    # 하나씩 따로 평가해서 피한다.
+    # 이 덱에서는 양쪽 다 통과한다(최솟값 1.233753 >= 1.20, 최댓값 1.24512
+    # <= 1.28). 그래서 여기 남는 것은 폴백 갈래, 즉 나중에 선언된 vbgout_max의
+    # 최댓값(ss/1.62의 1.24512)이고, 그 값은 덱 그대로의 1.238874보다 **크다**.
+    # 위배가 없으니 어느 값을 실어도 판정은 같다.
     #
-    # **대가는 반복 하나가 아니라 retry_budget 전체다 - 처음에 축소해서 적었고
-    # 그것이 틀렸다.** vbgout_min이 어딘가에서 위배된다고 하자. 중간 루프는
-    # 집합의 **최댓값**을 받는데 그 값은 `>= 1.20`도 `<= 1.28`도 만족하므로
-    # PASS로 끝난다. 최종 스윕이 실패하고 grown_with가 그 코너를 집합에
-    # 더한 뒤 루프를 다시 돌아도, worst_case_measurements는 **여전히**
-    # 커진 집합의 최댓값으로 vbgout_v를 덮어쓰므로 판정자는 **여전히**
-    # 위배를 볼 수 없다. 즉 **양면 창의 가려진 쪽으로는 루프가 수렴할 수
-    # 없다** - 같은 PASS를 retry_budget만큼 다시 유도해 내고 FAIL한다.
-    # (직접 확인: 위배 코너를 집합에 넣으면 corner_worst의 vbgout_min은
-    # 1.05인데 판정 dict는 1.2451을 들고 PASS를 낸다.)
-    #
-    # 잠긴 제약은 그대로다 - cli.py가 실패한 스윕에서 FAIL로 끊으므로
-    # **판정 자체는 틀리지 않는다**. 다만 "잡힌다"가 뜻하는 것은 실행이
-    # 올바르게 끝난다는 것뿐이고, 들인 일이 유계라는 뜻은 아니다.
-    # 조용히 두지 않기 위해 여기서 못박는다.
+    # 위배가 **있을** 때 위배된 쪽이 슬롯을 가져간다는 것 - 즉 가려진 반쪽으로도
+    # 루프가 수렴할 수 있다는 것 - 은 tests/unit/test_pvt.py의
+    # test_a_violated_side_of_a_two_sided_window_wins_the_shared_measurement_slot이
+    # 못박는다. 여기서 못박는 것은 그 규칙의 **폴백 갈래**다.
     assert worst["measurements"]["vbgout_v"] > nominal["measurements"]["vbgout_v"]
     assert worst["measurements"]["vbgout_v"] == worst["corner_worst"]["vbgout_max"]["value"]
     # 기준별 최악값 자체는 corner_worst에 **양쪽 다** 제대로 들어 있다.

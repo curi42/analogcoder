@@ -89,9 +89,45 @@ def worst_case_measurements(
     handling fails it - a corner that doesn't produce an expected
     measurement (e.g. an AC response that never crosses 0dB) is itself
     evidence the circuit doesn't function there, and must not be silently
-    excluded from the worst-case pool while other corners paper over it."""
+    excluded from the worst-case pool while other corners paper over it.
+
+    **Two criteria can share one measurement name** - a two-sided window
+    (`vbgout_v >= 1.20` and `vbgout_v <= 1.28`) is exactly that, with opposite
+    operators and therefore opposite worst cases. The returned dict is one
+    float per measurement name (the judge's contract, and evaluate_criteria's,
+    guard_band_violations', optimizer._search's), so the two worst cases cannot
+    both be carried and the slot has to be **resolved**, not overwritten. The
+    rule below is: if any criterion sharing the name is violated by its own
+    worst case, the slot carries that value; otherwise it carries the
+    last-declared criterion's value, which is what this function always did and
+    which no verdict depends on when nothing is violated.
+
+    Two properties make this safe, and both are load-bearing:
+
+    - **Nothing is fabricated.** Every candidate is a real measurement taken at
+      a real corner of the passed-in list. The slot never holds a synthesised
+      or interpolated number.
+    - **It can only surface a violation, never invent one.** Every candidate
+      lies in [min, max] over the corner list, and a threshold comparison is
+      monotone: if a "<=" criterion's own worst case (the max) passes, every
+      other candidate - all <= that max - passes it too, and symmetrically for
+      ">=" against the min. So substituting another criterion's worst case can
+      never flip a genuinely-passing criterion to failing. It can only reveal
+      the violation the shared slot was hiding.
+
+    That is what keeps the reduced-corner-set claim intact in the direction it
+    is claimed: a mid-loop FAIL is genuine (some real corner in the selected
+    set really violates that criterion), while a mid-loop PASS is still merely
+    optimistic (a corner outside the selected set may be worse). Before this,
+    a violation on the losing half of a window could not be seen **at all** -
+    growing the set re-derived the same PASS, so the loop could not converge on
+    that half and burned the whole retry_budget."""
     measurements: dict[str, float] = {}
     worst_corners: dict[str, dict] = {}
+    # measurement name -> [(criterion, that criterion's own worst value), ...]
+    # in declaration order, so the fallback below is the same last-writer the
+    # per-criterion assignment used to produce.
+    candidates: dict[str, list[tuple[Criterion, float]]] = {}
     for criterion in criteria:
         values_with_corner = []
         missing_corners = []
@@ -113,8 +149,19 @@ def worst_case_measurements(
             value, corner = min(values_with_corner, key=lambda vc: vc[0])
         else:
             value, corner = max(values_with_corner, key=lambda vc: vc[0])
-        measurements[criterion.measurement] = value
+        candidates.setdefault(criterion.measurement, []).append((criterion, value))
         worst_corners[criterion.name] = {**_corner_fields(corner), "value": value}
+
+    for name, entries in candidates.items():
+        violating = [
+            value
+            for criterion, value in entries
+            if not evaluate_criteria({name: value}, [criterion])["overall_pass"]
+        ]
+        # The single-criterion case (every measurement in every other spec here)
+        # goes through both branches identically: one entry, so the slot holds
+        # that entry's value whether or not it violates.
+        measurements[name] = violating[0] if violating else entries[-1][1]
     return measurements, worst_corners
 
 

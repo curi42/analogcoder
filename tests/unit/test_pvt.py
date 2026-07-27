@@ -212,6 +212,68 @@ def test_two_sided_window_keeps_both_worst_cases_separate():
     assert worst_corners["vbgout_max"]["process"] == "ss"
 
 
+def test_a_violated_side_of_a_two_sided_window_wins_the_shared_measurement_slot():
+    """양면 창의 **위배된 쪽**이 공유 슬롯을 가져간다.
+
+    `measurements`는 측정값 이름당 float 하나라는 판정자 계약을 그대로 지킨다.
+    바뀌는 것은 **어느 값을 싣는가**뿐이다: 이름을 공유하는 기준들 중 자기
+    최악값이 자기 임계값을 위배하는 것이 있으면 그 값을, 전부 통과하면 오늘처럼
+    마지막 기록자의 값을 싣는다.
+
+    **어떤 변형을 잡는가.** 충돌 해소를 지우고 `measurements[name] = value`를
+    기준마다 그대로 쓰는 변형(즉 이 분기 이전의 코드)을 잡는다. 그러면 나중에
+    선언된 `vbgout_max`의 최댓값 1.24가 실리고, 그 값은 `>= 1.20`도 `<= 1.28`도
+    만족하므로 중간 루프는 **PASS를 낸다** - 실제로는 ff에서 1.10으로 저쪽
+    창을 뚫었는데도. 그 PASS는 retry_budget을 통째로 태우고도 절대 수렴하지
+    않는다(코너를 더해도 최댓값이 다시 덮어쓴다).
+    """
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=27),
+    ]
+    per_corner_measurements = [{"vbgout_v": 1.24}, {"vbgout_v": 1.10}]
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+
+    measurements, worst_corners = worst_case_measurements(
+        corners, per_corner_measurements, criteria
+    )
+
+    # 실린 값은 지어낸 것이 아니라 선택 집합 안 **실제 코너의 실측값**이다.
+    assert measurements["vbgout_v"] == 1.10
+    assert measurements["vbgout_v"] == worst_corners["vbgout_min"]["value"]
+    # 그리고 그 값으로 판정하면 실제로 뚫린 쪽이 실패로 나온다.
+    from analogcoder.judge_tools import evaluate_criteria
+
+    verdict = evaluate_criteria(measurements, criteria)
+    assert not verdict["overall_pass"]
+    assert {c["name"] for c in verdict["criteria"] if not c["pass"]} == {"vbgout_min"}
+
+
+def test_a_two_sided_window_with_both_sides_passing_keeps_the_last_writer():
+    """양쪽 다 통과하면 오늘의 동작(마지막 기록자) 그대로다.
+
+    위배가 없을 때 값을 바꿀 근거가 없다 - 어느 값을 실어도 판정은 같고,
+    바꾸면 이 동작에 기대는 실측 고정(`test_corner_reduction_bandgap_ngspice`의
+    `vbgout_v == corner_worst["vbgout_max"]["value"]`)만 깨진다.
+    """
+    corners = [
+        CornerPoint(process="tt", voltage=1.8, temperature=27),
+        CornerPoint(process="ff", voltage=1.98, temperature=27),
+    ]
+    per_corner_measurements = [{"vbgout_v": 1.24}, {"vbgout_v": 1.22}]
+    criteria = [
+        Criterion(name="vbgout_min", measurement="vbgout_v", operator=">=", threshold=1.20),
+        Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
+    ]
+
+    measurements, _ = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements["vbgout_v"] == 1.24  # vbgout_max(마지막 기준)의 최댓값
+
+
 def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
     class _StubBackend:
         def __init__(self, values):
@@ -283,6 +345,21 @@ def test_a_missing_measurement_is_the_most_severe_possible():
     # (margin +0.10) and report the corner as comfortably passing, when in
     # fact the circuit produced no "i" value at all here.
     assert corner_severity({"g": 44.0}, [GE, LE]) == -math.inf
+
+
+def test_a_nan_measurement_is_the_most_severe_possible():
+    # ngspice really does hand back NaN (a .meas that found no crossing prints
+    # "failed" and the parser has produced nan for it), so this is not a
+    # hypothetical. Without the isnan guard the arithmetic below runs on NaN,
+    # every comparison against it is False, and `min` **keeps the incumbent**:
+    # with GE evaluated first the severity would come out as iq's +0.04 - a
+    # comfortable-looking corner where the circuit produced no gain at all.
+    # That is exactly the "missing measurement" case one line above, wearing a
+    # float.
+    assert corner_severity({"g": math.nan, "i": 288.0}, [GE, LE]) == -math.inf
+    # ...and in the other order, where a NaN-blind `min` would return NaN and
+    # every downstream `<` comparison against it would silently be False.
+    assert corner_severity({"g": 44.0, "i": math.nan}, [GE, LE]) == -math.inf
 
 
 def test_a_zero_threshold_falls_back_to_an_absolute_margin():

@@ -344,37 +344,47 @@ that number was measured.
   argmax — `vbg1_residual`, `ff/1.98` → **`tt/1.62`, outside the set**. It just
   was not a failing criterion. Re-entry needs an argmax to leave the set *and*
   that criterion to fail.
-- **A two-sided window collapses in the mid-loop judge, and the corner path is
-  what exposed it.** `worst_case_measurements` returns a dict keyed by
-  *measurement* name, so `vbgout_min` (`>=`) and `vbgout_max` (`<=`) — two
-  criteria over one measurement — cannot both be represented, and the later
-  criterion wins. Measured: the mid loop hands the judge `vbgout_v = 1.24512`
-  (the ss/1.62 **maximum**) while the value `vbgout_min` should be judged
-  against is `1.233753` at ff/1.98. `run_full_pvt_sweep` avoids this by
-  evaluating one criterion at a time against its own worst value; the mid loop
-  cannot, because the judge's contract is a single name-keyed dict. This is a
-  *second*, independent source of mid-loop optimism on top of corner reduction.
-- **The collapse costs the whole `retry_budget`, not one iteration, and adding
-  corners cannot fix it.** This was understated on first writing and the
-  correction matters. Trace a low-side violation of `vbgout_min`: the mid loop
-  is handed the **maximum** over the set, which satisfies both `>= 1.20` and
-  `<= 1.28`, so it reports PASS and exits. The final sweep fails, `grown_with`
-  adds the offending corner, and the mid loop re-runs — but
-  `worst_case_measurements` **still** overwrites `vbgout_v` with the max of the
-  now-larger set, so the judge **still** cannot see the violation. Verified
-  directly: with the violating corner in the set, per-criterion worst
-  `vbgout_min` = 1.05 while the judged dict holds 1.2451 and reports PASS. **The
-  loop cannot converge on the blind half of a two-sided window**; it re-derives
-  the same PASS until `retry_budget` is exhausted and then FAILs. The locked
-  constraint still holds — `cli.py` breaks to FAIL on the failing sweep, so the
-  *verdict* is never wrong — but "contained" here means only that the run ends
-  correctly, not that the work was bounded. Which half is blind is decided by
-  order: `worst_case_measurements` writes per criterion and the **later**
-  criterion in the list wins, so in these specs (`_min` declared first) the
-  `_min` side is the blind one. `corner_worst` does carry both sides per
-  criterion, so the data exists if the judge contract is ever changed. Pinned
-  rather than left silent in
-  `test_the_judge_sees_a_worse_value_than_nominal_alone`.
+- **A two-sided window shares one judge slot, so the slot is resolved rather
+  than overwritten — and the corner path is what exposed it.**
+  `worst_case_measurements` returns a dict keyed by *measurement* name, so
+  `vbgout_min` (`>=`) and `vbgout_max` (`<=`) — two criteria over one
+  measurement — cannot both be represented. It used to write per criterion, so
+  the later-declared one simply won: the mid loop handed the judge
+  `vbgout_v = 1.24512` (the ss/1.62 **maximum**) while the value `vbgout_min`
+  should be judged against was 1.233753 at ff/1.98. That is the **third** time
+  this file records `pvt.py` losing one side of a two-sided window.
+  The cost was not one iteration but the whole `retry_budget`: a low-side
+  violation left the judge holding the maximum, which satisfies both `>= 1.20`
+  and `<= 1.28`, so the mid loop reported PASS; the verdict sweep failed,
+  `grown_with` added the offending corner, and the enlarged set's **maximum**
+  overwrote the slot again — the loop **cannot converge on the blind half of a
+  two-sided window**, it re-derives the same PASS until the budget is gone.
+- **The fix keeps the judge's contract and does not fabricate a value.** The
+  dict is still exactly one float per measurement name — `judge`,
+  `evaluate_criteria`, `guard_band_violations`, `optimizer._search` and
+  `run_full_pvt_sweep` are all untouched (the last one reads
+  `combined_worst_corners`, not `measurements`, and evaluates one criterion at
+  a time against its own worst value; that is where the trap was already
+  solved 70 lines away). Candidates are accumulated per measurement name and
+  the collision is resolved by **preferring a value that violates one of the
+  criteria sharing that name**, falling back to the old last-writer when they
+  all pass. Every candidate is a real measurement at a real corner of the
+  selected set, so nothing is synthesised, and because every candidate lies in
+  `[min, max]` while a threshold comparison is monotone, substituting one
+  criterion's worst case for another's **can only reveal a violation, never
+  invent one**: if a `<=` criterion's own max passes, every candidate below it
+  passes too, and symmetrically for `>=` against the min. So this branch's
+  claim 2 still holds in the direction it is claimed — a mid-loop FAIL is
+  genuine, a mid-loop PASS is still merely optimistic — and the loop can now
+  converge on the previously blind half. The corner-less single-criterion case
+  (every other spec here) takes the same code path with one entry and is
+  unchanged. Pinned in
+  `test_a_violated_side_of_a_two_sided_window_wins_the_shared_measurement_slot`
+  (violating side wins) and
+  `test_a_two_sided_window_with_both_sides_passing_keeps_the_last_writer`
+  (fallback), with the measured bandgap case — where *both* sides pass, so the
+  fallback is what runs — in `test_corner_reduction_bandgap_ngspice.py`.
+  `corner_worst` still carries both sides per criterion either way.
 - **Best-arm identification was considered and rejected.** Pure-exploration
   bandits (successive halving, LUCB, racing) exist to spend a sampling budget
   well when each evaluation is *noisy* — their entire gain structure comes from
