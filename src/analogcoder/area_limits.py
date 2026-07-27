@@ -206,9 +206,12 @@ def _tier_baseline_value(component: Component) -> float | None:
     A generic (non-X) transistor is still tiered on W; every other generic
     component on its own value, which is already an absolute quantity.
 
-    트랜지스터는 폭이 아니라 **총 폭**(w x m)으로 티어를 고른다. m은 병렬
-    소자의 개수라 면적이 그만큼 곱해지므로, w만 보면 m=4인 소자가 실제
-    크기의 1/4로 티어링되어 가장 느슨한 티어를 받는다."""
+    소자는 폭이 아니라 **총 폭**(w x m)으로 티어를 고른다. m은 병렬 소자의
+    개수라 면적이 그만큼 곱해지므로, w만 보면 m=4인 소자가 실제 크기의 1/4로
+    티어링되어 가장 느슨한 티어를 받는다. 이것은 MOS만의 사실이 아니다 -
+    m=4인 MiM 캡도 면적이 똑같이 네 배이므로 같은 규칙을 받는다. 예전에는
+    ctype "M"에만 곱해져서 그 비대칭이 캡/저항을 한 티어 느슨하게 만들었다.
+    Q만 예외인데, 그쪽은 m 자체가 티어 키(에미터 면적비)라 곱하면 이중이다."""
     ctype = _classify_ctype(component)
     if component.ctype == "X":
         param = _SKY130_GEOMETRY_PARAM.get(ctype)
@@ -221,11 +224,13 @@ def _tier_baseline_value(component: Component) -> float | None:
             # m is an emitter-area count, not a length - it must not be
             # scaled, and it is already the tier key itself.
             return raw
-        return raw * component.geometry_scale * (_multiplicity(component) if ctype == "M" else 1.0)
+        return raw * component.geometry_scale * _multiplicity(component)
     if ctype == "M":
         w = _resolved_token(component, "w")
         return w * component.geometry_scale * _multiplicity(component) if w is not None else None
-    return component.resolved_value
+    if component.resolved_value is None:
+        return None
+    return component.resolved_value * _multiplicity(component)
 
 
 @dataclass(frozen=True)
@@ -269,19 +274,43 @@ def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
     """인스턴스 줄의 파라미터가 도달한 소자들에 대한 판정 재료.
 
     티어는 파라미터 이름이 아니라 **도달한 토큰**으로 정해진다. 이름은
-    설계자의 규칙이라 추측이 되지만 토큰은 SPICE 문법이라 사실이다."""
+    설계자의 규칙이라 추측이 되지만 토큰은 SPICE 문법이라 사실이다.
+
+    키에 chain(거쳐 온 중간 인스턴스 refdes들)이 들어가는 것이 핵심이다.
+    한 정의를 형제로 두 번 인스턴스화하면 두 도달점의 device는 **같은 정의
+    컴포넌트 객체**라, chain이 없으면 물리적으로 다른 두 소자가 한 그룹으로
+    묶여 한 변경의 성장 비율이 제곱된다 (2.5x가 6.25x로 보고됐다). 티어는
+    총 면적 예산이 아니라 **소자 하나의 성장 비율** 한도이므로, 같은 비율이
+    두 소자에 각각 일어나도 소자당 비율은 그대로다."""
     targets: list[_Target] = []
     for traced_target in traced:
         device = traced_target.device
         token = traced_target.token.lower()
-        key = (refdes, device.scope, device.refdes)
+        key = (refdes, traced_target.chain, device.scope, device.refdes)
         where = f"{device.scope}.{device.refdes}" if device.scope else device.refdes
-        label = f"{refdes} -> {where}"
+        label = " -> ".join([refdes, *traced_target.chain, where])
         if token in _NEUTRAL_TOKENS:
             targets.append(_Target(key, label, allowed=None, counts=False, neutral=True))
             continue
         if token in _COUNT_TOKENS:
             targets.append(_Target(key, label, allowed=COUNT_ALLOWED_MULTIPLIER, counts=True))
+            continue
+        if token == "value":
+            # R/C의 크기 노브는 위치 인자 값이다 - 벌거벗은 소자를 직접
+            # 주소지정했을 때와 같은 티어 표를 써야, 감쌌다는 이유만으로
+            # 같은 성장이 정반대 판정을 받지 않는다.
+            if traced_target.positional_value is None:
+                continue
+            targets.append(
+                _Target(
+                    key,
+                    label,
+                    allowed=allowed_multiplier_for(
+                        _classify_ctype(device), traced_target.positional_value
+                    ),
+                    counts=True,
+                )
+            )
             continue
         if token in _GEOMETRY_TOKENS:
             if traced_target.total_width is None:
@@ -322,24 +351,73 @@ def _integrality_violation(refdes: str, param: str, tokens: set[str], new_value:
     )
 
 
+def _visibility(component: Component | None, targets: list[_Target], ratio_known: bool) -> str:
+    """이 변경에 대해 게이트가 **무엇을 볼 수 있었는가**. 판정(승인/거부)이
+    아니라 시야를 기록한다.
+
+    세 가지 "막지 않음"은 서로 다른 사실인데 예전에는 로그에서 구별되지
+    않았다 - 그래서 게이트가 통째로 무력해진 것을 두 번이나 실행 로그에서
+    알아채지 못했다 (`.option scale` 미반영, MiM 캡 단위 불일치):
+
+    - bounded : 티어가 잡혔다. 진짜로 판정한 경우.
+    - neutral : 볼 것이 없다. nf(손가락 개수)는 구조적으로 면적 중립이다.
+    - blind   : 볼 수 없다. 이 덱이 정의하지 않는 서브회로를 인스턴스화한
+                소자라 (래퍼 셀 라이브러리는 보통 `.include`로 온다) 추적이
+                원리적으로 불가능하다.
+    - unjudged: 볼 수는 있었는데 숫자를 확정하지 못했다 (해소 불가 베이스라인,
+                크기가 아닌 토큰, 베이스라인에 없는 refdes).
+    """
+    if component is None:
+        return "unjudged"
+    if any(t.counts and t.allowed is not None for t in targets) and ratio_known:
+        return "bounded"
+    if targets and all(t.neutral for t in targets):
+        return "neutral"
+    if component.undefined_subckt and _classify_ctype(component) == "X":
+        return "blind"
+    return "unjudged"
+
+
+@dataclass(frozen=True)
+class AreaCheckResult:
+    approved: bool
+    feedback: str | None
+    # "<refdes>.<param>" -> _visibility()의 상태. 같은 키가 두 번 제안되면
+    # 나중 것이 이긴다 (로그용 요약이지 판정 근거가 아니다).
+    states: dict[str, str]
+
+
 def check_area_growth(
     baseline_components: dict[str, Component], proposed_changes: list[dict]
 ) -> tuple[bool, str | None]:
+    """evaluate_area_growth의 (승인, 피드백)만 필요한 호출자를 위한 얇은 껍질."""
+    result = evaluate_area_growth(baseline_components, proposed_changes)
+    return result.approved, result.feedback
+
+
+def evaluate_area_growth(
+    baseline_components: dict[str, Component], proposed_changes: list[dict]
+) -> AreaCheckResult:
     """제안된 변경들이 소자를 얼마나 키우는지를 소자별로 판정한다.
 
     변경 하나씩이 아니라 **도달하는 물리 소자별로 묶어 곱**을 본다. 총 폭이
     w x m이므로, 한 제안 안에서 w를 3x(단독 허용) 키우고 m을 2x(단독 허용)
     키우면 총 폭은 6x가 되는데 각각을 따로 보면 아무도 보지 못한다.
-    허용 배수는 그 묶음에 관여한 파라미터들의 티어 중 **가장 빡빡한 것**이다."""
+    허용 배수는 그 묶음에 관여한 파라미터들의 티어 중 **가장 빡빡한 것**이다.
+
+    승인/피드백과 함께 변경별 **시야 상태**를 돌려준다 - _visibility 참고."""
     violations: list[str] = []
     groups: dict[tuple, _Group] = {}
+    states: dict[str, str] = {}
 
     for change in proposed_changes:
         refdes = change["refdes"]
+        param = change["param"]
+        state_key = f"{refdes}.{param}"
         component = baseline_components.get(refdes)
         if component is None:
+            states[state_key] = _visibility(None, [], False)
             continue
-        param = change["param"]
 
         traced = component.traced_params.get(param)
         if traced:
@@ -354,11 +432,6 @@ def check_area_growth(
             targets = [_direct_target(refdes, component, param)]
             tokens = {param.lower()}
 
-        integrality = _integrality_violation(refdes, param, tokens, change["new_value"])
-        if integrality is not None:
-            violations.append(integrality)
-            continue
-
         baseline_value = _baseline_value_for(component, param)
         # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사
         # 붙은 숫자 리터럴로만 제한하기 때문이다 (식별자·연산자 불가).
@@ -369,6 +442,15 @@ def check_area_growth(
         ratio = None
         if baseline_value is not None and baseline_value > 0 and new_value is not None:
             ratio = new_value / baseline_value
+
+        states[state_key] = _visibility(component, targets, ratio is not None)
+
+        # 정수 조건은 면적과 무관한 별도 위반이지만, 시야 상태는 그 앞에서
+        # 이미 확정해 둔다 - 상태는 판정이 아니라 "무엇을 볼 수 있었는가"다.
+        integrality = _integrality_violation(refdes, param, tokens, change["new_value"])
+        if integrality is not None:
+            violations.append(integrality)
+            continue
 
         for target in targets:
             group = groups.setdefault(target.key, _Group(label=target.label))
@@ -396,5 +478,5 @@ def check_area_growth(
         )
 
     if violations:
-        return False, "; ".join(violations)
-    return True, None
+        return AreaCheckResult(False, "; ".join(violations), states)
+    return AreaCheckResult(True, None, states)

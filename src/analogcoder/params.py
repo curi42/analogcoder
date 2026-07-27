@@ -354,18 +354,61 @@ def _instance_env(
     인스턴스가 준 값은 바깥 스코프의 표현식일 수 있으므로 outer_env에서 먼저
     해소한다. 바깥에서 확정하지 못한 오버라이드는 기본값으로 되돌아가지 않고
     가린다 - 인스턴스가 실제로 쓰는 값과 다른 숫자를 내주는 것이 모른다고
-    말하는 것보다 나쁘다는, 이 모듈에서 반복된 원칙이다."""
+    말하는 것보다 나쁘다는, 이 모듈에서 반복된 원칙이다.
+
+    본문 .param과 .subckt 줄 기본값이 같은 이름을 선언하면 어느 쪽이 이기는지가
+    방언마다 다르므로 그 이름은 해소하지 않는다 - build_param_envs와 **같은
+    규칙, 같은 이유**다. 여기가 정의 단위 해소기와 갈라져야 하는 지점은
+    "인스턴스마다 값이 갈리는 것이 정상"이라는 점 하나뿐이고, 방언 모호성은
+    인스턴스를 하나로 좁혀도 그대로 남는다. 예전에는 이 섀도잉이 빠져 있어
+    한 덱에 대해 두 해소기가 서로 다른 답을 내놓았고, 면적 게이트는 그중
+    추측한 쪽(.subckt 줄 기본값)으로 티어를 골랐다."""
     subckt = parsed.subckts[subckt_path]
-    raw = {**raw_by_scope.get(subckt_path, {}), **subckt.defaults}
-    shadowed: set[str] = set()
+    body = raw_by_scope.get(subckt_path, {})
+    raw = {**body, **subckt.defaults}
+    shadowed: set[str] = set(body) & set(subckt.defaults)
     for name, raw_value in overrides.items():
         value = resolve_value(raw_value, outer_env)
         if value is None:
             shadowed.add(name)
             raw.pop(name, None)
             continue
+        # 명시적 오버라이드가 가장 높은 우선순위라는 규칙은 방언 충돌보다
+        # 위다 - 인스턴스가 값을 못박았으면 더 이상 경합이 아니다
+        # (build_param_envs의 `shadowed -= set(agreed)`와 같은 판단).
+        shadowed.discard(name)
         raw[name] = repr(value)
+    for name in shadowed:
+        raw.pop(name, None)
     return _resolve_environment(raw, global_env, frozenset(shadowed))
+
+
+_BARE_IDENT_RE = re.compile(r"[A-Za-z_]\w*\Z")
+
+
+def _positional_target(device: Component, param: str, env: dict[str, float], chain: tuple[str, ...]) -> TracedTarget | None:
+    """`R1 a b rv`처럼 **위치 인자**가 크기 노브인 소자에 param이 도달했는가.
+
+    R/C의 크기 노브는 name=value 토큰이 아니라 위치 인자 값이다 - 그래서
+    RESISTOR_TIERS/CAPACITOR_TIERS가 그 값으로 티어를 고른다. device.params만
+    들여다보면 래퍼 안에 감싼 저항은 영원히 추적되지 않아, 똑같은 성장이
+    감싸는지 여부에 따라 정반대 판정을 받았다.
+
+    맨 식별자 하나일 때만 인정한다. `{rv*2}` 같은 표현식까지 받으면 인스턴스
+    파라미터의 비율이 소자 값의 비율과 같다는 보장이 없어지는데, 그것을
+    가정하는 것은 이 모듈이 금지한 추측이다. X 줄은 제외한다 - 그 위치 인자는
+    값이 아니라 서브회로 이름이다."""
+    if device.ctype == "X" or device.value is None:
+        return None
+    if _BARE_IDENT_RE.match(device.value.strip()) is None or device.value.strip() != param:
+        return None
+    value = resolve_value(device.value, env)
+    if value is not None:
+        m = _token_value(device, "m", env)
+        value *= 1.0 if m is None else m
+    return TracedTarget(
+        device=device, token="value", total_width=None, positional_value=value, chain=chain
+    )
 
 
 def _trace(
@@ -376,16 +419,24 @@ def _trace(
     env: dict[str, float],
     param: str,
     depth: int,
+    chain: tuple[str, ...] = (),
 ) -> list[TracedTarget] | None:
     """subckt_path 본문에서 param이 도달하는 소자/토큰들. 판단 불가면 None.
 
     본문 소자가 다시 (덱 안에 정의된) 서브회로 인스턴스이면 그 안으로
     따라 들어간다. 덱이 정의하지 않은 서브회로 - sky130 PDK 프리미티브가
-    그렇다, parse_netlist는 include를 따라가지 않는다 - 는 잎으로 본다."""
+    그렇다, parse_netlist는 include를 따라가지 않는다 - 는 잎으로 본다.
+
+    chain은 여기까지 거쳐 온 중간 인스턴스 refdes들이다. 같은 정의를 형제로
+    두 번 인스턴스화하면 두 경로가 같은 Component 객체를 돌려주므로, 물리
+    소자를 구분하는 정보는 chain뿐이다 (TracedTarget 주석 참고)."""
     if depth >= _MAX_TRACE_DEPTH:
         return None
     targets: list[TracedTarget] = []
     for device in parsed.subckts[subckt_path].components:
+        positional = _positional_target(device, param, env, chain)
+        if positional is not None:
+            targets.append(positional)
         for token, raw_value in device.params.items():
             if param not in free_names(raw_value):
                 continue
@@ -396,14 +447,26 @@ def _trace(
             )
             if nested is None:
                 targets.append(
-                    TracedTarget(device=device, token=token, total_width=_total_width(device, env))
+                    TracedTarget(
+                        device=device,
+                        token=token,
+                        total_width=_total_width(device, env),
+                        chain=chain,
+                    )
                 )
                 continue
             inner_env = _instance_env(
                 parsed, raw_by_scope, global_env, nested, device.params, env
             )
             deeper = _trace(
-                parsed, raw_by_scope, global_env, nested, inner_env, token, depth + 1
+                parsed,
+                raw_by_scope,
+                global_env,
+                nested,
+                inner_env,
+                token,
+                depth + 1,
+                (*chain, device.refdes),
             )
             if deeper is None:
                 # 중간에서 끊긴 추적이다. 일부만 들고 판정하면 나머지 경로가
@@ -423,10 +486,17 @@ def annotate_traced_params(
     raw_by_scope = _collect_raw_params(text)
     global_env = envs[None]
     for component in _all_components(parsed):
-        if component.ctype != "X" or component.value is None or not component.params:
+        if component.ctype != "X" or component.value is None:
             continue
         path = _resolve_subckt_reference(parsed, component.scope, component.value)
         if path is None:
+            # 정의가 이 덱 안에 없다 - 거의 항상 `.include`로만 들어온 래퍼
+            # 셀 라이브러리다. 추적이 원리적으로 불가능하다는 **사실**을
+            # 남긴다: 하류가 이것을 "제약 없음"과 구별하지 못하면 게이트가
+            # 조용히 무력해진다 (이 저장소에서 이미 두 번 일어난 일이다).
+            component.undefined_subckt = True
+            continue
+        if not component.params:
             continue
         outer_env = envs.get(component.scope, global_env)
         env = _instance_env(

@@ -4,6 +4,12 @@ import pytest
 
 from analogcoder.netlist import parse_netlist
 from analogcoder.params import build_param_envs, resolve_value
+from tests.unit.wrapper_decks import (
+    CONTESTED_NAME_DECK,
+    POSITIONAL_VALUE_DECK,
+    SIBLING_INSTANCE_DECK,
+    WRAPPER_DECK,
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "hspice_flavoured.cir"
@@ -204,20 +210,8 @@ def test_a_disagreeing_override_does_not_fall_back_to_a_global_of_the_same_name(
 
 
 # --- 인스턴스 파라미터 추적 ------------------------------------------------
-# 래퍼 셀 덱의 모양만 옮긴 합성 픽스처다 (실물은 사용자 IP라 들어오지
-# 않는다). 두-트랜지스터 셀이 기하를 파라미터로 선언하고, 실제 숫자는
-# 인스턴스 줄에서 온다. 같은 정의를 서로 다른 값으로 두 번 인스턴스화하는
-# 것이 이 설계 스타일의 정상 케이스다.
-WRAPPER_DECK = (
-    "* synthetic wrapper-cell deck (shape only)\n"
-    ".subckt WRAP_PAIR_TN33 b1 b2 d1 d2 g1 g2 s1 s2\n"
-    "ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n geomod=geomod\n"
-    "mb1 d2 g2 s2 b2 TN33_LVT w=wn l=ln m=mb1 nf=nf_n geomod=geomod\n"
-    ".ends WRAP_PAIR_TN33\n"
-    "xin1 vss vss dl dr gl gr com com WRAP_PAIR_TN33 wn=2e-6 ln=3e-6 ma1=4 mb1=4 nf_n=1 geomod=1\n"
-    "xin2 vss vss d2l d2r g2l g2r com2 com2 WRAP_PAIR_TN33 wn=20e-6 ln=3e-6 ma1=2 mb1=2 nf_n=1 geomod=1\n"
-    ".end\n"
-)
+# 픽스처는 tests/unit/wrapper_decks.py에 모여 있다 - test_area_limits.py가
+# 같은 덱으로 게이트 판정을 확인하므로 두 파일이 같은 문자열을 봐야 한다.
 
 
 def _traced(deck, refdes):
@@ -330,3 +324,63 @@ def test_a_param_that_reaches_no_body_token_is_not_traced():
     xc1 = _traced(deck, "xc1")
 
     assert "rval" not in xc1.traced_params
+
+
+def test_trace_distinguishes_two_sibling_instances_of_one_definition():
+    # C1. 한 래퍼가 같은 단위 셀을 두 번 인스턴스화하면 하나의 파라미터가
+    # **물리적으로 다른 두 소자**에 도달한다. 그런데 두 경로가 돌려주는
+    # device는 같은 정의 컴포넌트 객체 하나뿐이라, 경로를 구분하는 것은
+    # 중간 인스턴스 refdes(chain)뿐이다. 이것이 없으면 하류(면적 게이트)가
+    # 두 도달점을 같은 소자로 묶어 한 변경의 비율을 제곱한다.
+    xtop = _traced(SIBLING_INSTANCE_DECK, "xtop")
+
+    targets = xtop.traced_params["wtop"]
+    assert [(t.chain, t.device.scope, t.device.refdes, t.token) for t in targets] == [
+        (("xl1",), "LEAF", "ma1", "w"),
+        (("xl2",), "LEAF", "ma1", "w"),
+    ]
+
+
+def test_trace_records_an_empty_chain_for_a_direct_body_device():
+    xin1 = _traced(WRAPPER_DECK, "xin1")
+
+    assert [t.chain for t in xin1.traced_params["wn"]] == [(), ()]
+
+
+def test_trace_follows_a_positional_value_that_is_a_bare_identifier():
+    # I2. R/C의 크기 노브는 name=value 토큰이 아니라 위치 인자 값이다.
+    # params만 들여다보면 래퍼로 감싼 저항의 크기 노브는 영원히 추적되지
+    # 않는다.
+    xr1 = _traced(POSITIONAL_VALUE_DECK, "xr1")
+
+    targets = xr1.traced_params["rv"]
+    assert [(t.device.refdes, t.token) for t in targets] == [("R1", "value")]
+    assert targets[0].positional_value == pytest.approx(1e3)
+
+
+def test_a_positional_value_that_is_a_literal_is_not_traced():
+    # 값이 리터럴이면 어떤 파라미터도 거기 도달하지 않는다 - 추적이 아니라
+    # 추측이 될 자리가 없다는 것을 못박는다.
+    deck = (
+        "* literal positional\n"
+        ".subckt RCELL a b\n"
+        "R1 a b 1k\n"
+        ".ends RCELL\n"
+        "xr1 p q RCELL rv=1k\n"
+        ".end\n"
+    )
+
+    xr1 = _traced(deck, "xr1")
+
+    assert "rv" not in xr1.traced_params
+
+
+def test_instance_env_drops_a_name_the_body_and_the_subckt_line_contest():
+    # I3. build_param_envs는 이 이름을 (정당하게) 버린다. 인스턴스 단위
+    # 해소기가 같은 덱에 대해 다른 답을 내면 게이트는 추측된 숫자로
+    # 티어를 고르게 된다.
+    assert "wn" not in build_param_envs(CONTESTED_NAME_DECK)["CELL"]
+
+    xc1 = _traced(CONTESTED_NAME_DECK, "xc1")
+
+    assert xc1.traced_params["ln"][0].total_width is None
