@@ -121,7 +121,9 @@ async def run_orchestration(
                 for entry in tuning_history
                 for change in entry["proposal"]["proposed_changes"]
             }
-            focus = select_focus(structure, paths, failing_nets, touched_refdes)
+            focus = select_focus(
+                structure, paths, failing_nets, touched_refdes, netlist_texts[canonical_name]
+            )
             structure_view = render_structure(structure, paths, find_patterns(structure), focus)
             netlist_view = render_netlist(netlist_texts[canonical_name], focus)
             state.log_event(

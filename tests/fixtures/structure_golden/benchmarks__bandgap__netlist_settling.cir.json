@@ -2721,30 +2721,58 @@
   "mismatches": [],
   "net_blocks": {
     "ampout": {
-      "BGR_CORE": "drive",
-      "ERRAMP": "drive"
+      "BGR_CORE": [
+        "drive",
+        "sense"
+      ],
+      "ERRAMP": [
+        "drive"
+      ]
     },
     "vbg0": {
-      "BUF_P": "drive"
+      "BUF_P": [
+        "drive",
+        "sense"
+      ]
     },
     "vbg1": {
-      "BUF_N": "drive"
+      "BUF_N": [
+        "drive",
+        "sense"
+      ]
     },
     "vbgout": {
-      "BGR_CORE": "drive",
-      "TRIMAMP": "sense"
+      "BGR_CORE": [
+        "drive",
+        "sense"
+      ],
+      "TRIMAMP": [
+        "sense"
+      ]
     },
     "vfb": {
-      "BANDGAP": "drive",
-      "TRIMAMP": "sense"
+      "BANDGAP": [
+        "drive"
+      ],
+      "TRIMAMP": [
+        "sense"
+      ]
     },
     "vss": {
-      "BANDGAP": "drive",
-      "BGR_CORE": "sense"
+      "BANDGAP": [
+        "drive"
+      ],
+      "BGR_CORE": [
+        "sense"
+      ]
     },
     "vtop": {
-      "BANDGAP": "drive",
-      "TRIMAMP": "drive"
+      "BANDGAP": [
+        "drive"
+      ],
+      "TRIMAMP": [
+        "drive"
+      ]
     }
   },
   "patterns": [
@@ -2924,6 +2952,13 @@
         "TRIMAMP.X2"
       ]
     ]
+  ],
+  "supply_nets": [
+    "0",
+    "vbg0",
+    "vbg1",
+    "vdd",
+    "vss"
   ],
   "tunable": [
     [

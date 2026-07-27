@@ -507,20 +507,33 @@
   "mismatches": [],
   "net_blocks": {
     "0": {
-      "Cload": "drive"
+      "Cload": [
+        "drive"
+      ]
     },
     "vdd": {
-      "OPAMP2STAGE": "drive"
+      "OPAMP2STAGE": [
+        "drive"
+      ]
     },
     "vinp": {
-      "OPAMP2STAGE": "sense"
+      "OPAMP2STAGE": [
+        "sense"
+      ]
     },
     "vout": {
-      "Cload": "drive",
-      "OPAMP2STAGE": "drive"
+      "Cload": [
+        "drive"
+      ],
+      "OPAMP2STAGE": [
+        "drive",
+        "sense"
+      ]
     },
     "vss": {
-      "OPAMP2STAGE": "drive"
+      "OPAMP2STAGE": [
+        "drive"
+      ]
     }
   },
   "patterns": [
@@ -572,6 +585,12 @@
         "OPAMP2STAGE.Xcc"
       ]
     ]
+  ],
+  "supply_nets": [
+    "0",
+    "vdd",
+    "vinp",
+    "vss"
   ],
   "tunable": [
     [

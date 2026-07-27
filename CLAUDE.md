@@ -78,7 +78,18 @@ against a fixed schema (`schemas.py`).
   flat per-scope facts (inventory, device classes, the tunable
   `(refdes, param)` index); `signal_path.py` maps
   ports to nets across hierarchy and labels each net's drivers and sensors
-  by *definition* name, since a definition is what the tuner can address;
+  by *definition* name, since a definition is what the tuner can address.
+  A net's entry holds a **set** of roles per definition, not one winning role:
+  collapsing to "drive wins" is right for a diode-connected device but wrong
+  for a feedback amplifier, and it printed `BUF_P … drives vbg0 senses -` -
+  affirmatively denying the loop on a feedback buffer, and disabling
+  `select_focus`'s reverse 1-hop from exactly the blocks the design doc's
+  worked example starts from. `paths.supply_nets` (nets a **top-level** `V`/`I`
+  touches) is excluded from the level-0 summary and from focus seeding: rails
+  are inputs, so `OPAMP2STAGE drives vdd,vss` was a false structural claim, and
+  a measurement resolving to a rail seeded every block at once. Recognising a
+  rail by *name* (`vdd`/`vss`/`gnd`/`0`) would be the forbidden guess; "a
+  top-level independent source connects here" is a parsed fact.
   `patterns.py` matches differential pairs, current mirrors, cascodes and
   Miller compensation. **Patterns never guess** - a match is a fact, a
   non-match is silence, and the acceptance bar is zero false positives, not

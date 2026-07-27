@@ -75,17 +75,29 @@
   "mismatches": [],
   "net_blocks": {
     "in": {
-      "Rin": "drive"
+      "Rin": [
+        "drive"
+      ]
     },
     "vminus": {
-      "Rf": "drive",
-      "Rin": "drive"
+      "Rf": [
+        "drive"
+      ],
+      "Rin": [
+        "drive"
+      ]
     },
     "vout": {
-      "Rf": "drive"
+      "Rf": [
+        "drive"
+      ]
     }
   },
   "patterns": [],
+  "supply_nets": [
+    "0",
+    "in"
+  ],
   "tunable": [
     [
       "Eopamp",

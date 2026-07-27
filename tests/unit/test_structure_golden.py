@@ -49,7 +49,11 @@ def _snapshot(text: str) -> dict:
             for path, block in sorted(structure.blocks.items(), key=lambda kv: kv[0] or "")
         },
         "tunable": sorted([e.refdes, e.param] for e in structure.tunable),
-        "net_blocks": {net: dict(sorted(b.items())) for net, b in sorted(paths.net_blocks.items())},
+        "net_blocks": {
+            net: {name: sorted(roles) for name, roles in sorted(b.items())}
+            for net, b in sorted(paths.net_blocks.items())
+        },
+        "supply_nets": sorted(paths.supply_nets),
         "mismatches": sorted(e.mismatch for e in paths.instances if e.mismatch),
         "patterns": sorted(
             [m.kind, m.block or "<top>", list(m.members)] for m in find_patterns(structure)

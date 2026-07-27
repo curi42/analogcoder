@@ -2743,41 +2743,75 @@
   "mismatches": [],
   "net_blocks": {
     "ampout": {
-      "BGR_CORE": "drive",
-      "ERRAMP": "drive"
+      "BGR_CORE": [
+        "drive",
+        "sense"
+      ],
+      "ERRAMP": [
+        "drive"
+      ]
     },
     "b0_i": {
-      "BUF_P": "sense"
+      "BUF_P": [
+        "sense"
+      ]
     },
     "b1_i": {
-      "BUF_N": "sense"
+      "BUF_N": [
+        "sense"
+      ]
     },
     "mpgate": {
-      "BGR_CORE": "sense"
+      "BGR_CORE": [
+        "sense"
+      ]
     },
     "trm_i": {
-      "TRIMAMP": "sense"
+      "TRIMAMP": [
+        "sense"
+      ]
     },
     "vbg0": {
-      "BUF_P": "drive"
+      "BUF_P": [
+        "drive",
+        "sense"
+      ]
     },
     "vbg1": {
-      "BUF_N": "drive"
+      "BUF_N": [
+        "drive",
+        "sense"
+      ]
     },
     "vbgout": {
-      "BGR_CORE": "drive",
-      "TRIMAMP": "sense"
+      "BGR_CORE": [
+        "drive",
+        "sense"
+      ],
+      "TRIMAMP": [
+        "sense"
+      ]
     },
     "vfb": {
-      "BANDGAP": "drive"
+      "BANDGAP": [
+        "drive"
+      ]
     },
     "vss": {
-      "BANDGAP": "drive",
-      "BGR_CORE": "sense"
+      "BANDGAP": [
+        "drive"
+      ],
+      "BGR_CORE": [
+        "sense"
+      ]
     },
     "vtop": {
-      "BANDGAP": "drive",
-      "TRIMAMP": "drive"
+      "BANDGAP": [
+        "drive"
+      ],
+      "TRIMAMP": [
+        "drive"
+      ]
     }
   },
   "patterns": [
@@ -2957,6 +2991,19 @@
         "TRIMAMP.X2"
       ]
     ]
+  ],
+  "supply_nets": [
+    "0",
+    "ampout",
+    "b0_i",
+    "b1_i",
+    "mpgate",
+    "trm_i",
+    "vbg0",
+    "vbg1",
+    "vdd",
+    "vfb",
+    "vss"
   ],
   "tunable": [
     [

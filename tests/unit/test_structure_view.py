@@ -30,7 +30,7 @@ def _built():
 def test_focus_seeds_from_the_blocks_that_touch_a_failing_net():
     s, paths = _built()
 
-    assert select_focus(s, paths, {"out"}, set()) == {"DRIVER"}
+    assert select_focus(s, paths, {"out"}, set(), CHAIN) == {"DRIVER"}
 
 
 def test_focus_walks_one_hop_back_to_whatever_drives_what_a_seed_senses():
@@ -42,19 +42,114 @@ def test_focus_walks_one_hop_back_to_whatever_drives_what_a_seed_senses():
 
     # DRIVER는 mid를 감지하고 SPARE가 mid를 구동한다. 씨앗의 입력을 만드는
     # 블록을 못 보면 튜너가 원인 쪽을 건드릴 수 없다.
-    assert select_focus(s, paths, {"out"}, set()) == {"DRIVER", "SPARE"}
+    assert select_focus(s, paths, {"out"}, set(), deck) == {"DRIVER", "SPARE"}
 
 
 def test_a_block_already_touched_this_run_stays_in_focus():
     s, paths = _built()
 
-    assert select_focus(s, paths, {"out"}, {"SPARE.M9"}) == {"DRIVER", "SPARE"}
+    assert select_focus(s, paths, {"out"}, {"SPARE.M9"}, CHAIN) == {"DRIVER", "SPARE"}
+
+
+def test_an_unqualified_touched_refdes_still_keeps_its_block_in_focus():
+    # check_refdes_resolution은 유일하게 해석되는 언스코프 refdes를 명시적으로
+    # 허용한다. "refdes.startswith(path + '.')"는 dotted 형태만 잡으므로,
+    # "M9"를 제안하면 방금 튜닝한 SPARE가 다음 반복에서 시야 밖으로 빠진다 -
+    # 초점 규칙 4가 존재하는 이유가 바로 그것을 막는 데 있다. 형제 함수인
+    # focus_misses는 이미 같은 결함을 고쳤다(resolve_change_scopes 경유).
+    s, paths = _built()
+
+    assert select_focus(s, paths, {"out"}, {"M9"}, CHAIN) == {"DRIVER", "SPARE"}
+
+
+FEEDBACK = (
+    "* t\n"
+    ".subckt SRC out vss\n"
+    "M1 out nb vss vss NMOS W=10 L=1\n"
+    ".ends SRC\n"
+    ".subckt FB fb out vss\n"
+    "M2 out fb vss vss NMOS W=10 L=1\n"
+    "M3 fb fb vss vss NMOS W=10 L=1\n"
+    ".ends FB\n"
+    "Xs shared 0 SRC\n"
+    "Xf shared meas 0 FB\n"
+    ".end\n"
+)
+
+
+def test_a_feedback_block_reports_both_roles_instead_of_denying_the_loop():
+    # drive가 sense를 이기면 자기 출력을 되받는 블록이 "senses -"로 나온다 -
+    # 피드백 증폭기에 대해 적극적으로 틀린 주장이다.
+    s = derive_structure(FEEDBACK, "demo")
+    paths = build_signal_paths(s)
+
+    text = render_structure(s, paths, [], set())
+    line = next(l for l in text.splitlines() if l.strip().startswith("FB "))
+
+    assert "drives meas,shared" in line
+    assert "senses shared" in line
+
+
+def test_the_reverse_hop_fires_from_a_block_that_both_drives_and_senses_its_net():
+    # 역방향 1홉은 "씨앗이 감지하는 넷을 누가 구동하는가"로 상류를 찾는다.
+    # FB가 shared를 구동도 감지도 하는데 drive만 남으면 shared가 아예
+    # sensed_nets에 안 들어가, 그 값을 만드는 SRC가 영원히 시야 밖이다.
+    s = derive_structure(FEEDBACK, "demo")
+    paths = build_signal_paths(s)
+
+    assert select_focus(s, paths, {"meas"}, set(), FEEDBACK) == {"FB", "SRC"}
+
+
+def test_a_supply_or_stimulus_net_is_not_summarised_as_a_block_output():
+    # 실측: OPAMP2STAGE drives vdd,vss / BANDGAP drives vss / BGR_CORE
+    # senses vss. 레일은 입력이지 블록의 출력이 아니다 - "연산증폭기가
+    # vdd를 구동한다"는 구조적 거짓 주장이다.
+    deck = (
+        "* t\n"
+        ".subckt AMP vin vout vdd vss\n"
+        "M1 vout vin vss vss NMOS W=10 L=1\n"
+        "Rdeg vout vdd 1k\n"
+        ".ends AMP\n"
+        "Xa nin nout vdd 0 AMP\n"
+        "Vdd vdd 0 DC 1.8\n"
+        ".end\n"
+    )
+    s = derive_structure(deck, "demo")
+    paths = build_signal_paths(s)
+
+    line = next(l for l in render_structure(s, paths, [], set()).splitlines() if "AMP " in l)
+
+    assert "drives nout" in line
+    assert "vdd" not in line
+
+
+def test_a_supply_net_among_the_failing_nets_does_not_seed_every_block():
+    # 레일로 씨앗을 잡으면 그 레일에 붙은 모든 블록이 초점이 되어 초점
+    # 자체가 무의미해진다.
+    deck = (
+        "* t\n"
+        ".subckt A vin vout vss\n"
+        "M1 vout vin vss vss NMOS W=10 L=1\n"
+        ".ends A\n"
+        ".subckt B vin vout vss\n"
+        "M1 vout vin vss vss NMOS W=10 L=1\n"
+        ".ends B\n"
+        "Xa n1 n2 0 A\n"
+        "Xb n3 n4 0 B\n"
+        "Rb n4 0 1k\n"
+        "V0 0 nx DC 0\n"
+        ".end\n"
+    )
+    s = derive_structure(deck, "demo")
+    paths = build_signal_paths(s)
+
+    assert select_focus(s, paths, {"n2", "0"}, set(), deck) == {"A"}
 
 
 def test_no_seed_falls_back_to_every_block_rather_than_to_nothing():
     s, paths = _built()
 
-    assert select_focus(s, paths, set(), set()) == {"DRIVER", "SPARE"}
+    assert select_focus(s, paths, set(), set(), CHAIN) == {"DRIVER", "SPARE"}
 
 
 def test_the_structure_view_lists_every_block_but_details_only_the_focused_ones():

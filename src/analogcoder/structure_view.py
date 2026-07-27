@@ -42,6 +42,7 @@ def select_focus(
     paths: SignalPaths,
     failing_nets: set[str],
     touched_refdes: set[str],
+    netlist_text: str,
 ) -> set[str]:
     """상세히 렌더링할 정의 경로의 집합.
 
@@ -59,13 +60,25 @@ def select_focus(
     씨앗이 하나도 안 잡히면(예: failing_nets가 measurement_nets에 없는
     이름이라 넷으로 못 옮겨졌을 때) 조용히 아무것도 안 보여주는 대신
     전 블록을 노출한다 - "모르면 침묵"의 예외로, 안전한 쪽이 더 넓게
-    보여주는 쪽이기 때문이다."""
+    보여주는 쪽이기 때문이다.
+
+    전원/자극 넷(paths.supply_nets)은 씨앗으로도 홉으로도 쓰지 않는다 -
+    레일에는 거의 모든 블록이 붙어 있어 씨앗 하나가 전 블록으로 번진다.
+
+    netlist_text가 필요한 이유는 touched_refdes 때문이다: 언스코프
+    refdes("M9")가 어느 서브회로 소속인지는 문자열만 봐서는 알 수 없고,
+    check_refdes_resolution은 유일하게 해석되는 언스코프 refdes를 명시적으로
+    허용한다. 형제 함수 focus_misses와 같은 원시 함수
+    (netlist.resolve_change_scopes)를 쓴다."""
     definitions = {path for path in structure.blocks if path is not None}
     by_name = {_definition_name(path): path for path in definitions}
 
+    def blocks_on(net: str) -> dict[str, set[str]]:
+        return {} if net in paths.supply_nets else paths.net_blocks.get(net, {})
+
     seeds: set[str] = set()
     for net in failing_nets:
-        for name, role in paths.net_blocks.get(net, {}).items():
+        for name in blocks_on(net):
             if name in by_name:
                 seeds.add(by_name[name])
 
@@ -73,23 +86,22 @@ def select_focus(
     # 하고 있으면 그 구동 블록도 초점에 넣는다.
     sensed_nets = {
         net
-        for net, blocks in paths.net_blocks.items()
-        if any(by_name.get(name) in seeds and role == "sense" for name, role in blocks.items())
+        for net in paths.net_blocks
+        if any(
+            by_name.get(name) in seeds and "sense" in roles
+            for name, roles in blocks_on(net).items()
+        )
     }
     upstream = {
         by_name[name]
         for net in sensed_nets
-        for name, role in paths.net_blocks.get(net, {}).items()
-        if role == "drive" and name in by_name
+        for name, roles in blocks_on(net).items()
+        if "drive" in roles and name in by_name
     }
 
-    touched = {
-        path
-        for path in definitions
-        if any(refdes.startswith(f"{path}.") for refdes in touched_refdes)
-    }
+    touched = resolve_change_scopes(netlist_text, [{"refdes": r} for r in sorted(touched_refdes)])
 
-    focus = seeds | upstream | touched
+    focus = seeds | upstream | (touched & definitions)
     return focus or definitions
 
 
@@ -103,11 +115,17 @@ def render_structure(
 
     # 정의 이름별 drive/sense 넷 목록. net_blocks가 이름으로 색인되어 있으므로
     # 레벨 0 요약도 이름 기준으로 뒤집어 만든다.
+    # 전원/자극 넷은 요약에서 뺀다 - 레일은 블록의 입력이지 출력이 아니므로
+    # "이 증폭기가 vdd를 구동한다"는 구조적으로 거짓인 주장이다. 이름으로
+    # 알아보지 않는 이유는 signal_path.SignalPaths.supply_nets 참고.
     drives: dict[str, list[str]] = {}
     senses: dict[str, list[str]] = {}
     for net, blocks in sorted(paths.net_blocks.items()):
-        for name, role in sorted(blocks.items()):
-            (drives if role == "drive" else senses).setdefault(name, []).append(net)
+        if net in paths.supply_nets:
+            continue
+        for name, roles in sorted(blocks.items()):
+            for role in sorted(roles):
+                (drives if role == "drive" else senses).setdefault(name, []).append(net)
 
     for path in sorted(p for p in structure.blocks if p is not None):
         block = structure.blocks[path]

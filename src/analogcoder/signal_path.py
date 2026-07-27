@@ -9,6 +9,7 @@ LLM 애널라이저를 대체하는 파생 단계 - 모르면 침묵한다: 포�
 
 from dataclasses import dataclass, field
 
+from analogcoder.netlist import is_top_level_stimulus
 from analogcoder.structure import ComponentFact, NetlistStructure
 
 _SIGNAL_ROLES = ("drive", "sense")
@@ -25,7 +26,19 @@ class InstanceEdge:
 @dataclass
 class SignalPaths:
     instances: list[InstanceEdge]
-    net_blocks: dict[str, dict[str, str]]
+    # 넷 -> 정의 이름 -> 그 정의가 이 넷에 대해 갖는 역할의 **집합**. 하나로
+    # 접어 drive를 이기게 하면 다이오드 연결 소자에는 맞지만 피드백 증폭기 -
+    # 이 도메인의 지배적 구조 - 에는 틀린 요약이 된다: 자기 출력을 되받는
+    # 블록이 "senses -"로 나와 루프의 존재를 적극적으로 부정하고, 역방향
+    # 1홉이 그 블록에서 아예 발화하지 못한다.
+    net_blocks: dict[str, dict[str, set[str]]]
+    # 최상위 독립 소스(V/I)가 무는 넷. 이름(vdd/vss/gnd/0)으로 알아보는 것은
+    # 이 모듈이 금지하는 추측이지만 - 넷 이름은 설계자가 아무렇게나 붙일 수
+    # 있다 - "최상위 V/I의 단자가 이 넷에 붙어 있다"는 것은 파서가 아는
+    # 사실이라 정확하다. 전원/자극은 블록의 출력이 아니므로 레벨 0 요약과
+    # 초점 씨앗에서 뺀다("연산증폭기가 vdd를 구동한다"는 거짓 주장이고,
+    # 레일로 씨앗을 잡으면 모든 블록이 초점이 되어 초점이 무의미해진다).
+    supply_nets: set[str] = field(default_factory=set)
 
 
 def _definition_of(structure: NetlistStructure, model: str | None) -> str | None:
@@ -88,13 +101,16 @@ def _bulk_net(fact: ComponentFact) -> str | None:
     )
 
 
-def _signal_roles(fact: ComponentFact, ports: set[str] | None, roles: dict[str, str]) -> None:
-    """한 컴포넌트의 단자들이 내는 drive/sense 역할을 roles에 병합한다
-    (drive가 이긴다). ports가 None이면 모든 넷이 대상 - 최상위는 포트라는
-    개념이 없으므로. 소스/드레인이 같은 컴포넌트의 벌크와 동일한 넷이면
-    제외한다 - NMOS 소스가 흔히 그렇듯 벌크와 함께 vss에 묶여 있을 뿐인데
-    그 컴포넌트가 vss(흔히 최상위의 0)를 '구동'하는 것처럼 보이면 초점이
-    무의미해지기 때문이다."""
+def _signal_roles(fact: ComponentFact, ports: set[str] | None, roles: dict[str, set[str]]) -> None:
+    """한 컴포넌트의 단자들이 내는 drive/sense 역할을 roles에 **누적**한다.
+    ports가 None이면 모든 넷이 대상 - 최상위는 포트라는 개념이 없으므로.
+    소스/드레인이 같은 컴포넌트의 벌크와 동일한 넷이면 제외한다 - NMOS
+    소스가 흔히 그렇듯 벌크와 함께 vss에 묶여 있을 뿐인데 그 컴포넌트가
+    vss(흔히 최상위의 0)를 '구동'하는 것처럼 보이면 초점이 무의미해지기
+    때문이다.
+
+    예전에는 drive 하나만 남겼다. 다이오드 연결 소자에는 맞지만 피드백
+    증폭기에는 틀린 요약이고, 둘 다 참인 것을 둘 다 내는 것이 사실이다."""
     bulk_net = _bulk_net(fact)
     for terminal, net in zip(fact.terminals, fact.nodes):
         if terminal.role not in _SIGNAL_ROLES:
@@ -103,22 +119,33 @@ def _signal_roles(fact: ComponentFact, ports: set[str] | None, roles: dict[str, 
             continue
         if bulk_net is not None and net == bulk_net:
             continue
-        if roles.get(net) != "drive":
-            roles[net] = terminal.role
+        roles.setdefault(net, set()).add(terminal.role)
 
 
-def _own_port_roles(structure: NetlistStructure) -> dict[str, dict[str, str]]:
+def _supply_nets(structure: NetlistStructure) -> set[str]:
+    """최상위 독립 소스가 무는 넷. 독립 소스 라인의 처음 두 위치 토큰이
+    단자라는 것은 SPICE의 보장이므로 nodes[:2]만 취한다 - structure.py의
+    위치 분해는 V/I에 단자표가 없어 뒤쪽 값 토큰("DC", "AC")까지 nodes에
+    남길 수 있다."""
+    nets: set[str] = set()
+    for fact in structure.blocks[None].components:
+        if is_top_level_stimulus(None, fact.ctype):
+            nets.update(fact.nodes[:2])
+    return nets
+
+
+def _own_port_roles(structure: NetlistStructure) -> dict[str, dict[str, set[str]]]:
     """정의별로 "이 컴포넌트가 자신의 포트를 직접 건드리는 역할"만 모은다.
     최상위에서 내려오며 위치를 옮기는 것은 walk()의 몫이고, 여기서는 각
     정의 자신의 원소자만 본다 - 중첩된 서브회로 인스턴스를 통해 전달되는
     역할까지 굳이 별도로 전파할 필요는 없다: walk()가 매 깊이마다 그 깊이의
     인스턴스가 부르는 정의의 own role을 직접 조회하며 내려가므로 이 한
     단계짜리 계산으로 다단계 계층이 자연히 처리된다."""
-    port_roles: dict[str, dict[str, str]] = {}
+    port_roles: dict[str, dict[str, set[str]]] = {}
     for path, block in structure.blocks.items():
         if path is None:
             continue
-        roles: dict[str, str] = {}
+        roles: dict[str, set[str]] = {}
         ports = set(block.ports)
         for fact in block.components:
             _signal_roles(fact, ports, roles)
@@ -130,12 +157,10 @@ def build_signal_paths(structure: NetlistStructure) -> SignalPaths:
     instances = _build_instances(structure)
     port_roles = _own_port_roles(structure)
 
-    net_blocks: dict[str, dict[str, str]] = {}
+    net_blocks: dict[str, dict[str, set[str]]] = {}
 
-    def record(net: str, definition_name: str, role: str) -> None:
-        bucket = net_blocks.setdefault(net, {})
-        if bucket.get(definition_name) != "drive":
-            bucket[definition_name] = role
+    def record(net: str, definition_name: str, roles: set[str]) -> None:
+        net_blocks.setdefault(net, {}).setdefault(definition_name, set()).update(roles)
 
     # 인스턴스를 "그 X 라인이 물리적으로 위치한 스코프"별로 묶는다. 최상위부터
     # 내려가며 좌표계를 바깥(부모) 넷 이름으로 바꿔야 하므로, 어떤 스코프에
@@ -156,9 +181,9 @@ def build_signal_paths(structure: NetlistStructure) -> SignalPaths:
                     # 내부에서만 쓰이는 넷) - 더 밖으로 밀어올릴 좌표가 없다.
                     continue
                 inner[port] = outer
-                role = port_roles.get(edge.definition, {}).get(port)
-                if role is not None:
-                    record(outer, definition_name, role)
+                roles = port_roles.get(edge.definition, {}).get(port)
+                if roles:
+                    record(outer, definition_name, roles)
             # 한 단계 안으로 들어가며 좌표계를 부모(바깥) 넷으로 바꾼다.
             walk(edge.definition, inner)
 
@@ -169,9 +194,11 @@ def build_signal_paths(structure: NetlistStructure) -> SignalPaths:
     # 여기서는 그 인스턴스가 아닌 소자(저항, 커패시터, 트랜지스터 등)만
     # 추가로 기록한다.
     for fact in structure.blocks[None].components:
-        roles: dict[str, str] = {}
-        _signal_roles(fact, None, roles)
-        for net, role in roles.items():
-            record(net, fact.refdes, role)
+        own: dict[str, set[str]] = {}
+        _signal_roles(fact, None, own)
+        for net, roles in own.items():
+            record(net, fact.refdes, roles)
 
-    return SignalPaths(instances=instances, net_blocks=net_blocks)
+    return SignalPaths(
+        instances=instances, net_blocks=net_blocks, supply_nets=_supply_nets(structure)
+    )
