@@ -94,6 +94,26 @@ def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = 
     return tiers[-1].allowed_multiplier
 
 
+def annotate_resolved_params(component: Component, envs: dict[str | None, dict[str, float]]) -> None:
+    """component.params(원본 문자열)를 component.resolved_params(수치)로 채운다.
+
+    parse_netlist는 파싱만 하고 해소는 하지 않는다 - resolved_params는 이
+    함수를 거치기 전까지 항상 비어 있다. index_baseline_components(면적
+    게이트)와 area.total_area(면적 합산) 둘 다 이 함수를 쓴다 - 예전에는
+    두 곳에 같은 6줄이 복제돼 있었는데, 이 저장소는 넷리스트 해소 로직이
+    두 갈래로 갈라져 조용히 어긋난 사고를 이미 여러 번 겪었다 (`.option
+    scale` 미반영, MiM 캡 단위 불일치, `+` 연속줄 오파싱 등 - CLAUDE.md
+    참고). 복제된 두 줄은 오늘은 우연히 똑같지만, 한쪽에만 새 폴백 규칙이
+    붙으면 그 순간부터 남몰래 갈라진다 - 그래서 한 함수로 합쳤다."""
+    env = envs.get(component.scope, envs[None])
+    for name, raw in component.params.items():
+        value = resolve_value(raw, env)
+        if value is not None:
+            component.resolved_params[name] = value
+    if component.value is not None:
+        component.resolved_value = resolve_value(component.value, env)
+
+
 def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     """Keyed by "<path>.<refdes>" for components declared inside a subckt
     (path is the dotted nesting path, e.g. "OUTER.INNER"), plus a plain
@@ -109,20 +129,11 @@ def index_baseline_components(netlist_text: str) -> dict[str, Component]:
     parsed = parse_netlist(netlist_text)
     envs = build_param_envs(netlist_text)
 
-    def _annotate(component: Component) -> None:
-        env = envs.get(component.scope, envs[None])
-        for name, raw in component.params.items():
-            value = resolve_value(raw, env)
-            if value is not None:
-                component.resolved_params[name] = value
-        if component.value is not None:
-            component.resolved_value = resolve_value(component.value, env)
-
     for component in parsed.top_components:
-        _annotate(component)
+        annotate_resolved_params(component, envs)
     for subckt in parsed.subckts.values():
         for component in subckt.components:
-            _annotate(component)
+            annotate_resolved_params(component, envs)
 
     # 인스턴스 줄에서 크기가 정해지는 덱(래퍼 셀 스타일)을 위해, 각
     # 인스턴스 파라미터가 실제로 도달하는 소자/토큰을 여기서 한 번 계산해
@@ -178,24 +189,52 @@ _COUNT_TOKENS = frozenset({"m"})
 _NEUTRAL_TOKENS = frozenset({"nf"})
 
 
-def _resolved_token(component: Component, token: str) -> float | None:
+def param_tokens(component: Component | None, param: str) -> set[str]:
+    """제안의 param 이름이 실제로 **도달하는** 소자 토큰 이름들(소문자).
+
+    추적이 되면 도달점의 토큰을 쓰고, 안 되면 이름 자체로 떨어진다. 이 구별이
+    중요한 이유는 래퍼 셀 흐름 때문이다: `Xa ... mult=4`가 본문의
+    `m='mult'`에 도달할 때, 이름은 `mult`지만 실제 토큰은 `m`이다. 이름만
+    보면 그것이 개수라는 사실을 놓친다.
+
+    optimizer.py의 단계 크기 결정과 _integrality_violation이 **같은** 함수를
+    쓴다 - 둘이 갈라지면 최적화 루프가 `mult=3.6`을 만들고 에어리어 게이트가
+    그것을 정수 위반으로 되받아, 후보가 첫 단계에서 통째로 죽는다."""
+    traced = component.traced_params.get(param) if component is not None else None
+    if traced:
+        return {t.token.lower() for t in traced}
+    return {param.lower()}
+
+
+def is_count_param(component: Component | None, param: str) -> bool:
+    """그 param이 개수(m/nf)에 도달하는가 - 즉 정수여야 하는가."""
+    return bool(param_tokens(component, param) & (_COUNT_TOKENS | _NEUTRAL_TOKENS))
+
+
+def resolved_token(component: Component, token: str) -> float | None:
     """소자가 쓴 토큰의 해소값을 대소문자 무시로 찾는다. SPICE는 대소문자를
-    구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다."""
+    구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다.
+
+    area.py의 total_area도 이 함수로 w/l을 읽는다 - 면적 게이트와 면적
+    합산이 같은 해소 규칙을 따르게 하려는 것이다(공개 이름으로 승격,
+    함수 내부 import 아님)."""
     for name, value in component.resolved_params.items():
         if name.lower() == token:
             return value
     return None
 
 
-def _multiplicity(component: Component) -> float | None:
+def multiplicity(component: Component) -> float | None:
     """m이 없으면 1, m 토큰이 있는데 값을 못 풀면 None. m은 개수이므로
     `.option scale`을 곱하지 않는다.
 
     "m 토큰이 없다"와 "m 토큰은 있는데 모른다"를 구별하지 않으면 모르는 값을
     1로 가정하게 되고, 그 추측은 **항상 티어를 느슨한 쪽으로** 틀린다 (소자가
     실제보다 작아 보인다). params._multiplier와 같은 규칙, 같은 이유다 -
-    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다."""
-    m = _resolved_token(component, "m")
+    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다.
+
+    area.py의 total_area도 이 함수로 m을 읽는다 - 공개 이름으로 승격."""
+    m = resolved_token(component, "m")
     if m is None:
         return None if has_token(component, "m") else 1.0
     return 1.0 if m <= 0 else m
@@ -225,24 +264,24 @@ def _tier_baseline_value(component: Component) -> float | None:
         param = _SKY130_GEOMETRY_PARAM.get(ctype)
         if param is None:
             return None
-        raw = _resolved_token(component, param.lower())
+        raw = resolved_token(component, param.lower())
         if raw is None:
             return None
         if ctype == "Q":
             # m is an emitter-area count, not a length - it must not be
             # scaled, and it is already the tier key itself.
             return raw
-        mult = _multiplicity(component)
+        mult = multiplicity(component)
         return None if mult is None else raw * component.geometry_scale * mult
     if ctype == "M":
-        w = _resolved_token(component, "w")
+        w = resolved_token(component, "w")
         if w is None:
             return None
-        mult = _multiplicity(component)
+        mult = multiplicity(component)
         return None if mult is None else w * component.geometry_scale * mult
     if component.resolved_value is None:
         return None
-    mult = _multiplicity(component)
+    mult = multiplicity(component)
     return None if mult is None else component.resolved_value * mult
 
 
@@ -454,7 +493,6 @@ def evaluate_area_growth(
         traced = component.traced_params.get(param)
         if traced:
             targets = _traced_targets(refdes, traced)
-            tokens = {t.token.lower() for t in traced}
         else:
             # 추적이 안 되는 파라미터는 소자를 직접 주소지정한 것으로 본다.
             # 서브회로 인스턴스인데 추적에 실패한 경우도 여기로 오는데, 그때는
@@ -462,7 +500,9 @@ def evaluate_area_growth(
             # 된다 - "무엇을 키우는지 알아내지 못했다"와 "아무것도 키우지
             # 않는다"는 다른 사실이고, 후자만이 nf처럼 의도적으로 무제약이다.
             targets = [_direct_target(refdes, component, param)]
-            tokens = {param.lower()}
+        # 토큰 집합은 param_tokens 한 곳에서만 만든다 - optimizer.py의 정수
+        # 판정이 같은 함수를 쓰므로 여기서 다시 만들면 두 곳이 갈라진다.
+        tokens = param_tokens(component, param)
 
         baseline_value = _baseline_value_for(component, param)
         # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사

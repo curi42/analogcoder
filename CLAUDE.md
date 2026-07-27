@@ -81,6 +81,135 @@ against a fixed schema (`schemas.py`).
   always in lockstep (`push_netlist_version`/`rollback` operate on the whole
   set atomically — never partially applied across testbenches). See
   `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
+- `optimizer.py` / `agents/optimizer.py` / `area.py` — a second phase that runs
+  after the loop returns PASS and before the final PVT sweep, spending the
+  spec's remaining margin on the objective declared in `spec.yaml`'s
+  `optimize:` block. The agent only *ranks knobs*: `OPTIMIZER_SCHEMA`
+  structurally forbids a value, and a deterministic search decides how far to
+  move each one (`×0.9` per step for a geometry, `±1` for a count) and measures
+  the result. **The accept rule is deterministic and deliberately does NOT
+  reuse `verify_post`**: that contract is "roll back if regressed", and a good
+  optimization step consumes margin on purpose, so reusing it would roll back
+  every successful shrink. A step is kept only if every criterion still passes
+  with its guarded margin, the objective fell, and total area is inside the
+  budget. **Optimization has no FAIL outcome** — failing to improve returns the
+  design that already passed, so a run cannot end worse for having optimized.
+- **The margin allowance is measured, not guessed.** Each criterion's allowance
+  is `|worst corner − nominal|` read off the *entry* corner sweep, which is why
+  that sweep is an anchor rather than an overhead. The `guard_band` ratio
+  declared in the spec only fills criteria the sweep produced no value for —
+  and it has to, because `corner_allowances` omits those, while the consumer
+  reads a missing name as allowance `0.0`, i.e. **no guard at all** on exactly
+  the criteria whose corner behaviour is unknown. Nominal measurements come out
+  of `cli.py`'s LLM-mediated `simulate_fn` and sweep measurements out of
+  `sim_backend.run`, so the two key sets really can differ.
+- **The guard band is `T ± g·|T|`, never `T·(1±g)`.** The latter inverts on a
+  negative threshold: `psrr_dc <= -25` with `g=0.2` would become `<= -20`,
+  *looser* than the original. Each criterion is judged against its own
+  threshold, so a two-sided window on one measurement keeps both sides —
+  `pvt.py` lost one side of exactly that shape twice.
+- **The ratio fallback alone is not a usable guard on a real spec, which is the
+  measured case for deriving allowances.** On `benchmarks/bandgap`, `g=0.2`
+  demands `vbgout_v >= 1.44` *and* `<= 1.024` — an empty interval the 1.2389 V
+  baseline already violates, so the corner-less `spec.yaml` can never accept a
+  step. `spec_pvt.yaml`'s sweep replaces that 0.24 with a measured 0.0051 and
+  the same search then accepts ten at nominal (four of which survive the
+  confirmation — next entry). Both outcomes are pinned in
+  `tests/unit/test_optimizer_bandgap_ngspice.py`.
+- **On a failed confirmation the loop bisects the accepted versions**, it does
+  not re-search with a bigger guard. Re-searching is a retry with a larger
+  guess and no cost ceiling; bisection is bounded (`ceil(log2 n)` sweeps),
+  directed, and lands on a version whose sweep was actually observed to pass —
+  worst case the anchor, i.e. the design the main loop already shipped.
+- **A guard band measured at the starting point does not hold once the circuit
+  has moved, and the first real run proved it.** On `benchmarks/bandgap` the
+  nominal search accepted 10 steps on `TRIMAMP.Xt.W` (8 → 2.78943, `iq_ua`
+  212.99 → 211.68 µA) and the confirmation sweep then failed **six** criteria
+  — draining that tail widens the very corner spread the allowance was read
+  from. Bisection probed v5 (fail), v2, v3, v4 (pass) and landed on v4
+  (W=5.2488, 212.25 µA, corner-confirmed): 4 of 10 steps survived. So the
+  confirmation is not a formality — it is what keeps this phase honest, and a
+  nominal-only optimizer would have shipped a design that fails at corners.
+  Cutting the search's corner blindness is sub-project B; until then, expect
+  the confirmation to walk most of a long descent back.
+- **`check_stimulus_untouched` is a prerequisite of this phase, not a reuse.**
+  The cheapest way to cut quiescent current is to lower a supply, and an
+  explicit current objective puts that degenerate answer far closer to hand
+  than it ever was for repair tuning. All four addressing gates run on the
+  optimization path, on the full deck rather than the folded prompt view.
+  **They do not close the degenerate-answer surface, and reading them as if
+  they did is the mistake.** The stimulus gate covers top-level `V`/`I` only,
+  because that is the part that can be decided by a *fact* (refdes prefix plus
+  top-level scope). `benchmarks/two_stage_opamp/netlist.cir` also has
+  top-level `Lfb` (the 1 MH loop-break inductor), `Cin` and `Cload` — pure
+  testbench apparatus that sits in the tunable index and is reachable by the
+  optimizer. Shrinking `Cload` improves phase margin and UGBW without touching
+  the DUT: manufactured margin the phase then spends on current, the same shape
+  as the `Vin AC 1 → AC 100` finding that motivated the gate. Widening the gate
+  to "top-level passive" is *not* the fix — on `benchmarks/inverting_amp` the
+  top-level `Rin`/`Rf`/`Eopamp` **are** the circuit, so that rule is the same
+  class of guess as recognising a rail by the name `vdd`. It is handled where a
+  judgement call belongs: a paragraph in `OPTIMIZER_SYSTEM_PROMPT`. Only the
+  bandgap specs declare `optimize:` today, so this is not currently
+  exploitable — but the next spec that does is where it becomes live.
+- **Area is derived, the objective is measured.** `area.total_area` sums
+  `w × l × m` over resolvable devices — `m` multiplies area, `nf` does not,
+  since finger splitting leaves total width unchanged — so an over-budget
+  candidate is discarded before it spends a simulation. That asymmetry is why
+  the loop is simulation-bound and why the agent ranks a few knobs instead of
+  sweeping. Two things it is *not*: it sums over subckt **definitions**, so a
+  definition instantiated N times is counted **once** — a per-definition sum,
+  not a physical total. No benchmark has `instance_count > 1`, but the
+  production wrapper flow instantiates the same unit cell repeatedly, and
+  `structure.blocks[path].instance_count` is what a weighted version would
+  read. And the budget compares `area / area_before`, so **`area_before == 0`
+  disables it entirely** — reachable, because `total_area` resolves via
+  `build_param_envs`, which drops any name the instances disagree on, and on a
+  wrapper-cell deck that is every device (`tests/unit/test_area_total.py` pins
+  `counted == 0, skipped == 2`). That silence is now recorded rather than
+  merely true: `AreaTotal.counted`/`skipped`, the enforced flag and an explicit
+  reason go into the `optimize_baseline` event and `result["area_coverage"]`.
+  This gate has been silently inert three times in this repo and no run log
+  ever showed it.
+- **The optimization phase has no FAIL outcome, and that has to include
+  crashing.** `_run_simulation` and `_run_sweep` each swallow a bare
+  `Exception` for that reason; the module's one LLM call (`agents.propose`) did
+  not, and `ClaudeSDKBackend.run` raises `AgentExecutionError` on any error
+  `ResultMessage` — rate limit, transport error, `structured_output is None`,
+  or a weak local model missing the schema (documented below as an *expected*
+  case). It escaped `asyncio.run` in `main()`, so `write_result_json` and
+  `write_report_md` never ran: a run that had already PASSed ended as a
+  traceback with no `result.json` and no `report.md`. `run_optimization` is now
+  a guard wrapping `_optimize` in `except (AgentExecutionError, ValueError)` —
+  the same pair as `run_orchestration`, `ValueError` for an `apply_changes`
+  failure on a *non-canonical* deck, which the addressing gates cannot see
+  because they only read the canonical text. It rolls back to the version the
+  phase started from, logs `optimize_failed`, and returns a well-formed
+  `UNCHANGED`.
+- **The guard band can be infeasible at the baseline, and then no candidate can
+  ever be accepted.** `benchmarks/bandgap/spec.yaml` is the measured case (see
+  the ratio-fallback entry above). The condition is *not* "`pvt_corners` is
+  absent" — the measured path reaches it too, whenever nominal is worse than
+  every corner for some criterion, since `allowance = |worst − nominal|` then
+  makes the guarded limit stricter than nominal itself.
+  `guard_band_violations` runs on the baseline right after the allowances are
+  built and is logged **unconditionally** as `optimize_guard_infeasible`
+  (logging only on violation makes "checked, fine" and "the check is gone"
+  identical in `history.jsonl`) plus `result["guard_infeasible"]`. It
+  deliberately does **not** early-return: a step can in principle push the
+  violating criterion back inside, the cost ceiling is already one simulation
+  per candidate (a rejection exhausts its candidate), and the failure this repo
+  keeps repeating is doing nothing silently, not doing too much.
+- **The result must describe the deck it returns.** `result["final_criteria"]`
+  is the main loop's judge output — the deck *before* optimization — and
+  `cli.py` updated only `final_netlist_paths`, so the measured bandgap run
+  printed `iq_ua` 212.99 µA beside a netlist that measures 212.25 µA and never
+  said the phase ran. `_search` now stores each version's `evaluate_criteria`
+  verdict in `records`, so what is reported is the version **bisection landed
+  on**, not the last accepted step, and `report.md` carries an Optimization
+  section (objective/area before→after, steps, corner confirmation, and the
+  guard-infeasible / area-coverage / phase-failure reasons — without those the
+  run still says PASS while the phase did nothing).
 - `structure.py` / `signal_path.py` / `patterns.py` / `control_block.py` /
   `structure_view.py` — the deterministic replacement for what used to be an
   LLM `analyzer` agent. That agent contributed nothing measurable: a run
@@ -309,6 +438,16 @@ and criteria — there's no separate `--netlist` flag.
   never MiM. Full corner table and the design assumptions ngspice disproved:
   `docs/superpowers/specs/2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md`
   ("Part 2 — as built" and "Part 2 revision").
+  Both `spec.yaml` and `spec_pvt.yaml` also carry the `optimize:` block, and
+  this is the benchmark the optimization phase was first verified on against
+  real ngspice — `quiescent_current` sits at 212.99 µA against a 300 µA
+  threshold on purpose. `spec_pvt.yaml` is the one that can optimize (see the
+  measured-allowance and failed-confirmation entries under Architecture); the
+  corner-less `spec.yaml` is pinned as the counter-case. The corner-anchored
+  run costs **1790 s** — six 45-corner sweeps, because the confirmation fails
+  and bisection runs — which makes
+  `tests/unit/test_optimizer_bandgap_ngspice.py::test_the_optimizer_lowers_iq_while_every_criterion_still_passes`
+  by far the longest test in the suite; the rest of `pytest -q` is ~45 s.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -585,3 +724,10 @@ worth reading before assuming a weak-model failure is a code bug:
 - `tests/integration/` holds two skip-gated real-backend tests (`ANTHROPIC_API_KEY`
   for Claude, `LOCAL_LLM_BASE_URL` for local) — skipped by default, meant to be
   run manually when you have real credentials/a real server available.
+- `tests/unit/*_ngspice.py` assume `ngspice` is on PATH rather than skipping,
+  and all but one finish in seconds. The exception is
+  `test_optimizer_bandgap_ngspice.py`'s corner-anchored case at ~30 min (six
+  45-corner sweeps), so `pytest -q` is ~45 s without it and ~31 min with it.
+  Deselect it (`--deselect …::test_the_optimizer_lowers_iq_while_every_criterion_still_passes`)
+  for a normal TDD cycle and run it before merging anything under
+  `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`.

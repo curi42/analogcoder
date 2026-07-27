@@ -78,6 +78,31 @@ VERIFIER_POST_SCHEMA = {
     "required": ["improved", "regressed_criteria", "recommendation", "feedback"],
 }
 
+OPTIMIZER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "refdes": {
+                        "type": "string",
+                        "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                    },
+                    "param": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                    "direction": {"enum": ["increase", "decrease"]},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["refdes", "param", "direction", "reasoning"],
+                "additionalProperties": False,
+            },
+        },
+        "overall_reasoning": {"type": "string"},
+    },
+    "required": ["candidates", "overall_reasoning"],
+}
+
 TOPOLOGY_SCHEMA = {
     "type": "object",
     "properties": {

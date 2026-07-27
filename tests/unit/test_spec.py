@@ -147,3 +147,29 @@ def test_pvt_spec_reuses_baseline_spec_testbenches_and_thresholds():
         assert {c.name: (c.operator, c.threshold) for c in tb.criteria} == {
             c.name: (c.operator, c.threshold) for c in baseline_tb.criteria
         }
+
+
+def test_a_spec_without_an_optimize_block_has_none(tmp_path):
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "circuit_name: demo\ntestbenches:\n  - name: tb\n    netlist: n.cir\n"
+        "    analyses: ['ac']\n    control_block: '.control\\n.endc\\n'\n"
+        "    criteria: []\n"
+    )
+    assert load_spec(str(path)).optimize is None
+
+
+def test_an_optimize_block_is_loaded_with_its_three_fields(tmp_path):
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "circuit_name: demo\n"
+        "optimize:\n  objective: iq_ua\n  area_budget: 1.10\n  guard_band: 0.2\n"
+        "testbenches:\n  - name: tb\n    netlist: n.cir\n"
+        "    analyses: ['ac']\n    control_block: '.control\\n.endc\\n'\n"
+        "    criteria: []\n"
+    )
+    opt = load_spec(str(path)).optimize
+
+    assert opt.objective == "iq_ua"
+    assert opt.area_budget == 1.10
+    assert opt.guard_band == 0.2

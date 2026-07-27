@@ -9,6 +9,25 @@
 # spec_seed_buf0_droop.yaml), each of which tightens exactly ONE criterion
 # whose only fix lives in one subckt.
 circuit_name: bandgap
+# Sub-project C. quiescent_current measures 193-235uA against a 300uA
+# threshold, so there is real room to give back. area_budget 1.10 allows a
+# step to trade a little size for current but not to buy the objective with
+# area; guard_band 0.2 is the RATIO fallback, used only for criteria the
+# entry corner sweep produces no measured spread for.
+#
+# It is a fallback, not the working guard, and on this circuit it is not
+# usable on its own: 0.2*|T| on the two-sided output windows demands
+# vbgout_v >= 1.44 AND <= 1.024 - an empty interval, which the baseline
+# already violates. This spec declares no pvt_corners, so nothing overrides
+# it and optimization here always ends UNCHANGED. spec_pvt.yaml is the one
+# that actually optimizes: its 45-corner entry sweep replaces the ratio with
+# each criterion's measured corner spread - vbgout_min 0.0051 rather than
+# 0.24, trim_loop_gain 10.65 rather than 12.0. See
+# tests/unit/test_optimizer_bandgap_ngspice.py.
+optimize:
+  objective: iq_ua
+  area_budget: 1.10
+  guard_band: 0.2
 testbenches:
   - name: dc_tc
     netlist: netlist.cir
