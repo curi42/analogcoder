@@ -145,6 +145,13 @@ def grown_with(
         return cs, []
     corners = (*cs.corners, *added)
     remaining = tuple(p for p in cs.probe_order if p not in corners)
+    # **probe_index를 0으로 되돌린다 - 자리를 이어받지 않는다.** probe_order에서
+    # 항목이 빠졌으므로 옛 인덱스는 다른 코너를 가리키고, 그것을 그대로 쓰면
+    # 회전 순서가 조용히 어긋난다. 0으로 돌리는 대가는 **회전이 멈추는 것**이다:
+    # 성장이 연달아 일어나면 매번 첫 코너부터 다시 시작하므로 뒤쪽 코너는 영영
+    # 안 돌 수 있다. 그래도 이쪽을 고르는 이유는 순서가 severity 오름차순(가장
+    # 아슬한 것부터)이기 때문이다 - 먼저 도는 것이 가장 볼 값어치가 있는
+    # 코너이고, 성장은 그 앞쪽을 목록에서 빼 가므로 정체는 스스로 풀린다.
     return CornerSet(corners=corners, probe_order=remaining, probe_index=0), added
 
 
@@ -157,7 +164,12 @@ def next_probe(cs: CornerSet) -> tuple[CornerPoint | None, CornerSet]:
 
 
 def promote(cs: CornerSet, corner: CornerPoint) -> CornerSet:
-    """탐침에서 실패한 코너를 선택 집합으로 올린다."""
+    """탐침에서 실패한 코너를 선택 집합으로 올린다.
+
+    grown_with과 **같은 이유로** probe_index를 0으로 되돌린다: probe_order에서
+    한 항목이 빠지므로 옛 인덱스는 다른 코너를 가리킨다. 여기서는 정체가 더
+    가볍다 - 승격은 한 번에 하나씩이고, 회전은 다음 반복부터 다시 앞에서
+    시작한다."""
     if corner in cs.corners:
         return cs
     return CornerSet(

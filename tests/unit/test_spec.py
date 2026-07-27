@@ -243,8 +243,13 @@ testbenches:
 
 
 def test_corner_reduction_explicit_enabled_false_produces_false(tmp_path):
-    # Catches: loader ignoring enabled: false or silently coercing it.
-    # Without strict boolean validation, bool("false") returns True.
+    # Catches: the loader ignoring `enabled: false` (defaulting it to True, or
+    # dropping the field). It does NOT catch the bool("false") coercion bug -
+    # the comment here used to claim it did, and that was wrong: PyYAML parses
+    # an unquoted `false` into a Python bool before get_bool ever sees it, so
+    # this spec passes under the buggy loader too. The coercion bug is caught
+    # by test_corner_reduction_raises_on_quoted_false_string below, which is
+    # where a string actually reaches the loader.
     path = tmp_path / "spec.yaml"
     path.write_text("""
 circuit_name: t
@@ -266,8 +271,9 @@ testbenches:
 
 
 def test_corner_reduction_explicit_probe_false_produces_false(tmp_path):
-    # Catches: loader ignoring probe: false or silently coercing it.
-    # Without strict boolean validation, bool("false") returns True.
+    # Catches: the loader ignoring `probe: false`. As with the `enabled` test
+    # above, it does NOT catch the bool("false") coercion - PyYAML has already
+    # produced a Python bool by then. Legitimate coverage, corrected claim.
     path = tmp_path / "spec.yaml"
     path.write_text("""
 circuit_name: t
@@ -337,3 +343,47 @@ testbenches:
 """)
     with pytest.raises(ValueError, match=r"corner_reduction\.probe must be a boolean"):
         load_spec(str(path))
+
+
+def _corner_reduction_spec(tmp_path, block: str):
+    path = tmp_path / "spec.yaml"
+    path.write_text(f"""
+circuit_name: t
+corner_reduction:
+{block}
+testbenches:
+  - name: tb
+    netlist: n.cir
+    analyses: [ac]
+    control_block: ".ac dec 10 1 1G"
+    criteria:
+      - name: gain
+        measurement: g
+        operator: ">="
+        threshold: 40
+""")
+    return str(path)
+
+
+def test_a_negative_retry_budget_is_rejected(tmp_path):
+    # 음수 예산은 조용히 0처럼 동작한다 - 재진입을 켰다고 믿는 스펙에서
+    # 아무 일도 일어나지 않는다. get_bool을 같은 함수 안에서 시끄럽게 만든
+    # 것과 같은 이유로 여기서도 시끄럽게 실패한다.
+    import pytest
+
+    with pytest.raises(ValueError, match="retry_budget"):
+        load_spec(_corner_reduction_spec(tmp_path, "  retry_budget: -1"))
+
+
+def test_a_zero_retry_budget_is_allowed(tmp_path):
+    # 0은 "재진입하지 않는다"는 유효한 선언이다. 범위 검사를 `<= 0`으로
+    # 두는 변형이 이것을 막는다.
+    assert load_spec(_corner_reduction_spec(tmp_path, "  retry_budget: 0")).corner_reduction.retry_budget == 0
+
+
+def test_a_non_integer_retry_budget_is_rejected(tmp_path):
+    # int("two")는 이미 시끄럽게 실패한다 - 그 동작을 못박아 둔다.
+    import pytest
+
+    with pytest.raises(ValueError):
+        load_spec(_corner_reduction_spec(tmp_path, '  retry_budget: "two"'))

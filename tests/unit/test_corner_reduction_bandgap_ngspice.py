@@ -20,6 +20,8 @@ docstring), 대역 에이전트가 측정하는 것을 바꾸지 않는다.
 
 **실행 시간 129초(실측).** 대부분은 9코너 x 5테스트벤치 스윕 두 번(진입 ~57초,
 움직인 덱의 판정 ~57초)이고 나머지 시뮬레이션은 dc_tc 하나로 줄여 놓았다.
+그래서 이 파일 전체가 `slow`로 표시돼 있다 - `pytest -m "not slow"`가 평소의
+TDD 주기이고, 이 파일은 병합 전에 돌린다.
 """
 import os
 
@@ -33,6 +35,8 @@ from analogcoder.pvt import all_corners, run_full_pvt_sweep
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
 from analogcoder.state import RunState
+
+pytestmark = pytest.mark.slow
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC_PATH = os.path.join(REPO, "benchmarks", "bandgap", "spec_corner_reduction.yaml")
@@ -99,6 +103,12 @@ def test_the_mid_loop_sees_corners_and_the_set_is_smaller_than_the_full_sweep(en
 
     # 이 실행에서 실제로 나온 값들. 씨앗 6코너는 전부 ff/ss이고 tt 3개가 밖에
     # 남는다 - tt는 전형 코너라 어떤 기준의 최악도 아니다.
+    #
+    # **아래 정확한 코너 이름들은 이 기계의 ngspice로 잰 값이다.** 위의
+    # `len(cs.corners) < 1 + len(grid)`가 이 하위 프로젝트의 구조적 주장(축소가
+    # 실제로 일어난다)이고, 여기 이름 집합은 그 위에 얹은 실측 고정이다.
+    # ngspice 빌드나 PDK 모델이 바뀌면 argmax가 다른 코너로 갈 수 있고, 그때
+    # 이 단언이 실패하는 것은 코드 결함이 아니라 **다시 재야 한다**는 신호다.
     assert len(cs.corners) == 7
     assert {label(c) for c in cs.corners[1:]} == {
         "ff/1.62/27.0", "ff/1.8/27.0", "ff/1.98/27.0",
@@ -284,6 +294,10 @@ def test_the_argmax_moves_when_the_design_moves(entry_sweep, verdict_sweep):
     거의 안 움직이면 코너 지속성이 좋아 어떤 적응형 기법도 고정 집합을 이기지
     못하고, 많이 움직이면 적응이 필요하다. 다음 축소 기법을 고르는 근거가 이
     숫자다.
+
+    **아래 수치는 이 기계의 ngspice로 잰 것이다** - argmax의 정체는 모델과
+    시뮬레이터 빌드에 딸린 사실이라, 빌드가 바뀌면 실패가 아니라 재측정
+    신호로 읽어야 한다(위 씨앗 테스트의 코너 이름들도 같다).
 
     **실측: 22개 기준 중 5개가 움직였다.** 다섯 개 전부 씨앗 **안**에서
     안으로 움직였다 - 그래서 위 테스트의 재진입이 발화하지 않는다. 그리고

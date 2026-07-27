@@ -311,8 +311,17 @@ that number was measured.
   tt/ss/ff × 1.62/1.8/1.98 V × 27 °C), and the numbers are unflattering.**
   Seed = **6 corners + the deck = 7 selected points**, and the mid loop also
   runs **1 probe**, so an iteration costs **8 simulated points out of a 9-corner
-  grid** — the saving on this grid is one point, not two. The 3 corners left
-  outside the set are all `tt`. Re-entry fired **zero** times. argmax drift
+  grid — per testbench**. That per-testbench qualifier is the whole cost story:
+  the loop in `corner_sim` is testbenches-outside, corners-inside, so this spec's
+  5 testbenches make it **40 direct simulations per iteration** (~250 s) against
+  5 before the branch, not the ~4 the design's cost table reads as. LLM calls per
+  iteration are unchanged. The saving against the full grid is one point per
+  testbench, not two. It compounds with criteria count: the seed is bounded by
+  `min(#criteria, #corners)`, so enabling this block on `spec_pvt.yaml` (45
+  corners, 22 criteria) projects to ~125 direct sims per iteration — which can
+  cost *more* than the 286 s full sweep it is meant to pre-empt. A `max_corners`
+  ceiling is out of scope here and is a prerequisite for that spec. The 3 corners
+  left outside the set are all `tt`. Re-entry fired **zero** times. argmax drift
   between the entry sweep and the verdict sweep of a moved deck
   (`TRIMAMP.Xt.W`/`BUF_P.Xt.W` 8 → 4, which does fail `buf1_loop_gain` and
   `buf1_phase_margin`): **5 of 22 criteria moved**, and **all 5 landed on corners
@@ -941,5 +950,11 @@ assuming a weak-model failure is a code bug.
   `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`. The other is
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
-  fixtures; it stays in the default run. So `pytest -q` is ~3 min without the
-  optimizer case and ~33 min with it.
+  fixtures.
+- **`pytest -m "not slow"` is the normal TDD cycle (~45 s).** Both files above
+  carry the `slow` marker, registered in `pyproject.toml` — per-test on the
+  optimizer case (the rest of that file is fast) and file-wide via `pytestmark`
+  on the corner-reduction one. A plain `pytest -q` is ~3 min (corner reduction
+  included, optimizer case still deselected by node id) and ~33 min with
+  everything. Before this marker existed `pytest -q` had silently gone 45 s →
+  3 min with no documented way to opt out.

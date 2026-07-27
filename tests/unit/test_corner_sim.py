@@ -527,6 +527,33 @@ async def test_a_netlist_argument_that_lags_the_run_state_is_rejected(tmp_path):
         await sim({"tb": DECK + "* tuned\n"}, _spec_ge_40())
 
 
+async def test_a_second_testbench_mismatch_costs_no_agent_call(tmp_path):
+    """결정론적 게이트는 LLM 호출보다 **먼저** 돈다 - 이 저장소의 문서화된 순서다.
+
+    검사가 에이전트 루프 안에 있으면 tb2의 불일치는 tb1의 LLM 호출을 이미
+    쓴 뒤에야 발견된다. 면적 게이트와 refdes 게이트가 `verify_pre` 앞에
+    있는 것과 같은 이유다.
+
+    **어떤 변형을 잡는가.** 검사를 다시 에이전트 루프 안으로 되돌리는 변형.
+    그러면 agent 호출 수가 0이 아니라 1이 된다.
+    """
+    state = _two_tb_state(tmp_path)
+    calls: list = []
+    sim = build_corner_simulate(
+        _agent_sequence([{}, {}], seen_paths=calls),
+        _backend([{"g": 50.0}, {"h": 20.0}]),
+        state,
+        CornerState(CornerSet(corners=(NOMINAL,), probe_order=())),
+        _noop_log,
+    )
+
+    # tb1은 일치하고 tb2만 어긋난다.
+    with pytest.raises(ValueError, match="'tb2'"):
+        await sim({"tb1": DECK, "tb2": DECK2 + "* tuned\n"}, _spec_two_testbenches())
+
+    assert calls == []
+
+
 async def test_the_rotation_is_committed_even_when_a_selected_corner_raises(tmp_path):
     # 선택 코너의 실패는 판정 경로라 삼킬 수 없고 그대로 올라간다. 그런데
     # optimizer._run_simulation이 그 예외를 삼키고 계속 돌기 때문에, 회전을

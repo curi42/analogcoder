@@ -120,9 +120,20 @@ def _load_corner_reduction(raw: dict) -> CornerReduction | None:
             )
         return value
 
+    # A negative budget silently behaves as 0 - the re-entry loop compares
+    # `attempt >= retry_budget` and 0 >= -1 on the first pass - so a spec that
+    # believes it enabled re-entry gets none, with nothing said. Same reason
+    # get_bool above fails loud rather than coercing.
+    retry_budget = int(block.get("retry_budget", 2))
+    if retry_budget < 0:
+        raise ValueError(
+            f"corner_reduction.retry_budget must be >= 0, not {retry_budget}: a "
+            f"negative budget silently behaves as 0 (no re-entry at all)"
+        )
+
     return CornerReduction(
         enabled=get_bool("enabled", True),
-        retry_budget=int(block.get("retry_budget", 2)),
+        retry_budget=retry_budget,
         probe=get_bool("probe", True),
     )
 

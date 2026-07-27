@@ -28,3 +28,9 @@ packages = ["src/analogcoder"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# `pytest -m "not slow"` is the normal TDD cycle. Without a registered marker
+# pytest warns on every use, and this repo treats a warning as a finding - so
+# the marker is declared here rather than left to a per-file pytestmark.
+markers = [
+    "slow: a real-ngspice test measured in minutes, not seconds (a full PVT sweep or several). Deselect with -m 'not slow' for a normal TDD cycle; run before merging anything under pvt.py, optimizer.py, area.py, corner_sim.py, corner_selection.py or judge_tools.py.",
+]

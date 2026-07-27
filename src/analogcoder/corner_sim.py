@@ -136,8 +136,19 @@ def build_corner_simulate(
 
         paths = state.current_netlist_paths()
         try:
+            # **결정론적 게이트는 LLM 호출보다 먼저 돈다** - 이 저장소가 면적
+            # 게이트와 refdes 게이트에 대해 문서로 못박아 둔 순서다. 검사를
+            # 에이전트 루프 안에 두면 tb2의 불일치는 tb1의 LLM 호출을 이미 쓴
+            # 뒤에야 발견된다. 여기서 한 바퀴 먼저 돌면 어느 테스트벤치가
+            # 어긋났든 호출은 하나도 쓰이지 않는다.
+            #
+            # try **안**이어야 한다: 밖으로 빼면 위에서 이미 진행된 회전이
+            # finally에 도달하지 못해 커밋되지 않고, optimizer._run_simulation이
+            # 이 예외를 삼키는 경로에서 상자가 같은 탐침 코너에 영원히 머문다.
             for tb in spec.testbenches:
                 _check_deck_matches_state(tb.name, netlist_texts[tb.name], paths[tb.name])
+
+            for tb in spec.testbenches:
                 agent_result = await agent_simulate(paths[tb.name], tb.control_block)
                 by_testbench[tb.name] = agent_result
                 # 기본값 "success"에 도달하는 경로는 오늘 없다 - SIMULATION_SCHEMA가
