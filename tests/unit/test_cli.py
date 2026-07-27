@@ -846,3 +846,48 @@ async def test_the_optimizer_proposal_runs_on_the_optimizer_agent_backend(tmp_pa
     args = mock_propose.await_args.args
     assert args[:4] == ("structure", [{"name": "gain"}], "iq_ua", "netlist")
     assert args[4].model == "haiku"
+
+
+# --- 최종 리뷰 Finding 2: 결과가 최적화 **전** 회로를 설명하고 있었다 --------
+
+
+@pytest.mark.asyncio
+async def test_the_reported_criteria_come_from_the_version_optimization_landed_on(tmp_path):
+    # final_netlist_paths는 착지 버전으로 갱신되는데 final_criteria는 메인
+    # 루프의 judge 결과(최적화 **전** 덱)로 남아 있었다. 실측 bandgap 실행에서
+    # 212.25uA를 재는 넷리스트 경로 옆에 212.99uA가 적혔다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+    landed = [{"name": "iq", "target": "<=300.0", "actual": 212.25, "pass": True,
+               "margin": -87.75}]
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            return _optimization_result(status="OPTIMIZED", final_criteria=landed)
+
+        return run
+
+    result, _, _ = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o7"), fake_optimization, passing
+    )
+
+    assert result["final_criteria"] == landed
+
+
+@pytest.mark.asyncio
+async def test_an_optimization_without_criteria_leaves_the_main_loop_judgement_alone(tmp_path):
+    # 최적화가 기준을 재지 못한 경로(기준선 시뮬레이션 실패, 이 단계 자체가
+    # 터진 경우)가 있다. 그때 없는 값으로 덮으면 리포트가 통째로 빈다.
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    def fake_optimization(captured, mock_sweep):
+        async def run(netlist_texts, spec, state, agents):
+            return _optimization_result(failure="AgentExecutionError: rate limited")
+
+        return run
+
+    result, _, _ = await _run_with_optimization(
+        tmp_path, OPTIMIZE_SPEC_YAML, str(tmp_path / "runs" / "o8"), fake_optimization, passing
+    )
+
+    assert result["final_criteria"] == []   # 메인 루프가 남긴 것 그대로
+    assert result["optimization"]["failure"] == "AgentExecutionError: rate limited"

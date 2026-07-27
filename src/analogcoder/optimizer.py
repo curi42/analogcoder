@@ -232,6 +232,7 @@ def _result(
     failure: str | None = None,
     guard_infeasible: list[str] | None = None,
     area_coverage: dict | None = None,
+    final_criteria: list[dict] | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -267,6 +268,14 @@ def _result(
         # 이력에도 안 보이면 "예산이 있었지만 안 걸렸다"와 "예산이 아예 없다"가
         # 같은 모양이 된다.
         "area_coverage": area_coverage,
+        # **돌려주는 넷리스트에서 잰** 기준들. 실행 결과의 final_criteria는
+        # 메인 루프의 judge 결과라 최적화 전 덱을 설명하는데, cli.py는
+        # final_netlist_paths만 착지 버전으로 갱신했다 - 실측 bandgap 실행에서
+        # 212.25uA를 재는 넷리스트 옆에 212.99uA가 적혔다. 이분 탐색이 되돌아온
+        # 실행에서는 마지막 수락 단계가 아니라 **착지한 버전**의 것이다.
+        # 잴 수 없었던 경로(기준선 실패, 이 단계가 터짐)에서는 None이고,
+        # 그때 cli.py는 메인 루프의 판정을 그대로 둔다.
+        "final_criteria": final_criteria,
         "final_netlist_paths": state.current_netlist_paths(),
     }
 
@@ -346,10 +355,18 @@ async def _search(
 
     records는 **버전 인덱스 → 그 버전에서 잰 값**이다. 확인 스윕이 실패해서
     이분 탐색이 중간 버전에 착지했을 때, 마지막 버전이 아니라 착지한 버전의
-    수치를 보고해야 하기 때문이다."""
+    수치를 보고해야 하기 때문이다. 기준 판정(criteria)도 같은 이유로 여기
+    들어간다 - 리포트가 설명해야 하는 것은 돌려주는 덱이다."""
     objective_name = spec.optimize.objective
     anchor_index = _version_index(state, canonical_name)
-    records = {anchor_index: {"objective": objective_before, "area": area_before}}
+    baseline_verdict = evaluate_criteria(baseline_measurements, spec.all_criteria)
+    records = {
+        anchor_index: {
+            "objective": objective_before,
+            "area": area_before,
+            "criteria": baseline_verdict["criteria"],
+        }
+    }
 
     # **최적화 시작 시점**의 넷리스트로 만든다 - 에어리어 게이트가 여기서 막아야
     # 할 것은 최적화 자신이 만든 성장이다.
@@ -365,7 +382,7 @@ async def _search(
 
     margins = [
         {**entry, "allowance": allowances.get(entry["name"], 0.0)}
-        for entry in evaluate_criteria(baseline_measurements, spec.all_criteria)["criteria"]
+        for entry in baseline_verdict["criteria"]
     ]
     proposal = await agents.propose(structure_view, margins, objective_name, netlist_view)
     state.log_event("optimize_proposal", {"objective": objective_name, **proposal})
@@ -525,6 +542,9 @@ async def _search(
                 accepted_count += 1
                 records[_version_index(state, canonical_name)] = {
                     "objective": objective, "area": area,
+                    # 이 버전에서 실제로 잰 기준 판정. 이분 탐색이 여기 착지하면
+                    # 리포트가 쓰는 것이 이것이다.
+                    "criteria": verdict["criteria"],
                 }
                 continue
 
@@ -788,7 +808,7 @@ async def _optimize(
             status, state, objective_before, record["objective"], area_before, record["area"],
             accepted=accepted_count, rejected=rejected_count, pvt_sweep=sweep,
             corner_failure=corner_failure, guard_infeasible=guard_infeasible,
-            area_coverage=area_coverage,
+            area_coverage=area_coverage, final_criteria=record.get("criteria"),
         )
 
     if not corner_capable:

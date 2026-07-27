@@ -186,6 +186,16 @@ async def _run(args) -> dict:
         # 최적화는 넷리스트 버전을 밀고 되돌린다. 실행이 내놓는 경로는 그것이
         # 착지한 버전이어야 한다.
         result["final_netlist_paths"] = state.current_netlist_paths()
+        # ...그리고 기준 판정도 같은 버전의 것이어야 한다. result["final_criteria"]는
+        # run_orchestration의 judge 결과라 최적화 **전** 덱을 설명한다. 경로만
+        # 갱신하고 이것을 두면 리포트가 서로 다른 두 회로를 나란히 적는다 -
+        # 실측 bandgap 실행에서 212.25uA를 재는 넷리스트 옆에 212.99uA가 적혔다.
+        #
+        # 최적화가 기준을 재지 못한 경로(기준선 시뮬레이션 실패, 이 단계 자체가
+        # 터짐)에서는 None이 오고, 그때는 메인 루프의 판정을 그대로 둔다 -
+        # 없는 값으로 덮으면 리포트가 통째로 빈다.
+        if optimization.get("final_criteria"):
+            result["final_criteria"] = optimization["final_criteria"]
 
     if corner_capable:
         # 최적화가 코너를 확인했으면 그 스윕이 곧 이 넷리스트의 최종 스윕이다.

@@ -391,3 +391,46 @@ async def test_the_entry_and_confirmation_sweeps_are_both_recorded(tmp_path):
     assert all(e["worst_case_corners"] == {
         "iq": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": 268.0}
     } for e in sweep_events)
+
+
+# --- 최종 리뷰 Finding 2: 리포트가 최적화 **전** 회로를 설명하고 있었다 ------
+# result["final_criteria"]는 run_orchestration의 judge 결과 - 최적화 전 덱이다.
+# cli.py는 final_netlist_paths만 착지 버전으로 갱신하고 final_criteria는 그대로
+# 두므로, 실측 bandgap 실행의 리포트는 212.25uA를 재는 넷리스트 옆에 212.99uA를
+# 적었다. 결과는 돌려주는 덱을 설명해야 한다.
+
+
+@pytest.mark.asyncio
+async def test_the_reported_criteria_belong_to_the_version_bisection_landed_on(tmp_path):
+    # 진입 통과, 확인 실패 -> 이분 탐색이 m=3(220)에 착지한다. 마지막으로
+    # 수락된 단계는 m=1(200)이므로, 마지막 단계의 수치를 싣는 구현은 여기서
+    # 깨진다 - 그것이 이 테스트의 전부다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 220.0, 210.0, 200.0, 200.0, 200.0])
+    agents.verify_corners = lambda texts: _sweep(
+        not ("m=2" in texts["tb"] or "m=1" in texts["tb"]), 268.0
+    )
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    assert "m=3" in state.current_netlist_texts()["tb"]
+    assert result["objective_after"] == 220.0
+    criteria = result["final_criteria"]
+    assert [c["name"] for c in criteria] == ["iq"]
+    assert criteria[0]["actual"] == 220.0   # 200.0(마지막 수락 단계)이 아니다
+    assert criteria[0]["pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_run_reports_the_baseline_criteria(tmp_path):
+    # 한 단계도 살아남지 않으면 돌려주는 덱은 시작 덱이고, 기준도 기준선의
+    # 것이어야 한다 - 비어 있으면 리포트가 아무것도 못 쓴다.
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 260.0, 260.0, 260.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert [c["actual"] for c in result["final_criteria"]] == [235.0]
