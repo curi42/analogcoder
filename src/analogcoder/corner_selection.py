@@ -55,6 +55,24 @@ def label(point: CornerPoint | None) -> str:
 
 
 def _as_point(raw: dict) -> CornerPoint:
+    """worst_case_corners/per_corner 항목 하나를 코너로 읽는다.
+
+    **`(deck)` 항목은 코너가 아니므로 거부한다.** pvt._corner_fields는 렌더링을
+    거치지 않은 덱을 `{"process": "(deck)", "voltage": None, "temperature": None}`
+    으로 적고, corner_sim의 corner_worst는 선택 집합에 NOMINAL을 포함하므로 그
+    모양을 실제로 만들어 낸다. 검사 없이 통과시키면
+    `CornerPoint(process="(deck)", voltage=None, ...)`이 되어
+    `render_corner_netlist`가 `.include ".../pdk_corner_(deck).inc"`를 쓰고
+    존재하지 않는 파일을 ngspice에 넘긴다 - "좌표가 없다"는 사실이 조용히
+    좌표로 둔갑하는 것이다. 좌표의 **부재**로 판별한다(이름 매칭이 아니다):
+    실제 코너는 언제나 voltage/temperature를 둘 다 갖는다."""
+    if raw.get("voltage") is None or raw.get("temperature") is None:
+        raise ValueError(
+            f"not a corner: {raw!r} has no voltage/temperature coordinates. "
+            f"pvt._corner_fields writes this shape for the unrendered deck "
+            f'("(deck)", i.e. corner_selection.NOMINAL), which is not a point '
+            f"any corner set can grow to - it is already corners[0]."
+        )
     return CornerPoint(
         process=raw["process"], voltage=raw["voltage"], temperature=raw["temperature"]
     )

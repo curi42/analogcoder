@@ -217,3 +217,23 @@ def test_corner_set_rejects_a_duplicate_within_the_probe_order():
     # 코너를 상대적으로 덜 훑게 된다.
     with pytest.raises(ValueError, match="duplicate"):
         CornerSet(corners=(NOMINAL,), probe_order=(FS, FS))
+
+
+def test_a_deck_entry_is_rejected_rather_than_turned_into_a_corner(_spec):
+    """`(deck)` 항목은 코너가 아니다 - 렌더링을 거치지 않은 덱 그 자체다.
+
+    corner-aware simulate의 corner_worst는 선택 집합의 최악값이므로 NOMINAL이
+    최악인 기준을 담을 수 있고, pvt._corner_fields는 그것을
+    `{"process": "(deck)", "voltage": None, "temperature": None}`으로 적는다.
+    그 dict가 성장 경로에 들어오면 CornerPoint(process="(deck)", voltage=None)이
+    되어 `.include ".../pdk_corner_(deck).inc"`를 렌더링하고, 없는 파일을 ngspice가
+    읽는다 - 좌표가 없다는 사실이 조용히 좌표로 둔갑한 것이다. 오늘 그 경로로
+    가는 호출부는 없으므로 이것은 미래를 막는 벽이다."""
+    deck_entry = {"process": "(deck)", "voltage": None, "temperature": None, "value": 41.0}
+
+    with pytest.raises(ValueError, match=r"\(deck\)"):
+        seed_from_sweep(_sweep({"gain": deck_entry}), _spec)
+
+    cs = CornerSet(corners=(NOMINAL, FS), probe_order=())
+    with pytest.raises(ValueError, match=r"\(deck\)"):
+        grown_with(cs, _sweep({"gain": deck_entry}), ["gain"])
