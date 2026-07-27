@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.area import total_area
-from analogcoder.area_limits import check_area_growth, index_baseline_components
+from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
 from analogcoder.judge_tools import evaluate_criteria, guard_band_violations, ratio_allowances
 from analogcoder.netlist import (
     Component,
@@ -10,7 +10,6 @@ from analogcoder.netlist import (
     check_param_applicability,
     check_refdes_resolution,
     check_stimulus_untouched,
-    parse_netlist,
     parse_spice_value,
 )
 from analogcoder.patterns import find_patterns
@@ -20,7 +19,6 @@ from analogcoder.structure_view import render_netlist, render_structure, select_
 
 MAX_OPTIMIZE_STEPS = 20
 STEP_RATIO = 0.9
-_INTEGER_PARAMS = ("m", "nf")
 
 
 @dataclass
@@ -32,81 +30,65 @@ class OptimizerAgents:
     verify_corners: Callable | None = None
 
 
-def _is_integer_param(param: str) -> bool:
-    """정수로 다룰 파라미터인가. area_limits._integrality_violation이 이미
-    같은 두 이름(`m`, `nf`)에 정수성을 요구하므로 두 곳이 어긋나면 안 된다 -
-    어긋나면 이 루프가 만든 `m=3.6`을 에어리어 게이트가 위반으로 되받아
-    후보가 첫 단계에서 통째로 소진된다."""
-    return param.lower() in _INTEGER_PARAMS
-
-
-def _next_value(current: float, param: str, direction: str) -> float | None:
+def _next_value(current: float, integer: bool, direction: str) -> float | None:
     """한 단계 이동한 값. 더 갈 수 없으면 None (후보 소진).
 
-    `m`/`nf`는 병렬 소자/핑거의 **개수**라 0.9배가 의미를 갖지 않는다. 다음
-    정수로 가고 1 미만으로는 내려가지 않는다."""
-    if _is_integer_param(param):
+    개수 파라미터(m/nf에 도달하는 것)는 0.9배가 의미를 갖지 않는다. 다음
+    정수로 가고 1 미만으로는 내려가지 않는다.
+
+    **줄어드는 쪽에는 바닥이 없다.** 최소 기하 치수는 PDK 지식이고 이
+    프로젝트는 그것을 추측하는 것을 금한다 (CLAUDE.md: sky130 소자 모델은
+    binned이고 bin을 벗어나면 경고가 아니라 실행 중단이다). 숫자를 지어내는
+    대신 시뮬레이션 실패를 단계 거절로 받는다 - _run_step_simulation 참고."""
+    if integer:
         step = -1 if direction == "decrease" else 1
         nxt = int(current) + step
         return None if nxt < 1 else float(nxt)
     return current * STEP_RATIO if direction == "decrease" else current / STEP_RATIO
 
 
-def _format_value(value: float, param: str) -> str:
-    """넷리스트에 쓸 문자열. 정수 파라미터는 정수로 - `m=3.0`은
+def _format_value(value: float, integer: bool) -> str:
+    """넷리스트에 쓸 문자열. 개수 파라미터는 정수로 - `m=3.0`은
     area_limits의 정수성 검사가 거부한다."""
-    if _is_integer_param(param):
+    if integer:
         return str(int(round(value)))
     return f"{value:.6g}"
 
 
-def _index_components(netlist_text: str) -> dict[str, Component]:
-    """"<path>.<refdes>"와, 넷리스트 전체에서 유일한 refdes에 한해 맨 refdes로
-    색인한 소자 표. 현재 값을 읽으려고만 쓴다 - 해석 가능성 판정 자체는
-    check_refdes_resolution의 몫이다."""
-    parsed = parse_netlist(netlist_text)
-    everything = list(parsed.top_components) + [
-        c for subckt in parsed.subckts.values() for c in subckt.components
-    ]
-    counts: dict[str, int] = {}
-    for component in everything:
-        counts[component.refdes] = counts.get(component.refdes, 0) + 1
+def _deck_token(component: Component, param: str) -> str | None:
+    """이 소자의 줄에 **실제로 적힌 철자**의 토큰 이름. 없으면 None.
 
-    indexed: dict[str, Component] = {}
-    for component in everything:
-        if component.scope:
-            indexed[f"{component.scope}.{component.refdes}"] = component
-        if counts[component.refdes] == 1:
-            indexed[component.refdes] = component
-    return indexed
+    철자를 그대로 돌려주는 것이 핵심이다. SPICE는 대소문자를 안 가리지만
+    apply_changes의 _replace_param은 `f"{param}="` 접두로 찾으므로 **가린다**.
+    덱이 `W=2e-6`인데 제안이 `w`라고 쓴 것을 접어서 읽고 `w`로 되쓰면,
+    apply_changes가 기존 토큰을 못 찾아 `w=...`를 하나 더 붙인다 - 덱이 폭을
+    두 번 들고, resolved_token/total_area는 대소문자 무시 **첫** 매치(낡은
+    `W=2e-6`)를 읽으므로 에어리어 게이트와 예산이 그때부터 변경 전 폭을 본다."""
+    if param == "value":
+        return "value"
+    if param in component.params:
+        return param
+    for name in component.params:
+        if name.lower() == param.lower():
+            return name
+    return None
 
 
-def _current_value(netlist_text: str, refdes: str, param: str) -> float | None:
+def _current_value(component: Component, token: str) -> float | None:
     """넷리스트에 적힌 현재 값. 읽지 못하면 None - 추측하지 않는다.
 
     후보가 값을 실어 보낼 수 없으므로(OPTIMIZER_SCHEMA가
-    additionalProperties: false) 출발점은 언제나 넷리스트 원문이다."""
-    component = _index_components(netlist_text).get(refdes)
-    if component is None:
-        return None
-
-    if param == "value":
-        raw = component.value
-    else:
-        raw = component.params.get(param)
-        if raw is None:
-            # SPICE 토큰 이름은 대소문자를 가리지 않는다. 파서는 원문 그대로
-            # 담으므로 여기서 한 번 접어 준다.
-            lowered = {k.lower(): v for k, v in component.params.items()}
-            raw = lowered.get(param.lower())
+    additionalProperties: false) 출발점은 언제나 넷리스트 원문이다.
+    component.resolved_params(해소된 수치)가 아니라 원문 문자열을 읽는다:
+    `W='wn*2'`의 해소값 2e-6을 알더라도 그 소자의 크기가 다른 곳에서
+    정해진다는 뜻이라, 리터럴로 덮어쓰면 설계자의 공유 파라미터를 끊는다.
+    원문은 parse_spice_value에서 ValueError가 나므로 자연히 후보가 소진된다."""
+    raw = component.value if token == "value" else component.params.get(token)
     if raw is None:
         return None
     try:
         return parse_spice_value(raw)
     except ValueError:
-        # `W='wn*2'` 같은 파라미터 참조. 해소된 수치를 알더라도 그 소자의
-        # 크기가 다른 곳에서 정해진다는 뜻이라, 여기서 리터럴로 덮어쓰면
-        # 설계자의 의도(공유 파라미터)를 조용히 끊는다.
         return None
 
 
@@ -132,6 +114,31 @@ def _gate_addressing(netlist_text: str, change: dict) -> tuple[str | None, str |
         if not ok:
             return name, feedback
     return None, None
+
+
+async def _run_simulation(simulate, netlist_texts: dict[str, str], spec) -> tuple[dict | None, str | None]:
+    """(측정 결과, 실패 이유). 실패하면 (None, 이유).
+
+    예외를 삼키는 이유는 이 단계에 **FAIL 결과가 없다**는 계약 때문이다.
+    최적화는 이미 통과한 설계 위에서 도는 것이라, 여기서 예외가 새어 나가면
+    통과한 실행을 크래시로 바꾼다.
+
+    실제로 도달 가능한 경로다: 이 루프의 기본 방향은 폭을 줄여 전류를 줄이는
+    것이고 줄어드는 쪽에는 바닥이 없다. sky130 소자 모델은 binned이라 wmin
+    아래로 내려가면 ngspice가 `could not find a valid modelname`으로 실행을
+    **중단**한다 - 경고가 아니다. 최소 치수를 숫자로 박는 대신(그것은 PDK
+    지식이고 이 프로젝트는 추측을 금한다) 실패를 단계 거절로 받는다.
+
+    status가 success가 아닌 경우도 같이 막는다 - 수렴 실패한 해의 측정값으로
+    마진을 태우는 결정을 내리면 안 된다."""
+    try:
+        result = await simulate(netlist_texts, spec)
+    except Exception as exc:  # noqa: BLE001 - 계약상 어떤 실패도 결과를 바꾸면 안 된다
+        return None, f"simulation raised {type(exc).__name__}: {exc}"
+    status = result.get("status")
+    if status != "success":
+        return None, f"simulation did not succeed (status={status!r})"
+    return result, None
 
 
 def _result(
@@ -186,20 +193,25 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
         state.push_netlist_version(netlist_texts)
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
-    sim_result = await agents.simulate(netlist_texts, spec)
-    state.log_event("optimize_baseline", {"objective": objective_name, **sim_result})
-    baseline_measurements = sim_result["measurements"]
+    sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
+    state.log_event(
+        "optimize_baseline",
+        {"objective": objective_name, **(sim_result or {"failure": sim_failure})},
+    )
+    baseline_measurements = sim_result["measurements"] if sim_result else {}
     objective_before = baseline_measurements.get(objective_name)
 
     if objective_before is None:
-        # 목적값을 못 재면 개선 여부를 판정할 수 없다. 통과한 설계를 그대로 둔다.
+        # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
+        # 판정할 수 없다. 통과한 설계를 그대로 둔다.
         state.log_event(
             "optimize_step",
             {
                 "refdes": None, "param": None, "before": None, "after": None,
                 "objective": None, "area": area_before, "accepted": False,
                 "gate": None,
-                "reason": f"objective {objective_name!r} is not among the measurements",
+                "reason": sim_failure
+                or f"objective {objective_name!r} is not among the measurements",
             },
         )
         return _result("UNCHANGED", state, None, None, area_before, area_before)
@@ -255,7 +267,13 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
                 rejected_count += 1
                 break
 
-            before = _current_value(current_text, refdes, param)
+            # 값 읽기와 정수 판정 둘 다 index_baseline_components의 색인을 쓴다.
+            # 같은 표를 쓰지 않으면 "어느 소자의 값을 읽어 한 단계 옮기는가"와
+            # "어느 소자가 편집되는가"가 갈라질 수 있다 - 이 저장소가 이미 두 번
+            # 닫은 넷리스트 해소 이중화 결함의 더 나쁜 판본이다.
+            component = index_baseline_components(current_text).get(refdes)
+            token = _deck_token(component, param) if component is not None else None
+            before = _current_value(component, token) if token is not None else None
             if before is None:
                 event["reason"] = (
                     f"cannot read a numeric current value for {refdes}.{param} in the netlist"
@@ -264,18 +282,24 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
                 break
             event["before"] = before
 
-            after = _next_value(before, param, direction)
+            # 정수성은 이름이 아니라 param이 **도달하는 토큰**에서 나온다.
+            # `Xa ... mult=4`가 본문 `m='mult'`에 도달하면 이름은 mult지만
+            # 개수다 - 이름만 보면 3.6을 만들고 에어리어 게이트가 정수 위반으로
+            # 되받는다. area_limits와 같은 함수를 쓰므로 갈라질 수 없다.
+            integer = is_count_param(component, token)
+            after = _next_value(before, integer, direction)
             if after is None:
                 event["reason"] = f"{refdes}.{param} cannot move further in direction {direction!r}"
                 state.log_event("optimize_step", event)
                 break
-            new_value = _format_value(after, param)
+            new_value = _format_value(after, integer)
             # 로그의 after는 넷리스트에 실제로 적힌 값이어야 한다. 원시 float를
             # 남기면 다음 단계의 before(덱에서 다시 읽은 값)와 미세하게
             # 어긋나 이력이 연결되지 않는다.
             event["after"] = parse_spice_value(new_value)
 
-            change = {"refdes": refdes, "param": param, "new_value": new_value}
+            # param이 아니라 **덱에 적힌 철자**(token)로 쓴다 - _deck_token 참고.
+            change = {"refdes": refdes, "param": token, "new_value": new_value}
             # 에어리어 게이트만 new_value를 읽으므로 값이 정해진 뒤에 온다.
             area_ok, area_feedback = check_area_growth(baseline_components, [change])
             if not area_ok:
@@ -303,7 +327,17 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
                 rejected_count += 1
                 break
 
-            step_sim = await agents.simulate(new_texts, spec)
+            step_sim, sim_failure = await _run_simulation(agents.simulate, new_texts, spec)
+            if step_sim is None:
+                # 회로가 시뮬레이터를 통과하지 못하는 지점까지 갔다는 뜻이다
+                # (예: sky130 소자 bin을 벗어난 폭). 되돌리고 후보를 소진한다 -
+                # 여기서 예외가 새어 나가면 통과한 실행이 크래시가 된다.
+                event["reason"] = sim_failure
+                state.log_event("optimize_step", event)
+                state.rollback()
+                rejected_count += 1
+                break
+
             measurements = step_sim["measurements"]
             verdict = evaluate_criteria(measurements, spec.all_criteria)
             violations = guard_band_violations(measurements, spec.all_criteria, allowances)

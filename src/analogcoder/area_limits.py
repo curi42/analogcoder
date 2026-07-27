@@ -189,6 +189,28 @@ _COUNT_TOKENS = frozenset({"m"})
 _NEUTRAL_TOKENS = frozenset({"nf"})
 
 
+def param_tokens(component: Component | None, param: str) -> set[str]:
+    """제안의 param 이름이 실제로 **도달하는** 소자 토큰 이름들(소문자).
+
+    추적이 되면 도달점의 토큰을 쓰고, 안 되면 이름 자체로 떨어진다. 이 구별이
+    중요한 이유는 래퍼 셀 흐름 때문이다: `Xa ... mult=4`가 본문의
+    `m='mult'`에 도달할 때, 이름은 `mult`지만 실제 토큰은 `m`이다. 이름만
+    보면 그것이 개수라는 사실을 놓친다.
+
+    optimizer.py의 단계 크기 결정과 _integrality_violation이 **같은** 함수를
+    쓴다 - 둘이 갈라지면 최적화 루프가 `mult=3.6`을 만들고 에어리어 게이트가
+    그것을 정수 위반으로 되받아, 후보가 첫 단계에서 통째로 죽는다."""
+    traced = component.traced_params.get(param) if component is not None else None
+    if traced:
+        return {t.token.lower() for t in traced}
+    return {param.lower()}
+
+
+def is_count_param(component: Component | None, param: str) -> bool:
+    """그 param이 개수(m/nf)에 도달하는가 - 즉 정수여야 하는가."""
+    return bool(param_tokens(component, param) & (_COUNT_TOKENS | _NEUTRAL_TOKENS))
+
+
 def resolved_token(component: Component, token: str) -> float | None:
     """소자가 쓴 토큰의 해소값을 대소문자 무시로 찾는다. SPICE는 대소문자를
     구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다.
@@ -471,7 +493,6 @@ def evaluate_area_growth(
         traced = component.traced_params.get(param)
         if traced:
             targets = _traced_targets(refdes, traced)
-            tokens = {t.token.lower() for t in traced}
         else:
             # 추적이 안 되는 파라미터는 소자를 직접 주소지정한 것으로 본다.
             # 서브회로 인스턴스인데 추적에 실패한 경우도 여기로 오는데, 그때는
@@ -479,7 +500,9 @@ def evaluate_area_growth(
             # 된다 - "무엇을 키우는지 알아내지 못했다"와 "아무것도 키우지
             # 않는다"는 다른 사실이고, 후자만이 nf처럼 의도적으로 무제약이다.
             targets = [_direct_target(refdes, component, param)]
-            tokens = {param.lower()}
+        # 토큰 집합은 param_tokens 한 곳에서만 만든다 - optimizer.py의 정수
+        # 판정이 같은 함수를 쓰므로 여기서 다시 만들면 두 곳이 갈라진다.
+        tokens = param_tokens(component, param)
 
         baseline_value = _baseline_value_for(component, param)
         # 빈 환경으로 충분한 이유는 TUNER_SCHEMA가 new_value를 접미사
