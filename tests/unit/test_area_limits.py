@@ -5,7 +5,17 @@ from analogcoder.area_limits import (
     _tier_baseline_value,
     allowed_multiplier_for,
     check_area_growth,
+    evaluate_area_growth,
     index_baseline_components,
+)
+from tests.unit.wrapper_decks import (
+    CONTESTED_NAME_DECK,
+    INCLUDE_ONLY_DECK,
+    PARTIAL_REACH_DECK,
+    POSITIONAL_VALUE_DECK,
+    SIBLING_INSTANCE_DECK,
+    UNRESOLVABLE_M_DECK,
+    WRAPPER_DECK,
 )
 
 NETLIST_WITH_SUBCKT = (
@@ -476,3 +486,506 @@ def test_the_resolved_tier_baseline_uses_the_parameterised_geometry():
 
     assert ok is False
     assert "2.0x" in feedback
+
+
+# --- 래퍼 셀: 인스턴스 줄에서 크기가 정해지는 덱 -----------------------------
+# 래퍼 셀 덱의 모양만 옮긴 합성 픽스처다 (실물은 사용자 IP). 제네릭
+# 2-트랜지스터 셀이 기하를 파라미터로 선언하고 실제 숫자는 인스턴스 줄에서
+# 온다. 게이트는 파라미터 *이름*(wn/ma1 - 설계자의 명명 규칙)을 해석하지
+# 않고, 그 값이 도달하는 본문 토큰(w/l/m/nf - SPICE 표준 문법)을 추적한다.
+#
+# xin1: ma1 총 폭 = wn(2u) x m(4)  = 8u  -> 3.0x 티어
+# xin2: ma1 총 폭 = wn(20u) x m(2) = 40u -> 2.0x 티어
+#
+# 덱 문자열 자체는 tests/unit/wrapper_decks.py에 있다 - test_params.py가 같은
+# 덱으로 추적 결과를 확인하므로, 복제해 두면 한쪽만 고쳐져 조용히 갈라진다.
+WRAPPER_NETLIST = WRAPPER_DECK
+
+
+def test_wrapper_instance_width_growth_is_bounded():
+    # 이 파일이 존재하는 이유: 예전에는 xin1의 value가 "WRAP_PAIR_TN33"이라
+    # ctype이 X로 남고 X 티어가 없어 어떤 성장도 허용됐다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "8e-6"}]
+    )
+
+    assert ok is False
+    assert "xin1" in feedback
+    assert "ma1" in feedback
+    assert "4.00x" in feedback
+
+
+def test_wrapper_instance_width_growth_within_tier_is_allowed():
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "5e-6"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_wrapper_tier_comes_from_this_instances_own_values():
+    # 같은 2.5x 성장인데 xin1(8u 총 폭, 3.0x 티어)은 통과하고 xin2(40u 총 폭,
+    # 2.0x 티어)는 막힌다. 정의 단위 환경은 인스턴스가 갈린 wn/ma1을 버리므로
+    # 여기서 필요한 숫자를 주지 못한다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin2", "param": "wn", "new_value": "50e-6"}]
+    )
+
+    assert ok is False
+    assert "xin2" in feedback
+
+
+def test_wrapper_count_param_is_capped_flat_at_two():
+    # m은 병렬 소자의 개수다 - 길이가 아니므로 크기별 티어가 아니라 평평한 2.0x.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    rejected, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "12"}]
+    )
+    allowed, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "8"}]
+    )
+
+    assert rejected is False
+    assert "xin1" in feedback
+    assert allowed is True
+
+
+def test_width_and_count_multiply_into_one_total_width():
+    # 6x 구멍: w 3x(단독 허용)와 m 2x(단독 허용)가 같은 제안에 있으면 총 폭은
+    # 6x가 된다. 소자별로 묶어 곱을 봐야 잡힌다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "6e-6"},
+            {"refdes": "xin1", "param": "ma1", "new_value": "8"},
+        ],
+    )
+
+    assert ok is False
+    assert "6.00x" in feedback
+    # ma1만 두 변경이 도달한다. 형제 mb1은 wn의 3x만 받고 3.0x 티어라 통과다.
+    assert "ma1" in feedback
+    assert "mb1" not in feedback
+
+
+def test_each_of_the_two_changes_alone_would_have_been_allowed():
+    # 위 테스트가 진짜로 곱 때문에 막힌 것인지 못박는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    w_only, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "6e-6"}]
+    )
+    m_only, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "8"}]
+    )
+
+    assert w_only is True
+    assert m_only is True
+
+
+def test_finger_count_is_area_neutral_and_excluded_from_the_product():
+    # nf는 손가락 개수다: w를 나눌 뿐 총 폭도 면적도 바꾸지 않는다. 곱에
+    # 들어가면 안 된다 ("판단 불가"가 아니라 "판단할 것이 없다").
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    alone, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "nf_n", "new_value": "4"}]
+    )
+    with_width, feedback2 = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "6e-6"},
+            {"refdes": "xin1", "param": "nf_n", "new_value": "2"},
+        ],
+    )
+
+    assert alone is True, feedback
+    # nf가 곱에 들어갔다면 6x가 되어 막혔을 것이다.
+    assert with_width is True, feedback2
+
+
+def test_a_rejection_says_the_finger_count_was_not_counted():
+    # 면적 중립이라 빼놓았다는 사실이 피드백에 남아야 한다 - 그러지 않으면
+    # 튜너도, 나중에 읽는 사람도 nf가 그냥 잊힌 것으로 오해한다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "8e-6"},
+            {"refdes": "xin1", "param": "nf_n", "new_value": "2"},
+        ],
+    )
+
+    assert ok is False
+    assert "area-neutral" in feedback
+
+
+def test_a_non_integral_count_is_rejected():
+    # m/nf는 개수다. 스키마는 숫자 문자열만 요구하고 게이트는 비율만 보므로
+    # m=6.5가 통과할 수 있었다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok_m, feedback_m = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "6.5"}]
+    )
+    ok_nf, feedback_nf = check_area_growth(
+        components, [{"refdes": "xin1", "param": "nf_n", "new_value": "1.5"}]
+    )
+
+    assert ok_m is False
+    assert "whole number" in feedback_m
+    assert ok_nf is False
+    assert "whole number" in feedback_nf
+
+
+def test_a_shrinking_non_integral_count_is_still_rejected():
+    # 줄어드는 변경은 면적 검사를 건너뛰지만, 정수 조건은 면적과 무관하다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "ma1", "new_value": "2.5"}]
+    )
+
+    assert ok is False
+    assert "whole number" in feedback
+
+
+def test_a_traced_non_size_param_stays_unconstrained():
+    # geomod는 크기가 아니다. 티어도 없고 곱에도 들어가지 않는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "geomod", "new_value": "100"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_an_untraceable_instance_param_falls_back_to_not_blocking():
+    # "무엇을 키우는지 알아내지 못했다"는 "아무것도 키우지 않는다"와 다르다.
+    # 전자는 기존 철학대로 막지 않는다.
+    deck = (
+        "* untraceable\n"
+        ".subckt CELL a b\n"
+        "R1 a b 1k\n"
+        ".ends CELL\n"
+        "xc1 p q CELL rval=1k\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "rval", "new_value": "100k"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_a_wrapper_around_a_pdk_primitive_is_tiered_on_the_scaled_geometry():
+    # .option scale은 계속 존중된다 - sky130 덱이 게이트를 통과하는 이유다.
+    deck = (
+        "* pdk-backed wrapper\n.option scale=1.0u\n"
+        ".subckt CELL d g s b\n"
+        "Xm1 d g s b sky130_fd_pr__nfet_01v8 W=wn L=ln m=mm\n"
+        ".ends CELL\n"
+        "xc1 vd vg vs vb CELL wn=10 ln=1 mm=3\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    # 총 폭 = 10 x 3 x 1u = 30u -> sky130 기하 티어 2.0x. 10 -> 30은 3.0x.
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "30"}]
+    )
+
+    assert ok is False
+    assert "xc1" in feedback
+
+
+# --- C1: 하나의 파라미터가 형제 인스턴스 둘에 도달하는 경우 -----------------
+
+
+def test_one_param_reaching_two_sibling_instances_does_not_square_its_ratio():
+    # 회귀 재현: 그룹 키가 *정의* 컴포넌트(scope+refdes)만으로 만들어져 있어
+    # xl1과 xl2를 통한 두 도달점이 같은 소자로 묶였고, 한 변경의 2.5x가
+    # 6.25x로 곱해졌다. 티어는 소자 하나의 성장 **비율** 한도이므로, 같은
+    # 비율이 두 소자에 각각 일어난 것은 여전히 소자당 2.5x다.
+    components = index_baseline_components(SIBLING_INSTANCE_DECK)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xtop", "param": "wtop", "new_value": "5e-6"}]
+    )
+
+    assert ok is True, feedback
+
+
+def test_two_sibling_instances_are_each_bounded_on_their_own():
+    # 위 수정이 "형제가 있으면 그냥 통과"로 무너지지 않았는지 못박는다.
+    # 소자당 4x는 3.0x 티어를 넘으므로 두 소자 모두 위반으로 보고돼야 한다.
+    components = index_baseline_components(SIBLING_INSTANCE_DECK)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xtop", "param": "wtop", "new_value": "8e-6"}]
+    )
+
+    assert ok is False
+    assert "4.00x" in feedback
+    assert "6.25x" not in feedback
+    assert "xl1" in feedback
+    assert "xl2" in feedback
+
+
+# --- I1: 정의가 .include로만 들어오는 덱 -------------------------------------
+
+
+def test_an_include_only_wrapper_is_reported_as_blind():
+    # parse_netlist는 include를 따라가지 않으므로 이 덱에서는 추적이 원리적으로
+    # 불가능하다. 게이트는 여전히 막지 않지만(기존 철학), "판단할 것이 없다"나
+    # "값을 못 읽었다"와 구별되는 별개의 사실로 기록해야 한다 - 게이트가 조용히
+    # 무력해진 전례가 이 저장소에 이미 두 번 있다.
+    components = index_baseline_components(INCLUDE_ONLY_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xwrap1", "param": "wn", "new_value": "2e-3"}]
+    )
+
+    assert result.approved is True
+    assert result.states == {"xwrap1.wn": "blind"}
+
+
+def test_a_pdk_primitive_is_not_blind_even_though_its_model_is_in_an_include():
+    # sky130 프리미티브도 덱 안에 정의가 없지만 모델명으로 분류돼 기하 티어를
+    # 받는다 - 이것은 blind가 아니라 bounded다.
+    deck = (
+        "* pdk primitive\n.option scale=1.0u\n"
+        "Xm1 d g s b sky130_fd_pr__nfet_01v8 W=10 L=1\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "Xm1", "param": "W", "new_value": "20"}]
+    )
+
+    assert result.states == {"Xm1.W": "bounded"}
+
+
+def test_the_three_non_bounded_states_are_told_apart():
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    result = evaluate_area_growth(
+        components,
+        [
+            {"refdes": "xin1", "param": "wn", "new_value": "3e-6"},      # 티어가 있다
+            {"refdes": "xin1", "param": "nf_n", "new_value": "2"},       # 볼 것이 없다
+            {"refdes": "xin1", "param": "geomod", "new_value": "2"},     # 판단 불가
+        ],
+    )
+
+    assert result.states == {
+        "xin1.wn": "bounded",
+        "xin1.nf_n": "neutral",
+        "xin1.geomod": "unjudged",
+    }
+
+
+# --- I2: 위치 인자 값이 크기 노브인 경우 -------------------------------------
+
+
+def test_a_wrapped_resistor_is_bounded_like_the_bare_one():
+    # 회귀 재현: _trace가 device.params만 보았기 때문에 위치 인자 값으로
+    # 크기가 정해지는 R/C는 래퍼 안에 있으면 영원히 무제약이었다. 똑같은
+    # 1000x 성장이 감싸는지 여부로 정반대 판정을 받았다.
+    components = index_baseline_components(POSITIONAL_VALUE_DECK)
+
+    wrapped, wrapped_feedback = check_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1meg"}]
+    )
+    bare, bare_feedback = check_area_growth(
+        components, [{"refdes": "R2", "param": "value", "new_value": "1meg"}]
+    )
+
+    assert bare is False
+    assert wrapped is False
+    assert "1000.00x" in wrapped_feedback
+    assert "2.0x" in wrapped_feedback
+    assert "R1" in wrapped_feedback
+    assert "1000.00x" in bare_feedback
+
+
+def test_a_wrapped_resistor_growing_within_its_tier_is_allowed():
+    components = index_baseline_components(POSITIONAL_VALUE_DECK)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1.5k"}]
+    )
+
+    assert ok is True, feedback
+
+
+# --- I3: 본문 .param과 .subckt 줄 기본값이 같은 이름을 두고 충돌 -------------
+
+
+def test_a_contested_name_is_not_resolved_for_tiering_either():
+    # 회귀 재현: _instance_env가 build_param_envs와 달리 섀도잉을 적용하지
+    # 않아 .subckt 줄 기본값(10u)을 답으로 골랐다. 그러면 3.0x 티어가 잡혀
+    # 2.8x 성장이 통과했지만, 본문 .param(60u)을 읽으면 1.5x 티어라 막힌다.
+    # 한 덱에 두 개의 답이 있고 게이트가 추측한 쪽으로 움직이는 상태였다.
+    components = index_baseline_components(CONTESTED_NAME_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xc1", "param": "ln", "new_value": "2.8e-6"}]
+    )
+
+    assert result.states == {"xc1.ln": "unjudged"}
+
+
+# --- M3: m은 MOS만이 아니라 어떤 소자든 면적을 곱한다 -------------------------
+
+
+def test_a_mim_cap_is_tiered_on_its_multiplicity_too():
+    # 회귀 재현: _tier_baseline_value가 ctype "M"에만 m을 곱해, m=4인 MiM 캡이
+    # 단위 소자 크기(10u)로 티어링돼 가장 느슨한 3.0x 티어를 받았다. m은
+    # 병렬 소자의 개수라 면적을 똑같이 곱한다.
+    deck = (
+        "* mim cap with multiplicity\n.option scale=1.0u\n"
+        "Xc1 a b sky130_fd_pr__cap_mim_m3_1 w=10 l=10 m=4\n"
+        ".end\n"
+    )
+    components = index_baseline_components(deck)
+
+    assert _tier_baseline_value(components["Xc1"]) == pytest.approx(40e-6)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "Xc1", "param": "w", "new_value": "25"}]
+    )
+
+    # 10u로 티어링하면 3.0x 티어라 2.5x 성장이 통과했다. 40u면 2.0x 티어다.
+    assert ok is False
+    assert "2.0x" in feedback
+
+
+# --- 시야 상태는 도달점 전체에 대한 주장이다 ---------------------------------
+
+
+def test_a_half_judged_change_is_not_reported_as_bounded():
+    # N1 회귀: wn이 ma1(총 폭 8u, 티어 있음)과 mb1(총 폭 확정 불가, 실제로
+    # 무제약)에 동시에 도달한다. "티어가 하나라도 붙었으면 bounded"라고 하면
+    # 로그가 절반의 무제약을 감춘다 - 로그로 무력화를 감사할 수 있게 하는 것이
+    # 이 상태의 유일한 존재 이유다.
+    components = index_baseline_components(PARTIAL_REACH_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "5e-6"}]
+    )
+
+    assert result.approved is True  # 판정 자체는 그대로 - 막지 않는다
+    assert result.states == {"xin1.wn": "unjudged"}
+
+
+def test_a_fully_judged_change_is_still_reported_as_bounded():
+    # 위 수정이 "도달점이 둘이면 무조건 unjudged"로 무너지지 않았는지 못박는다.
+    components = index_baseline_components(WRAPPER_NETLIST)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": "3e-6"}]
+    )
+
+    assert result.states == {"xin1.wn": "bounded"}
+
+
+# --- 해소되지 않는 m은 1이 아니다 --------------------------------------------
+
+
+def test_an_unresolvable_m_does_not_silently_become_one():
+    # N2 회귀: `1.0 if m is None else m`은 "m 토큰이 없다"와 "m 토큰은 있는데
+    # 모른다"를 구별하지 않아, 8배짜리 소자를 1배로 티어링했다 (3.0x 티어 →
+    # 2.5x 성장 통과). 이 추측은 **항상** 티어를 느슨한 쪽으로 틀린다.
+    components = index_baseline_components(UNRESOLVABLE_M_DECK)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "25e-6"}]
+    )
+
+    assert result.states == {"xc1.wn": "unjudged"}
+
+
+def test_the_same_deck_without_the_contest_honours_m_and_blocks():
+    # 위 테스트가 진짜로 "m을 못 풀어서"인지 못박는다. 경합만 없애면 m=8이
+    # 반영돼 총 폭 80u → 1.5x 티어 → 같은 2.5x 제안이 거부된다.
+    deck = UNRESOLVABLE_M_DECK.replace(".param mm=8\n", "")
+    components = index_baseline_components(deck)
+
+    ok, feedback = check_area_growth(
+        components, [{"refdes": "xc1", "param": "wn", "new_value": "25e-6"}]
+    )
+
+    assert ok is False
+    assert "1.5x" in feedback
+
+
+def test_a_directly_addressed_device_with_an_unresolvable_m_is_not_tiered_either():
+    # 같은 원칙의 나머지 반쪽: 직접 주소지정 경로(_multiplicity)도 모르는 m을
+    # 1로 가정했다. 한쪽만 고치면 같은 구멍이 반쪽 남는다.
+    deck = "* direct unresolvable m\nM1 d g s b NMOS W=10u L=1u m=unknown_name\n.end\n"
+    components = index_baseline_components(deck)
+
+    assert _tier_baseline_value(components["M1"]) is None
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "M1", "param": "W", "new_value": "25u"}]
+    )
+
+    assert result.states == {"M1.W": "unjudged"}
+
+
+def test_a_device_with_no_m_token_at_all_still_tiers_at_multiplicity_one():
+    # "토큰이 없다"는 여전히 1이다 - 위 수정이 m 없는 소자를 통째로 무제약으로
+    # 만들지 않았는지 못박는다.
+    deck = "* no m token\nM1 d g s b NMOS W=10u L=1u\n.end\n"
+    components = index_baseline_components(deck)
+
+    assert _tier_baseline_value(components["M1"]) == pytest.approx(10e-6)
+
+
+# --- 인용은 표기법이지 표현식이 아니다 ---------------------------------------
+
+
+@pytest.mark.parametrize("written", ["rv", "'rv'", "{rv}"])
+def test_a_quoted_bare_identifier_is_still_a_bare_identifier(written):
+    # N3 회귀: 맨 식별자 판정이 원본 토큰에 대고 이뤄져 `'rv'`와 `{rv}`가
+    # 표현식으로 오인됐다. 그 둘은 이 모듈 자신의 인용 관례일 뿐이므로
+    # ("비율이 같다고 가정할 수 없다"는 근거가 닿지 않는다) I2가 없애려던
+    # 모양 - 같은 성장이 표기법 하나로 정반대 판정 - 이 그대로 남아 있었다.
+    deck = POSITIONAL_VALUE_DECK.replace("R1 a b rv\n", f"R1 a b {written}\n")
+    components = index_baseline_components(deck)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1meg"}]
+    )
+
+    assert result.approved is False
+    assert result.states == {"xr1.rv": "bounded"}
+
+
+def test_a_genuine_expression_positional_value_is_still_refused():
+    # 인용을 벗기는 것이 표현식까지 받아들이는 것으로 번지지 않았는지 못박는다.
+    deck = POSITIONAL_VALUE_DECK.replace("R1 a b rv\n", "R1 a b 'rv*2'\n")
+    components = index_baseline_components(deck)
+
+    result = evaluate_area_growth(
+        components, [{"refdes": "xr1", "param": "rv", "new_value": "1meg"}]
+    )
+
+    assert result.approved is True
+    assert result.states == {"xr1.rv": "unjudged"}

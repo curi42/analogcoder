@@ -54,6 +54,19 @@ against a fixed schema (`schemas.py`).
   device in the unbounded 1.5x tier, so the tier table did nothing on exactly
   the benchmarks that use a real PDK. A `pnp_05v5` is tiered on its emitter
   multiplier `m`, a count rather than a length.
+  Where a deck is built from **wrapper cells** — a generic cell that
+  declares its geometry as parameters (`ma1 d g s b TN33_LVT w=wn l=ln m=ma1
+  nf=nf_n`) with the real numbers arriving on the *instance* line
+  (`xwrap1 ... WRAP_PAIR_TN33 wn=2e-6 ma1=4`) — the gate **traces** each instance
+  parameter to the body token it lands on (`params.annotate_traced_params` →
+  `Component.traced_params`) and tiers on that. It never reads meaning out of
+  the instance parameter's *name*: `wn`/`ma1`/`nf_n` are the designer's naming
+  convention, and guessing them is the same class of error as recognising a
+  supply rail by the name `vdd`. The **body token** name (`w`, `l`, `m`, `nf`)
+  is standard SPICE device syntax, so it is a fact. Before this the wrapper
+  instance's `value` was just a subckt name, `_classify_ctype` left ctype `X`,
+  `TIERS_BY_CTYPE` had no `X` entry, and every sizing knob on such a deck was
+  completely unconstrained — the third time this gate has been silently inert.
 - `spec.py` — `spec.yaml` declares one or more **testbenches** (`TargetSpec.testbenches`),
   each with its own netlist file, control block, and criteria — not a single
   implicit testbench. `TargetSpec.canonical` (`testbenches[0]`) is the netlist
@@ -119,6 +132,34 @@ against a fixed schema (`schemas.py`).
   and leaves the naming to the LLM, which has the netlist. It is the only one
   of the three modules that can be wrong, which is why it is separate. See
   `docs/superpowers/specs/2026-07-27-netlist-structure-derivation-design.md`.
+  **A model-name substring marker must lose to the refdes prefix.**
+  `structure._classify_model` used to substring-match a component's model
+  name against `_MODEL_CLASS_MARKERS` (`nfet`/`pfet`/`pnp`/`npn`/`res`/`cap`)
+  unconditionally, while `area_limits._classify_ctype` already only consults
+  those markers when `ctype == "X"` — an X-prefixed instance's positional
+  value is a PDK primitive name, the one case where the prefix itself doesn't
+  fix the device class. That inconsistency was flagged as a low-risk gap
+  ("could false-positive on a model name containing res/cap") on the grounds
+  that no benchmark deck exercised it. The first real production deck did,
+  three times: a MOSFET used as a MOS capacitor is written `m3 nzero vssi
+  nzero vssi TN33_DEP_CAP …` — refdes `m`, model name containing `cap`. Old
+  `structure.py` read the model name and set `device_class="cap"`, which put
+  the device in both `patterns.py`'s cap list and its MOS list, and the
+  Miller matcher paired `m3` with itself. Fixed by mirroring
+  `_classify_ctype`'s rule exactly: `_classify_model` now returns `None`
+  unless `ctype == "X"`, so a refdes prefix that already fixes the device
+  class (`M`/`Q`/`R`/`C`/`L`/`D`) is never overridden by what the model name
+  merely suggests. Confirmed zero change across all ten benchmark decks
+  (every non-null `device_class` in every golden fixture is already on an
+  `X`-prefixed component). Independently, `patterns.PatternMatch.__post_init__`
+  now rejects any match whose `members` repeats a refdes — a structural
+  invariant so a future matcher can't reopen the same self-pairing shape by
+  a different route. This is the mirror image of the bandgap case already
+  documented above ("every capacitor is an nfet or pfet MOS cap"): there, a
+  sky130 MOS cap's model name contains `pfet`, so it is invisible to a
+  hypothetical cap-name matcher; here, a MOS cap's model name contains `cap`,
+  so it was wrongly visible to one. Same substring rule, opposite naming
+  convention, opposite failure.
 - **The prompt is focused; the gates never are.** `structure_view.py` picks
   the blocks reachable from the failing criteria's nets (via
   `control_block.py`, which resolves a measurement name to the nets its
@@ -448,6 +489,94 @@ worth reading before assuming a weak-model failure is a code bug:
   disagree on it — it is dropped *and* masked from the global environment, so
   the caller sees "unknown" rather than a global value standing in for a local
   one.
+- **`m` multiplies area, `nf` does not.** `m` is a multiplicity — a count of
+  parallel devices, so `w=2u m=2` is two 2 µm devices, total width 4 µm. `nf`
+  is the number of fingers: `w=2u nf=2` is ONE device of total width 2 µm split
+  into two 1 µm fingers, so total width and area do not change, and the shared
+  source/drain diffusions make more fingers area-neutral to slightly
+  favourable. Tuning `nf` is usually meaningless. So the gate gives `w`/`l` the
+  size-graded geometry tiers, `m` a **flat 2.0×** (`COUNT_ALLOWED_MULTIPLIER` —
+  a count, not a length, same reasoning as `pnp_05v5`), and `nf` **no tier at
+  all**. That last one is "nothing to judge", not "cannot judge" — do not look
+  at an unconstrained `nf` and "fix" it by adding a tier. In the production flow
+  NMOS/PMOS widths are fixed and `m` is varied per instance, so the flat count
+  tier is the constraint that actually binds in practice; the 25 µm/50 µm
+  geometry boundaries (chosen for sky130's `W`) rarely will. `m` and `nf` are
+  counts, so a non-integral proposal (`m=6.5`) is rejected outright — the
+  schema only requires a numeric string, and with `m` as the primary knob that
+  path is reachable.
+- **Total width is `w × m`, so the area gate evaluates the product per physical
+  device, not each parameter alone.** Changes in one proposal are grouped by
+  the device they reach and their ratios multiplied; the allowed multiplier is
+  the *tightest* tier among the parameters involved (geometry tier keyed on the
+  baseline `w × m`, 2.0 when `m` is involved, `nf` excluded from the product
+  entirely). Without this, one proposal growing `w` 3× (allowed) and `m` 2×
+  (allowed) grew total width **6×** and nobody looked. Grouping is per *device*,
+  so a wrapper cell's `wn` reaching both `ma1` and `mb1` is checked against
+  each one's own baseline. The tier is a **per-device growth ratio, not a
+  total-area budget**, so a group must identify one *physical* device. The key
+  therefore carries the intermediate instance chain (`TracedTarget.chain`), not
+  just the definition component: a wrapper instantiating the same unit cell
+  twice (`xl1`/`xl2` → `LEAF.ma1`) returns two targets holding the **same
+  `Component` object**, and without the chain their one shared ratio was
+  multiplied twice — a legitimate 2.5× was reported and fed back to the tuner
+  as 6.25×. **`ratio^N` is not a quantity at all**, and it was never a
+  conservative reading of a total-area budget: if both devices grow 2.5×, the
+  per-device ratio is 2.5× *and* the total-area ratio is 2.5× (2·2.5A / 2·A).
+  What N multiplies is the absolute increment, not any ratio — so under either
+  reading, per-device or total, the answer is 2.5×, and the code lands on the
+  only defensible number. Do not "restore" the squaring thinking it was the
+  safe choice.
+- **`m` multiplies the tier baseline for every device class except `Q`.** It
+  is a count of parallel devices, so a MiM cap with `m=4` occupies four times
+  the area of one — tiering it on the single-unit `w` handed it the loosest
+  tier. `Q` is the exception because its `m` *is* the tier key (emitter-area
+  ratio); multiplying there would double-count.
+- **An instance parameter can also reach a device's positional value.** `R`/`C`
+  size knobs are positional (`R1 a b rv`), not `name=value`, which is why
+  `RESISTOR_TIERS`/`CAPACITOR_TIERS` are keyed on the value. Tracing only
+  `device.params` left a *wrapped* resistor unbounded while the identical bare
+  one was blocked — the same 1000× growth decided by whether the designer
+  wrapped it. `params._positional_target` accepts the positional value only
+  when it is a **bare identifier** matching the parameter name; an expression
+  like `{rv*2}` is refused, because assuming the parameter's ratio equals the
+  device's is exactly the guess this layer forbids.
+- **The trace needs the wrapper cell's definition *in the deck*, and an
+  wrapper cell library normally arrives as an `.include`.** `parse_netlist`
+  never follows includes (deliberate — see the `.option scale` note above), so
+  `xwrap1 … WRAP_PAIR_TN33_LVT wn=2e-6` against an include-only definition has no
+  traceable target at all and the gate is fully inert for it: `wn` 2 µm → 2 mm
+  passes. This is *not* fixed by making the parser follow includes. Instead the
+  blindness is recorded: `check_area_growth`'s richer sibling
+  `evaluate_area_growth` returns a per-change **visibility state**, logged in
+  `history.jsonl`'s `area_check` event as `states`. The four states are
+  different facts and must stay distinguishable — `bounded` (a tier applied),
+  `neutral` (nothing to bound: `nf`), `blind` (the component instantiates a
+  subckt this deck does not define, so no trace is possible;
+  `Component.undefined_subckt`), `unjudged` (a value could not be resolved).
+  This gate has been silently inert twice in this repo's history and neither
+  time was visible in a run log. A sky130 primitive is `bounded`, not `blind` —
+  it is classified by its model name and tiered on geometry.
+- **Per-instance parameter resolution is a different tool from
+  `build_param_envs`.** The latter resolves per subckt *definition* and
+  deliberately drops any name the instances disagree on — and in wrapper-cell
+  decks disagreement is the normal case (the same cell instantiated with
+  `ma1=4/1/2`), so it returns `None` exactly where a number is needed.
+  `params._instance_env` resolves for one instance: that instance's own
+  override → the `.subckt` line default → a literal in the body, with the
+  override's own expression evaluated in the *outer* scope. It **applies the
+  same shadowing rule** as `build_param_envs`: a name declared both in the
+  subckt body and on the `.subckt` line resolves to nothing. Narrowing to one
+  instance removes the "which instance?" ambiguity but not the dialect
+  ambiguity, so the two resolvers must not disagree — they did, and the gate
+  acted on the one that guessed (it picked the `.subckt`-line 10 µm over the
+  body's 60 µm, which chose a 3.0× tier instead of 1.5×). An explicit instance
+  override still wins over a contested name, matching
+  `build_param_envs`' `shadowed -= set(agreed)`. Tracing follows a
+  body token into a nested instance, bounded by `_MAX_TRACE_DEPTH`, and falls
+  back to "cannot judge, do not block" rather than guessing. A subckt the deck
+  does not define (any PDK primitive — `parse_netlist` never follows includes)
+  is a leaf, not a dead end.
 
 ## Testing conventions
 

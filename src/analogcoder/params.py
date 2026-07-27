@@ -2,6 +2,9 @@ import ast
 import re
 
 from analogcoder.netlist import (
+    Component,
+    ParsedNetlist,
+    TracedTarget,
     _is_subckt_close,
     _is_subckt_open,
     logical_lines,
@@ -58,6 +61,21 @@ def _eval(node: ast.AST, env: dict[str, float]) -> float:
     raise _Unresolvable()
 
 
+def _unquote(raw: str) -> str:
+    """이 모듈의 인용 관례(`'...'`, `{...}`)를 한 겹 벗긴다.
+
+    한 군데로 모아 둔 이유는 정확히 이 저장소가 반복해서 당한 실패 모드
+    때문이다: 값을 읽는 자리마다 인용 처리를 따로 하면 한 자리가 빠져도
+    아무도 못 알아채고, `rv`는 되는데 `'rv'`는 안 되는 - 표기법이 판정을
+    가르는 - 상태가 조용히 생긴다. 새 판독 지점을 추가할 때 여기를 거쳐라."""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] == "'":
+        return s[1:-1].strip()
+    if s.startswith("{") and s.endswith("}"):
+        return s[1:-1].strip()
+    return s
+
+
 def resolve_value(raw: str, env: dict[str, float]) -> float | None:
     """raw를 수치로 해소하거나, 이 모듈이 다루기로 한 범위 밖이면 None.
 
@@ -67,11 +85,7 @@ def resolve_value(raw: str, env: dict[str, float]) -> float | None:
     것이 이 프로젝트에서 세 번 반복된 교훈이다.
 
     평가는 ast 화이트리스트로 하며 eval을 쓰지 않는다."""
-    s = raw.strip()
-    if len(s) >= 2 and s[0] == s[-1] == "'":
-        s = s[1:-1].strip()
-    elif s.startswith("{") and s.endswith("}"):
-        s = s[1:-1].strip()
+    s = _unquote(raw)
     if not s:
         return None
     try:
@@ -253,3 +267,279 @@ def build_param_envs(text: str) -> dict[str | None, dict[str, float]]:
             raw.pop(name, None)
         envs[path] = _resolve_environment(raw, global_env, frozenset(shadowed))
     return envs
+
+
+# --- 인스턴스 파라미터 추적 ------------------------------------------------
+# 래퍼 셀 스타일 덱에서는 소자 크기가 서브회로 본문이 아니라 **인스턴스
+# 줄**에서 정해진다:
+#
+#   .subckt WRAP_PAIR b1 b2 d1 d2 g1 g2 s1 s2
+#   ma1 d1 g1 s1 b1 TN33_LVT w=wn l=ln m=ma1 nf=nf_n
+#   .ends
+#   xin1 ... WRAP_PAIR wn=2e-6 ln=3e-6 ma1=4 nf_n=1
+#
+# 튜닝은 `xin1.wn`에 일어난다. 면적 게이트가 이것을 판정하려면 `wn`이 무엇을
+# 키우는지 알아야 하는데, 이름에서 읽어내는 것은 추측이다. 대신 값이 어디에
+# 도달하는지를 따라간다 - 도달점의 토큰 이름은 SPICE 표준 문법이다.
+
+# 중첩 래퍼를 따라가는 최대 깊이. 순환 참조(서브회로가 자기를 인스턴스화)나
+# 비정상적으로 깊은 계층에서 무한히 도는 것을 막는다. 넘으면 추측하지 않고
+# "판단 불가"(None)로 끝낸다.
+_MAX_TRACE_DEPTH = 8
+
+
+def free_names(raw: str) -> set[str]:
+    """raw 표현식이 참조하는 파라미터 이름들. 숫자 리터럴이면 빈 집합.
+
+    `w=wn`이면 {"wn"}, `w='wn*2'`면 {"wn"}, `l=3e-6`이면 빈 집합이다.
+    resolve_value와 같은 ast 화이트리스트를 쓰므로 판정 범위가 어긋나지
+    않는다 - 여기서 이름이 보이는데 저기서 못 푸는 경우는 있어도 (그때는
+    total_width가 None이 되어 판단 불가로 떨어진다) 그 반대는 없다."""
+    s = _unquote(raw)
+    if not s:
+        return set()
+    try:
+        parse_spice_value(s)
+        return set()
+    except ValueError:
+        pass
+    try:
+        tree = ast.parse(s, mode="eval")
+    except (SyntaxError, ValueError):
+        return set()
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+def _all_components(parsed: ParsedNetlist) -> list[Component]:
+    components = list(parsed.top_components)
+    for subckt in parsed.subckts.values():
+        components.extend(subckt.components)
+    return components
+
+
+def has_token(component: Component, token: str) -> bool:
+    """소자 줄에 이 토큰이 **적혀 있는가** (값이 풀리는지와 무관하게).
+
+    "토큰이 없다"와 "토큰은 있는데 값을 모른다"는 다른 사실이고, 후자를
+    전자로 취급하면 모르는 값을 1로 가정하는 추측이 된다."""
+    return any(name.lower() == token for name in component.params)
+
+
+def _token_value(component: Component, token: str, env: dict[str, float]) -> float | None:
+    """소자가 쓴 토큰 값을 대소문자 무시로 찾아 env에서 해소한다.
+
+    SPICE는 대소문자를 구분하지 않아 같은 덱에서 `W=30`과 `w=1`이 함께
+    나온다 - 한쪽 표기만 보면 조용히 못 찾는다."""
+    for name, raw in component.params.items():
+        if name.lower() == token:
+            return resolve_value(raw, env)
+    return None
+
+
+def _multiplier(device: Component, env: dict[str, float]) -> float | None:
+    """면적에 곱할 m. m 토큰이 아예 없으면 1.0, 있는데 못 풀면 None.
+
+    이 구분이 없을 때 `1.0 if m is None else m`은 "모르는 m"을 조용히 1로
+    가정했고, 그 가정은 항상 티어를 **느슨한 쪽으로** 틀리게 만든다 (총 폭이
+    m배만큼 작게 보이므로). 경합하는 이름을 해소하지 않기로 한 규칙이 그
+    경로를 새로 도달 가능하게 만들면서 실제로 드러났다: 8배짜리 소자가
+    1배로 티어링돼 1.5x 티어 대신 3.0x 티어를 받았다."""
+    m = _token_value(device, "m", env)
+    if m is not None:
+        return m
+    return None if has_token(device, "m") else 1.0
+
+
+def _total_width(device: Component, env: dict[str, float]) -> float | None:
+    """이 인스턴스에서 device의 총 폭 = w x m, `.option scale` 반영.
+
+    m은 병렬 소자의 **개수**이므로 폭에 곱해지되 scale은 곱하지 않는다
+    (`w=2u m=2`는 2um 소자 두 개, 총 폭 4um). nf는 여기 들어오지 않는다 -
+    손가락은 w를 나눌 뿐 총 폭을 바꾸지 않는다."""
+    w = _token_value(device, "w", env)
+    if w is None:
+        return None
+    m = _multiplier(device, env)
+    if m is None:
+        return None
+    return w * device.geometry_scale * m
+
+
+def _instance_env(
+    parsed: ParsedNetlist,
+    raw_by_scope: dict[str | None, dict[str, str]],
+    global_env: dict[str, float],
+    subckt_path: str,
+    overrides: dict[str, str],
+    outer_env: dict[str, float],
+) -> dict[str, float]:
+    """**이 인스턴스 하나**에 대한 서브회로 내부 파라미터 환경.
+
+    build_param_envs는 서브회로 *정의* 단위로 풀고, 인스턴스마다 값이 갈린
+    이름은 (정당하게) 버린다. 그런데 이 설계 스타일에서는 값이 갈리는 것이
+    정상이다 - 같은 셀을 ma1=4/1/2로 세 번 인스턴스화한다. 그래서 정의 단위
+    환경은 여기서 필요한 숫자를 정확히 필요할 때 주지 못한다.
+
+    우선순위(낮은 것부터): 본문 .param < .subckt 줄 기본값 < 인스턴스 오버라이드.
+
+    인스턴스가 준 값은 바깥 스코프의 표현식일 수 있으므로 outer_env에서 먼저
+    해소한다. 바깥에서 확정하지 못한 오버라이드는 기본값으로 되돌아가지 않고
+    가린다 - 인스턴스가 실제로 쓰는 값과 다른 숫자를 내주는 것이 모른다고
+    말하는 것보다 나쁘다는, 이 모듈에서 반복된 원칙이다.
+
+    본문 .param과 .subckt 줄 기본값이 같은 이름을 선언하면 어느 쪽이 이기는지가
+    방언마다 다르므로 그 이름은 해소하지 않는다 - build_param_envs와 **같은
+    규칙, 같은 이유**다. 여기가 정의 단위 해소기와 갈라져야 하는 지점은
+    "인스턴스마다 값이 갈리는 것이 정상"이라는 점 하나뿐이고, 방언 모호성은
+    인스턴스를 하나로 좁혀도 그대로 남는다. 예전에는 이 섀도잉이 빠져 있어
+    한 덱에 대해 두 해소기가 서로 다른 답을 내놓았고, 면적 게이트는 그중
+    추측한 쪽(.subckt 줄 기본값)으로 티어를 골랐다."""
+    subckt = parsed.subckts[subckt_path]
+    body = raw_by_scope.get(subckt_path, {})
+    raw = {**body, **subckt.defaults}
+    shadowed: set[str] = set(body) & set(subckt.defaults)
+    for name, raw_value in overrides.items():
+        value = resolve_value(raw_value, outer_env)
+        if value is None:
+            shadowed.add(name)
+            raw.pop(name, None)
+            continue
+        # 명시적 오버라이드가 가장 높은 우선순위라는 규칙은 방언 충돌보다
+        # 위다 - 인스턴스가 값을 못박았으면 더 이상 경합이 아니다
+        # (build_param_envs의 `shadowed -= set(agreed)`와 같은 판단).
+        shadowed.discard(name)
+        raw[name] = repr(value)
+    for name in shadowed:
+        raw.pop(name, None)
+    return _resolve_environment(raw, global_env, frozenset(shadowed))
+
+
+_BARE_IDENT_RE = re.compile(r"[A-Za-z_]\w*\Z")
+
+
+def _positional_target(device: Component, param: str, env: dict[str, float], chain: tuple[str, ...]) -> TracedTarget | None:
+    """`R1 a b rv`처럼 **위치 인자**가 크기 노브인 소자에 param이 도달했는가.
+
+    R/C의 크기 노브는 name=value 토큰이 아니라 위치 인자 값이다 - 그래서
+    RESISTOR_TIERS/CAPACITOR_TIERS가 그 값으로 티어를 고른다. device.params만
+    들여다보면 래퍼 안에 감싼 저항은 영원히 추적되지 않아, 똑같은 성장이
+    감싸는지 여부에 따라 정반대 판정을 받았다.
+
+    맨 식별자 하나일 때만 인정한다. `{rv*2}` 같은 표현식까지 받으면 인스턴스
+    파라미터의 비율이 소자 값의 비율과 같다는 보장이 없어지는데, 그것을
+    가정하는 것은 이 모듈이 금지한 추측이다. X 줄은 제외한다 - 그 위치 인자는
+    값이 아니라 서브회로 이름이다.
+
+    "맨 식별자"는 이 모듈의 인용 관례를 벗긴 뒤에 판정한다: `'rv'`와 `{rv}`는
+    표현식이 아니라 같은 맨 식별자다. 원본 토큰에 대고 판정하면 위 근거가
+    닿지 않는 것들이 걸러져, I2가 없애려던 바로 그 모양 - 같은 성장이 표기법
+    하나로 정반대 판정을 받는 것 - 이 그대로 남는다."""
+    if device.ctype == "X" or device.value is None:
+        return None
+    bare = _unquote(device.value)
+    if _BARE_IDENT_RE.match(bare) is None or bare != param:
+        return None
+    value = resolve_value(device.value, env)
+    if value is not None:
+        m = _multiplier(device, env)
+        value = None if m is None else value * m
+    return TracedTarget(
+        device=device, token="value", total_width=None, positional_value=value, chain=chain
+    )
+
+
+def _trace(
+    parsed: ParsedNetlist,
+    raw_by_scope: dict[str | None, dict[str, str]],
+    global_env: dict[str, float],
+    subckt_path: str,
+    env: dict[str, float],
+    param: str,
+    depth: int,
+    chain: tuple[str, ...] = (),
+) -> list[TracedTarget] | None:
+    """subckt_path 본문에서 param이 도달하는 소자/토큰들. 판단 불가면 None.
+
+    본문 소자가 다시 (덱 안에 정의된) 서브회로 인스턴스이면 그 안으로
+    따라 들어간다. 덱이 정의하지 않은 서브회로 - sky130 PDK 프리미티브가
+    그렇다, parse_netlist는 include를 따라가지 않는다 - 는 잎으로 본다.
+
+    chain은 여기까지 거쳐 온 중간 인스턴스 refdes들이다. 같은 정의를 형제로
+    두 번 인스턴스화하면 두 경로가 같은 Component 객체를 돌려주므로, 물리
+    소자를 구분하는 정보는 chain뿐이다 (TracedTarget 주석 참고)."""
+    if depth >= _MAX_TRACE_DEPTH:
+        return None
+    targets: list[TracedTarget] = []
+    for device in parsed.subckts[subckt_path].components:
+        positional = _positional_target(device, param, env, chain)
+        if positional is not None:
+            targets.append(positional)
+        for token, raw_value in device.params.items():
+            if param not in free_names(raw_value):
+                continue
+            nested = (
+                _resolve_subckt_reference(parsed, device.scope, device.value)
+                if device.ctype == "X" and device.value is not None
+                else None
+            )
+            if nested is None:
+                targets.append(
+                    TracedTarget(
+                        device=device,
+                        token=token,
+                        total_width=_total_width(device, env),
+                        chain=chain,
+                    )
+                )
+                continue
+            inner_env = _instance_env(
+                parsed, raw_by_scope, global_env, nested, device.params, env
+            )
+            deeper = _trace(
+                parsed,
+                raw_by_scope,
+                global_env,
+                nested,
+                inner_env,
+                token,
+                depth + 1,
+                (*chain, device.refdes),
+            )
+            if deeper is None:
+                # 중간에서 끊긴 추적이다. 일부만 들고 판정하면 나머지 경로가
+                # 없는 것처럼 보이므로, 통째로 판단 불가로 둔다.
+                return None
+            targets.extend(deeper)
+    return targets or None
+
+
+def annotate_traced_params(
+    text: str, parsed: ParsedNetlist, envs: dict[str | None, dict[str, float]]
+) -> None:
+    """모든 서브회로 인스턴스에 대해 component.traced_params를 채운다.
+
+    parsed/envs를 받아 쓰는 이유는 호출자(index_baseline_components)가 이미
+    둘 다 갖고 있기 때문이다 - 여기서 다시 파싱하면 같은 덱을 세 번 읽는다."""
+    raw_by_scope = _collect_raw_params(text)
+    global_env = envs[None]
+    for component in _all_components(parsed):
+        if component.ctype != "X" or component.value is None:
+            continue
+        path = _resolve_subckt_reference(parsed, component.scope, component.value)
+        if path is None:
+            # 정의가 이 덱 안에 없다 - 거의 항상 `.include`로만 들어온 래퍼
+            # 셀 라이브러리다. 추적이 원리적으로 불가능하다는 **사실**을
+            # 남긴다: 하류가 이것을 "제약 없음"과 구별하지 못하면 게이트가
+            # 조용히 무력해진다 (이 저장소에서 이미 두 번 일어난 일이다).
+            component.undefined_subckt = True
+            continue
+        if not component.params:
+            continue
+        outer_env = envs.get(component.scope, global_env)
+        env = _instance_env(
+            parsed, raw_by_scope, global_env, path, component.params, outer_env
+        )
+        for name in component.params:
+            targets = _trace(parsed, raw_by_scope, global_env, path, env, name, 0)
+            if targets:
+                component.traced_params[name] = targets

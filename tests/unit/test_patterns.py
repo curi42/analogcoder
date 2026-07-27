@@ -1,4 +1,6 @@
-from analogcoder.patterns import find_patterns
+import pytest
+
+from analogcoder.patterns import PatternMatch, find_patterns
 from analogcoder.structure import derive_structure
 
 
@@ -378,6 +380,66 @@ def test_matches_are_scoped_to_their_block():
 
     assert match.block == "AMP"
     assert match.members == ("AMP.M1", "AMP.M2")
+
+
+def test_a_mos_used_as_a_cap_via_model_name_does_not_miller_pair_with_itself():
+    # 실전 덱에서 실제로 나온 거짓 양성: MOSFET을 MOS 커패시터로 쓰는
+    # 관용구가 refdes는 M이지만 모델명에 "cap"이 들어 있다(TN33_DEP_CAP).
+    # 소자가 게이트/드레인이 같은 넷에 물린 자기 참조 모양이면, 커패시터
+    # 목록과 MOS 목록 둘 다에 오른 이 소자가 자기 자신과 밀러 쌍으로
+    # 잘못 잡힌다. 하나의 refdes를 자기 자신과 짝짓는 매칭은 사실이 아니다.
+    deck = (
+        "* t\n"
+        "M3 nzero vss nzero vss NCH_DEP_CAP w=1.5e-6 l=5.55e-6\n"
+        ".end\n"
+    )
+
+    matches = _kinds(deck)
+
+    assert not any(kind == "miller_compensation" for kind, _ in matches)
+    for _kind, members in matches:
+        assert len(set(members)) == len(members)
+
+
+def test_a_mos_used_as_a_resistor_via_model_name_does_not_self_pair():
+    # "res" 마커 버전. M0가 res 목록과 MOS 목록 모두에 오르면 자기 참조
+    # 모양에서 stacked_pair 등도 자기 자신과 짝지어질 수 있다.
+    deck = (
+        "* t\n"
+        "M0 nzero vss nzero vss NCH_RES_DUMMY w=1e-6 l=1e-6\n"
+        ".end\n"
+    )
+
+    matches = _kinds(deck)
+
+    for _kind, members in matches:
+        assert len(set(members)) == len(members)
+
+
+def test_pattern_match_construction_rejects_a_duplicate_member_directly():
+    # find_patterns의 어떤 매처를 거치지 않고도 이 불변식이 구조적으로
+    # 지켜진다는 것을 직접 확인한다 - 분류 버그 하나를 고쳤다고 해서
+    # 다음 매처가 같은 실수를 하지 않는다는 보장은 안 되므로, 생성
+    # 시점 자체에서 막는다.
+    with pytest.raises(ValueError):
+        PatternMatch(kind="miller_compensation", block=None, members=("M1", "M1"), detail="x")
+
+
+def test_no_pattern_match_ever_pairs_a_component_with_itself():
+    # 구조적으로 불가능하게 만드는 불변식. find_patterns가 내는 모든 매치는
+    # members에 중복 refdes가 없어야 한다 - 어떤 매처가 어떻게 짝을 짓든
+    # 관계없이 항상 참이어야 하는 사실이다.
+    deck = (
+        "* t\n"
+        "M3 nzero vss nzero vss NCH_DEP_CAP w=1.5e-6 l=5.55e-6\n"
+        "M0 nzero vss nzero vss NCH_RES_DUMMY w=1e-6 l=1e-6\n"
+        "Md0 vss vcci vss vss TN33_CAP w=9.71e-6 l=6.38e-6\n"
+        ".end\n"
+    )
+    matches = find_patterns(derive_structure(deck, "t"))
+
+    for match in matches:
+        assert len(set(match.members)) == len(match.members), match
 
 
 def test_pattern_finding_is_deterministic():
