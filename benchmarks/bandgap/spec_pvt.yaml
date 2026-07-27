@@ -19,6 +19,14 @@ pvt_corners:
   voltage: [1.62, 1.8, 1.98]
   temperature: [-40, 27, 125]
 circuit_name: bandgap
+# Sub-project C, same block as spec.yaml's - see the longer note there. This
+# is the copy that can actually optimize, because the 45-corner entry sweep
+# gives every criterion a MEASURED allowance and the declared guard_band
+# ratio is then only a filler for criteria the sweep leaves uncovered.
+optimize:
+  objective: iq_ua
+  area_budget: 1.10
+  guard_band: 0.2
 testbenches:
   - name: dc_tc
     netlist: netlist.cir
