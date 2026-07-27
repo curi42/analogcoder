@@ -45,21 +45,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
 
-_NO_DRIFT = {"criteria": [], "moved_count": 0, "total": 0}
+def _no_drift() -> dict:
+    """빈 argmax 기록. **매번 새로 만든다** - 모듈 수준 상수를 얕게 복사해
+    돌려주면 result에 실리는 "criteria" 리스트가 그 상수와 **같은 객체**가 되어,
+    거기에 append하는 소비자 하나가 프로세스 전역을 오염시킨다."""
+    return {"criteria": [], "moved_count": 0, "total": 0}
 
 
 def _corner_label(raw: dict | None) -> str | None:
     """worst_case_corners 항목 하나의 사람이 읽는 이름.
 
     corner_selection.label과 **같은 문자열**을 내야 한다 - 두 이름이 갈리면
-    final_set과 argmax_drift를 나란히 놓고 읽을 수 없다. 렌더링을 거치지 않은
-    덱은 pvt._corner_fields가 좌표 없이 적으므로, 그 부재로 판별한다(이름
-    매칭이 아니다). corner_selection._as_point는 같은 모양을 **거부**하지만
-    여기서는 적기만 한다 - argmax 계측은 순수한 기록이고, 기록이 실행을
-    멈추게 할 수는 없다."""
+    final_set과 argmax_drift를 나란히 놓고 읽을 수 없다.
+
+    `(deck)` 갈래는 **오늘 두 호출부(진입 스윕·판정 스윕) 중 어느 쪽에서도
+    도달하지 않는다** - run_full_pvt_sweep은 항상 실제 좌표를 적는다. 미래의
+    호출부(예: corner_sim의 corner_worst, 실측에서 (deck) 항목 4개를 담고 있는
+    것을 확인했다)를 위한 벽이며, 판별은 좌표의 **부재**로 한다(이름 매칭이
+    아니다). 조건은 corner_selection._as_point의 거부 조건과 **같은 방향**이어야
+    한다("둘 중 하나라도 없으면") - 한쪽은 `or`, 다른 쪽은 `and`로 두면 반쪽짜리
+    좌표에서 둘이 서로 다른 말을 한다. 저쪽은 거부하고 이쪽은 적기만 하는데,
+    argmax 계측은 순수한 기록이고 기록이 실행을 멈출 수는 없기 때문이다."""
     if raw is None:
         return None
-    if raw.get("voltage") is None and raw.get("temperature") is None:
+    if raw.get("voltage") is None or raw.get("temperature") is None:
         return "(deck)"
     return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
 
@@ -245,7 +254,36 @@ async def _run(args) -> dict:
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
     simulate_for_run = simulate_fn
     if reduction_active:
-        corner_state = CornerState(seed_from_sweep(baseline_sweep, spec))
+        try:
+            corner_state = CornerState(seed_from_sweep(baseline_sweep, spec))
+        except ValueError as exc:
+            # 씨앗을 못 뽑으면 축소를 시작할 수 없다. 넷리스트 적용 경로의
+            # ValueError와 같은 취급 - 크래시가 아니라 **깨끗한 FAIL**로 끝낸다.
+            # 그래야 result.json과 report.md가 쓰이고 사유가 남는다.
+            # (오늘 도달하지 않는다: _as_point가 거부하는 (deck) 항목을
+            # run_full_pvt_sweep은 만들지 않는다. corner_sim의 corner_worst는
+            # 만든다 - 그것이 이 자리로 흘러드는 날의 벽이다.)
+            reason = f"{type(exc).__name__}: {exc}"
+            state.log_event("corner_set_seed_failed", {"reason": reason})
+            return {
+                "status": "FAIL",
+                "final_netlist_paths": state.current_netlist_paths(),
+                "run_dir": run_dir,
+                "iterations_used": 0,
+                "final_criteria": [],
+                "failure_reason": f"could not seed the mid-loop corner set: {reason}",
+                "corner_reduction": {
+                    "active": False,
+                    "reason": f"seeding the corner set from the entry sweep failed: {reason}",
+                    "final_set": [],
+                    "attempts": 0,
+                    "area_baselines": 0,
+                    "grown": [],
+                    "path_disagreement": None,
+                    "unattributed_failures": None,
+                    "argmax_drift": _no_drift(),
+                },
+            }
         state.log_event(
             "corner_set_seeded",
             {
@@ -287,10 +325,23 @@ async def _run(args) -> dict:
     # 스윕이 실패한 설계는 최적화하지 않는다"는 규칙이 있어 실패한 시도에서는
     # 그 스윕 하나만 돌고 즉시 돌아오므로, 실패한 시도의 추가 비용은 어차피
     # 필요했던 판정 스윕 하나뿐이다. 루프 밖에 두면 판정 스윕이 하나 더 든다.
+    #
+    # **재진입마다 면적 게이트의 기준선이 다시 잡힌다 - 알고 하는 것이다.**
+    # orchestrator.py:69-74는 `index_baseline_components`를 자기가 **받은**
+    # 넷리스트에서 호출마다 한 번 계산한다. 여기서 넘기는 것이 수렴된 덱이므로,
+    # 재진입한 루프의 성장 한도는 실행이 시작한 덱이 아니라 **직전 시도가 끝난
+    # 덱**을 기준으로 잰다. 결과적으로 retry_budget=R이면 한 소자가 원래 덱에
+    # 대해 허용받는 성장은 `tier^(R+1)`이다 - 기본값(R=2, 1.5x 티어)에서
+    # 1.5^3 = 3.375배. 이 하위 프로젝트의 전제가 "run_orchestration을 고치지
+    # 않는다"이므로 기준선을 고정하는 것은 별도 작업이고, 여기서는 **보이게**
+    # 한다: 이 저장소에서 게이트가 조용히 안 걸린 것이 네 번이고 네 번 다 실행
+    # 로그에 안 보였다. 재진입 시점마다 corner_set_grown에 남기고, 실행이 쓴
+    # 기준선 개수를 result["corner_reduction"]["area_baselines"]에 싣는다.
     retry_budget = reduction.retry_budget if reduction_active else 0
     attempt = 0
     grown_labels: list[list[str]] = []
     path_disagreement: dict | None = None
+    unattributed_failures: dict | None = None
     final_sweep: dict | None = None
 
     while True:
@@ -385,33 +436,57 @@ async def _run(args) -> dict:
         failing_names = [
             entry["name"] for entry in final_sweep.get("criteria", []) if not entry.get("pass")
         ]
-        grown, added = grown_with(corner_state.corner_set, final_sweep, failing_names)
+        worst = final_sweep.get("worst_case_corners", {})
+        try:
+            grown, added = grown_with(corner_state.corner_set, final_sweep, failing_names)
+        except ValueError as exc:
+            # 넷리스트 적용 경로의 ValueError와 같은 취급 - 크래시가 아니라
+            # 깨끗한 FAIL이다. 판정 스윕이 이미 실패했으므로 status는 그대로
+            # 두고 사유만 덧붙인다.
+            reason = f"{type(exc).__name__}: {exc}"
+            state.log_event("corner_set_growth_failed", {"reason": reason})
+            result["failure_reason"] += f" - the corner set could not be grown: {reason}"
+            break
+
         if not added:
-            # **경로 불일치.** 실패한 코너가 전부 이미 중간 루프의 집합 안에
-            # 있다면, 두 실행 경로가 같은 덱의 같은 코너를 두고 서로 다른 말을
-            # 하고 있는 것이다. 재시도해 봐야 같은 정보로 같은 결과를 낼 뿐이니
-            # 무한 루프가 될 자리를 진단으로 바꾼다 - 어느 기준이 어느 코너에서
-            # 어긋났는지를 적는다.
-            disagreeing = [
-                _corner_label(final_sweep.get("worst_case_corners", {}).get(name))
-                for name in failing_names
-            ]
-            path_disagreement = {
-                "criteria": failing_names,
-                "corners": [c for c in disagreeing if c is not None],
-            }
-            state.log_event("corner_path_disagreement", path_disagreement)
-            pairs = ", ".join(
-                f"{name} at {corner}"
-                for name, corner in zip(failing_names, disagreeing)
-                if corner is not None
-            )
-            result["failure_reason"] += (
-                f" - path disagreement: every failing corner was already in the "
-                f"mid-loop corner set ({pairs or 'no corner reported'}), so the "
-                f"mid-loop and the verdict sweep judged the same deck at the same "
-                f"corner differently; retrying would re-run identical information"
-            )
+            # 여기서 두 사실이 갈린다. 실패한 기준에 **최악 코너가 붙어 있는가**로
+            # 나뉘며, 둘을 한 문장으로 뭉개면 데이터가 뒷받침하지 않는 구조적
+            # 주장을 하게 된다.
+            attributed = [(name, _corner_label(worst[name])) for name in failing_names if name in worst]
+            if attributed:
+                # **경로 불일치.** 실패한 코너가 전부 이미 중간 루프의 집합 안에
+                # 있다면, 두 실행 경로가 같은 덱의 같은 코너를 두고 서로 다른 말을
+                # 하고 있는 것이다. 재시도해 봐야 같은 정보로 같은 결과를 낼 뿐이니
+                # 무한 루프가 될 자리를 진단으로 바꾼다.
+                path_disagreement = {
+                    "criteria": [name for name, _ in attributed],
+                    "corners": [corner for _, corner in attributed],
+                }
+                state.log_event("corner_path_disagreement", path_disagreement)
+                pairs = ", ".join(f"{name} at {corner}" for name, corner in attributed)
+                result["failure_reason"] += (
+                    f" - path disagreement: every failing corner was already in the "
+                    f"mid-loop corner set ({pairs}), so the mid-loop and the verdict "
+                    f"sweep judged the same deck at the same corner differently; "
+                    f"retrying would re-run identical information"
+                )
+            else:
+                # 실패한 기준 어느 것에도 최악 코너가 붙지 않았다.
+                # worst_case_measurements는 어떤 코너에서도 측정값이 나오지 않은
+                # 기준을 worst_case_corners에서 **통째로 뺀다** - "회로가 어디서도
+                # 동작하지 않는다"는 경우다. 그것을 경로 불일치라고 적으면 두 실행
+                # 경로에 대해 데이터가 뒷받침하지 않는 주장을 하는 것이 된다
+                # (구조 쪽의 `OPAMP2STAGE drives vdd,vss`와 같은 모양의 오류).
+                # 재진입하지 않는 것은 양쪽 다 옳다 - 더할 코너가 없다는 사실은
+                # 같기 때문이다. 달라지는 것은 진단뿐이다.
+                unattributed_failures = {"criteria": failing_names}
+                state.log_event("corner_unattributed_failure", unattributed_failures)
+                result["failure_reason"] += (
+                    f" - no corner could be attributed to the failing criteria "
+                    f"({', '.join(failing_names) or 'none reported'}): the verdict "
+                    f"sweep produced no measurement for them at any corner, so there "
+                    f"is nothing to add to the mid-loop corner set"
+                )
             break
 
         corner_state.corner_set = grown
@@ -425,13 +500,18 @@ async def _run(args) -> dict:
                 "added": added_labels,
                 "failing_criteria": failing_names,
                 "size": len(grown.corners),
+                # 이 재진입은 면적 게이트의 기준선을 다시 잡는다(루프 머리 주석).
+                # 재진입 순간에 이력에 남겨 두어야, 나중에 소자가 왜 원래 덱의
+                # 티어를 넘어 커져 있는지를 실행 로그에서 되짚을 수 있다.
+                "area_baseline_reanchored": True,
+                "area_baselines_so_far": attempt + 1,
             },
         )
 
     # argmax 이동량은 **판정에 아무 영향을 주지 않는다** - 순수한 기록이다.
     # 진입 스윕과 판정 스윕이 둘 다 있을 때만 잴 수 있으므로, 코너를 못 재는
     # 스펙에서는 빈 기록이 된다.
-    drift = dict(_NO_DRIFT)
+    drift = _no_drift()
     if baseline_sweep is not None and final_sweep is not None:
         drift = _argmax_drift(baseline_sweep, final_sweep)
         state.log_event("corner_argmax_drift", drift)
@@ -441,8 +521,14 @@ async def _run(args) -> dict:
         "reason": reduction_reason,
         "final_set": [label(c) for c in corner_state.corner_set.corners] if corner_state else [],
         "attempts": attempt,
+        # 면적 게이트가 이 실행에서 쓴 기준선의 **개수**. 1보다 크면 성장 한도가
+        # 실행 시작 덱이 아니라 중간 덱들에 대해 다시 잡혔다는 뜻이다(루프 머리
+        # 주석의 tier^(R+1)). 조용히 그러는 것이 이 저장소의 반복된 실패 모양이라
+        # 결과에 싣는다.
+        "area_baselines": attempt + 1,
         "grown": grown_labels,
         "path_disagreement": path_disagreement,
+        "unattributed_failures": unattributed_failures,
         "argmax_drift": drift,
     }
 

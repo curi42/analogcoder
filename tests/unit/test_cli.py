@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from analogcoder import cli
 from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.cli import (
@@ -1319,3 +1320,247 @@ async def test_only_the_failing_criteria_s_corners_join_the_set(tmp_path):
 
     assert result["corner_reduction"]["grown"] == [["ff/1.98/125.0"]]
     assert result["corner_reduction"]["final_set"] == ["(deck)", "fs/1.98/125.0", "ff/1.98/125.0"]
+
+
+# --- 리뷰 Important 1/2 + Minors -----------------------------------------------
+
+
+def _sweep_with_an_unmeasured_criterion(name: str, others: dict | None = None) -> dict:
+    """어떤 코너에서도 측정값이 안 나온 기준이 하나 있는 판정 스윕.
+
+    pvt.worst_case_measurements는 그 기준을 worst_case_corners에서 **통째로 뺀다**
+    (`if not values_with_corner: continue`). evaluate_criteria는 그것을 actual=nan,
+    pass=False로 실패시키므로, 그 기준은 실패 목록에는 들어가고 최악 코너는 없다 -
+    프로덕션이 실제로 내놓는 모양이다."""
+    worst = dict(others or {})
+    criteria = [
+        {"name": n, "target": ">=10.0", "actual": raw["value"], "pass": True, "margin": 0.0}
+        for n, raw in worst.items()
+    ]
+    criteria.append(
+        {"name": name, "target": ">=10.0", "actual": float("nan"), "pass": False,
+         "margin": float("nan")}
+    )
+    return {
+        "overall_pass": False,
+        "criteria": criteria,
+        "summary": "one or more criteria failed",
+        "worst_case_corners": worst,
+        "per_corner": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_failure_with_no_attributed_corner_is_not_called_a_path_disagreement(tmp_path):
+    # 어떤 코너에서도 측정값이 안 나온 기준은 최악 코너가 없으므로 집합이 자라지
+    # 않는다. 그것을 "경로 불일치"라고 적으면 두 실행 경로에 대해 데이터가
+    # 뒷받침하지 않는 주장을 하는 것이다 - `OPAMP2STAGE drives vdd,vss`와 같은
+    # 모양의 오류. 재진입하지 않는 것은 양쪽 다 옳고, 달라지는 것은 진단뿐이다.
+    run_dir = str(tmp_path / "runs" / "c12")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep_with_an_unmeasured_criterion("pm")
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 1                     # 재진입하지 않는 것은 그대로 옳다
+    assert result["status"] == "FAIL"
+    assert result["corner_reduction"]["path_disagreement"] is None
+    assert "path disagreement" not in result["failure_reason"]
+    assert result["corner_reduction"]["unattributed_failures"] == {"criteria": ["pm"]}
+    assert "no corner could be attributed" in result["failure_reason"]
+    assert _one_history_event(run_dir, "corner_unattributed_failure")["criteria"] == ["pm"]
+    assert _history_events(run_dir, "corner_path_disagreement") == []
+
+
+@pytest.mark.asyncio
+async def test_an_attributed_failure_alongside_an_unattributed_one_is_still_a_disagreement(
+    tmp_path,
+):
+    # 반대 방향. 실패한 기준 중 **하나라도** 최악 코너가 붙어 있고 그것이 이미
+    # 집합 안이면, 두 경로는 진짜로 서로 다른 말을 하고 있다. 위 테스트만 있으면
+    # "무조건 unattributed로 적는다"는 변형이 살아남는다.
+    run_dir = str(tmp_path / "runs" / "c13")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep_with_an_unmeasured_criterion("pm", {"gain": _wc("fs", 12.0)})
+    verdict["criteria"][0]["pass"] = False          # gain도 실패, 최악 코너는 fs(이미 집합 안)
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert result["corner_reduction"]["path_disagreement"] == {
+        "criteria": ["gain"], "corners": ["fs/1.98/125.0"]
+    }
+    assert "path disagreement" in result["failure_reason"]
+    # 코너가 안 붙은 기준을 불일치 목록에 끌어들이지 않는다 - 그 기준에 대해서는
+    # 두 경로가 무엇을 말했는지 알 수 없다.
+    assert "pm" not in result["corner_reduction"]["path_disagreement"]["criteria"]
+    assert result["corner_reduction"]["unattributed_failures"] is None
+
+
+@pytest.mark.asyncio
+async def test_each_re_entry_re_anchors_the_area_growth_baseline_and_says_so(tmp_path):
+    # orchestrator.py:69-74는 면적 기준선을 자기가 **받은** 넷리스트에서 호출마다
+    # 한 번 계산한다. 재진입은 수렴된 덱을 넘기므로 기준선이 다시 잡히고, 한
+    # 소자가 원래 덱에 대해 허용받는 성장은 tier^(R+1)이 된다. 이 저장소에서
+    # 게이트가 조용히 안 걸린 것이 네 번이고 네 번 다 로그에 안 보였다 - 그래서
+    # 실행이 쓴 기준선 개수가 결과와 이력 양쪽에 남아야 한다.
+    run_dir = str(tmp_path / "runs" / "c14")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    fails = [_sweep({"gain": _wc(p, 12.0)}, failing=["gain"]) for p in ("ff", "ss", "sf")]
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, *fails], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    # 최초 1회 + 재진입 2회 = 기준선 3개.
+    assert result["corner_reduction"]["area_baselines"] == 3
+    assert result["corner_reduction"]["attempts"] == 2
+    assert len(orch_calls) == 3
+    grown_events = _history_events(run_dir, "corner_set_grown")
+    assert [e["area_baselines_so_far"] for e in grown_events] == [2, 3]
+    assert all(e["area_baseline_reanchored"] is True for e in grown_events)
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_never_re_enters_uses_exactly_one_area_baseline(tmp_path):
+    # 반대 방향 고정. area_baselines를 상수 1로 박는 변형은 위 테스트가,
+    # attempts와 무관하게 키우는 변형은 이 테스트가 잡는다.
+    run_dir = str(tmp_path / "runs" / "c15")
+    passing = _sweep({"gain": _wc("fs", 41.0)})
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert result["corner_reduction"]["area_baselines"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reduction_is_inactive_and_says_why_without_a_corner_reduction_block(tmp_path):
+    # 코너는 잴 수 있고 블록 자체가 없다. "코너가 없다"와도 "껐다"와도 다른
+    # 사실이며, 셋 중 이 하나만 테스트가 없어서 같은 문장을 돌려주는 변형이
+    # 살아남고 있었다.
+    run_dir = str(tmp_path / "runs" / "c16")
+    passing = _sweep({"gain": _wc("fs", 41.0)})
+    spec_yaml = CORNER_REDUCTION_SPEC_YAML.replace(
+        "corner_reduction:\n  enabled: true\n  retry_budget: 2\n  probe: true\n", ""
+    )
+    assert "corner_reduction" not in spec_yaml
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        result = await _run(_corner_args(tmp_path, spec_yaml, run_dir))
+
+    assert result["corner_reduction"]["active"] is False
+    assert "no corner_reduction block" in result["corner_reduction"]["reason"]
+    assert _one_history_event(run_dir, "corner_reduction_inactive")
+
+
+@pytest.mark.asyncio
+async def test_a_seed_that_cannot_be_built_ends_the_run_as_a_clean_fail(tmp_path):
+    # _as_point는 이제 (deck) 항목에 ValueError를 던진다. 그것이 _run 밖으로
+    # 새어 나가면 result.json도 report.md도 없이 트레이스백으로 끝난다 -
+    # 넷리스트 적용 경로의 ValueError를 깨끗한 FAIL로 접는 것과 같은 이유로
+    # 여기서도 접는다.
+    run_dir = str(tmp_path / "runs" / "c17")
+    passing = _sweep({"gain": _wc("fs", 41.0)})
+
+    def boom(sweep, spec):
+        raise ValueError("not a corner: (deck)")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.seed_from_sweep", new=boom),
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock()) as mock_orch,
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    mock_orch.assert_not_awaited()
+    assert result["status"] == "FAIL"
+    assert "not a corner" in result["failure_reason"]
+    # 리포트를 쓰는 데 필요한 키가 전부 있어야 깨끗한 FAIL이다.
+    assert result["iterations_used"] == 0
+    assert result["final_criteria"] == []
+    assert result["final_netlist_paths"] == {}
+    assert result["corner_reduction"]["active"] is False
+    assert _one_history_event(run_dir, "corner_set_seed_failed")
+
+
+@pytest.mark.asyncio
+async def test_a_growth_that_raises_ends_the_run_as_a_clean_fail(tmp_path):
+    # 같은 이유로 성장 쪽도 접는다. 이쪽은 판정 스윕이 이미 실패했으므로
+    # status는 그대로 FAIL이고 사유만 덧붙는다.
+    run_dir = str(tmp_path / "runs" / "c18")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep({"gain": _wc("ff", 12.0)}, failing=["gain"])
+
+    def boom(cs, sweep, failing_names):
+        raise ValueError("not a corner: (deck)")
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.grown_with", new=boom),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 1
+    assert result["status"] == "FAIL"
+    assert "could not be grown" in result["failure_reason"]
+    assert result["corner_reduction"]["attempts"] == 0
+    assert _one_history_event(run_dir, "corner_set_growth_failed")
+
+
+def test_the_empty_argmax_record_is_a_fresh_object_every_time():
+    # 모듈 수준 상수를 얕게 복사해 돌려주면 result에 실리는 "criteria" 리스트가
+    # 그 상수와 **같은 객체**가 되어, 거기에 append하는 소비자 하나가 프로세스
+    # 전역을 오염시킨다.
+    first = cli._no_drift()
+    first["criteria"].append({"name": "x"})
+    assert cli._no_drift() == {"criteria": [], "moved_count": 0, "total": 0}
+
+
+def test_a_coordinate_less_entry_is_labelled_as_the_deck():
+    # corner_selection._as_point의 거부 조건과 **같은 방향**이어야 한다: 좌표가
+    # 둘 중 하나라도 없으면 그것은 코너가 아니다. 한쪽만 `and`로 두면 반쪽짜리
+    # 항목에서 저쪽은 거부하고 이쪽은 "ss/1.62/None"이라는 있지도 않은 코너
+    # 이름을 적는다.
+    assert cli._corner_label(None) is None
+    assert cli._corner_label(
+        {"process": "(deck)", "voltage": None, "temperature": None, "value": 1.2}
+    ) == "(deck)"
+    assert cli._corner_label(
+        {"process": "ss", "voltage": 1.62, "temperature": None, "value": 1.2}
+    ) == "(deck)"
+    assert cli._corner_label(
+        {"process": "ss", "voltage": 1.62, "temperature": -40.0, "value": 1.2}
+    ) == "ss/1.62/-40.0"
