@@ -286,10 +286,16 @@ that number was measured.
   the mid-loop set, then the two execution paths judged the same deck at the
   same corner differently, and retrying re-runs identical information. `cli.py`
   reports that (`corner_path_disagreement`) instead of looping. The diagnosis is
-  not vacuous — there are two real channels for it: the mid-loop uses the
-  control block the **simulator agent converged on** while `run_full_pvt_sweep`
-  uses the spec's text, and the mid-loop's judge is an **LLM** while the sweep
-  calls `evaluate_criteria` directly. A failing criterion with no worst corner at
+  not vacuous — there are three real channels for it. Two are stochastic: the
+  mid-loop uses the control block the **simulator agent converged on** while
+  `run_full_pvt_sweep` uses the spec's text, and the mid-loop's judge is an
+  **LLM** while the sweep calls `evaluate_criteria` directly. The third is
+  **deterministic and always present**: on any criterion that shares a
+  measurement name with another (a two-sided window), the mid loop is
+  structurally blind to one side — see the collapse entry below. **Check that
+  one first.** If the disagreeing criterion is one half of a `_min`/`_max` pair,
+  the cause is the collapse, not the LLM, and no amount of re-reading agent logs
+  will show it. A failing criterion with no worst corner at
   all is a *different* fact (`corner_unattributed_failure`): the circuit produced
   no measurement anywhere, so there is nothing to add. Calling that a path
   disagreement would be an unsupported structural claim, the same error shape as
@@ -303,13 +309,23 @@ that number was measured.
   extreme. The function does not decide what the reference is; the caller does.
 - **Measured on `benchmarks/bandgap/spec_corner_reduction.yaml` (9 corners:
   tt/ss/ff × 1.62/1.8/1.98 V × 27 °C), and the numbers are unflattering.**
-  Seed = **6 corners + the deck = 7 simulated points out of a 9-corner grid**;
-  the 3 left outside are all `tt`. Re-entry fired **zero** times. argmax drift
+  Seed = **6 corners + the deck = 7 selected points**, and the mid loop also
+  runs **1 probe**, so an iteration costs **8 simulated points out of a 9-corner
+  grid** — the saving on this grid is one point, not two. The 3 corners left
+  outside the set are all `tt`. Re-entry fired **zero** times. argmax drift
   between the entry sweep and the verdict sweep of a moved deck
   (`TRIMAMP.Xt.W`/`BUF_P.Xt.W` 8 → 4, which does fail `buf1_loop_gain` and
   `buf1_phase_margin`): **5 of 22 criteria moved**, and **all 5 landed on corners
   already inside the set**, so `grown_with` added nothing. Pinned in
   `tests/unit/test_corner_reduction_bandgap_ngspice.py`.
+  **Those 6 corners do not cover all 22 criteria.** This spec carries three
+  two-sided windows — `vbgout_min`/`vbgout_max`, `vbg0_min`/`vbg0_max`,
+  `vbg1_min`/`vbg1_max` — and on each pair the mid loop can see only the `_max`
+  half (collapse entry below), so **`vbgout_min`, `vbg0_min` and `vbg1_min` are
+  never actually judged in the mid loop** no matter which corners are selected.
+  Two of the five drifting criteria (`vbg1_min`, `vbg1_max`) are the two halves
+  of one such window. Read "the mid loop watches these 6 corners" as covering
+  19 of 22 criteria, not 22.
 - **The seed is bounded by `min(#criteria, #corners)`, which is why the first
   grid reduced nothing.** The planned grid was process-only (tt/ss/ff, 3
   corners); measured, the seed was **all 3** — `ff` for the voltages/PSRR/loop
@@ -337,11 +353,28 @@ that number was measured.
   against is `1.233753` at ff/1.98. `run_full_pvt_sweep` avoids this by
   evaluating one criterion at a time against its own worst value; the mid loop
   cannot, because the judge's contract is a single name-keyed dict. This is a
-  *second*, independent source of mid-loop optimism on top of corner reduction —
-  and it is contained by the same locked constraint: the final sweep evaluates
-  both sides correctly. `corner_worst` does carry both sides per criterion, so
-  the data exists if the judge contract is ever changed. Pinned rather than left
-  silent in `test_the_judge_sees_a_worse_value_than_nominal_alone`.
+  *second*, independent source of mid-loop optimism on top of corner reduction.
+- **The collapse costs the whole `retry_budget`, not one iteration, and adding
+  corners cannot fix it.** This was understated on first writing and the
+  correction matters. Trace a low-side violation of `vbgout_min`: the mid loop
+  is handed the **maximum** over the set, which satisfies both `>= 1.20` and
+  `<= 1.28`, so it reports PASS and exits. The final sweep fails, `grown_with`
+  adds the offending corner, and the mid loop re-runs — but
+  `worst_case_measurements` **still** overwrites `vbgout_v` with the max of the
+  now-larger set, so the judge **still** cannot see the violation. Verified
+  directly: with the violating corner in the set, per-criterion worst
+  `vbgout_min` = 1.05 while the judged dict holds 1.2451 and reports PASS. **The
+  loop cannot converge on the blind half of a two-sided window**; it re-derives
+  the same PASS until `retry_budget` is exhausted and then FAILs. The locked
+  constraint still holds — `cli.py` breaks to FAIL on the failing sweep, so the
+  *verdict* is never wrong — but "contained" here means only that the run ends
+  correctly, not that the work was bounded. Which half is blind is decided by
+  order: `worst_case_measurements` writes per criterion and the **later**
+  criterion in the list wins, so in these specs (`_min` declared first) the
+  `_min` side is the blind one. `corner_worst` does carry both sides per
+  criterion, so the data exists if the judge contract is ever changed. Pinned
+  rather than left silent in
+  `test_the_judge_sees_a_worse_value_than_nominal_alone`.
 - **Best-arm identification was considered and rejected.** Pure-exploration
   bandits (successive halving, LUCB, racing) exist to spend a sampling budget
   well when each evaluation is *noisy* — their entire gain structure comes from

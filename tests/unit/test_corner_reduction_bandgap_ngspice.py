@@ -9,6 +9,13 @@ LLM 에이전트만 대역이다. corner_sim에서 에이전트의 기여는 con
 status 보고뿐이고 측정값은 전부 직접 경로에서 나오므로(build_corner_simulate의
 docstring), 대역 에이전트가 측정하는 것을 바꾸지 않는다.
 
+**"종단"은 한 마디만큼 과장이다 - 여기 적어 둔다.** 이 파일의 어느 테스트도
+`cli.py`의 재진입 루프를 돌지 않고, `corner_reduction.enabled`를 읽는 자리는
+`cli.py:243` 하나뿐인데 여기서 도달하지 않는다. 따라서 **스펙에서 이 하위
+프로젝트를 통째로 꺼도 이 파일은 하나도 실패하지 않는다.** 여기서 붙는 것은
+씨앗 → 최악값 → 탐침 → 성장 판정까지의 사슬이고, "스펙 스위치가 그 사슬을
+켠다"는 마지막 한 마디는 `tests/unit/test_cli.py`가 대역으로 덮는다.
+
 `ngspice`를 PATH에서 가정한다 - 이 저장소의 관례다(스킵 게이트 없음).
 
 **실행 시간 129초(실측).** 대부분은 9코너 x 5테스트벤치 스윕 두 번(진입 ~57초,
@@ -166,8 +173,22 @@ async def test_the_judge_sees_a_worse_value_than_nominal_alone(entry_sweep, tmp_
     #
     # 이것은 코너 축소가 아니라 **판정자 계약**의 문제다(judge는 측정값 이름으로
     # 키가 잡힌 dict 하나를 받는다). run_full_pvt_sweep은 같은 함정을 기준
-    # 하나씩 따로 평가해서 피한다. 시스템 수준의 보증은 그대로다 - 중간 루프의
-    # 낙관은 최종 판정 스윕이 잡고, 잡히면 재진입한다. 대가는 반복 하나다.
+    # 하나씩 따로 평가해서 피한다.
+    #
+    # **대가는 반복 하나가 아니라 retry_budget 전체다 - 처음에 축소해서 적었고
+    # 그것이 틀렸다.** vbgout_min이 어딘가에서 위배된다고 하자. 중간 루프는
+    # 집합의 **최댓값**을 받는데 그 값은 `>= 1.20`도 `<= 1.28`도 만족하므로
+    # PASS로 끝난다. 최종 스윕이 실패하고 grown_with가 그 코너를 집합에
+    # 더한 뒤 루프를 다시 돌아도, worst_case_measurements는 **여전히**
+    # 커진 집합의 최댓값으로 vbgout_v를 덮어쓰므로 판정자는 **여전히**
+    # 위배를 볼 수 없다. 즉 **양면 창의 가려진 쪽으로는 루프가 수렴할 수
+    # 없다** - 같은 PASS를 retry_budget만큼 다시 유도해 내고 FAIL한다.
+    # (직접 확인: 위배 코너를 집합에 넣으면 corner_worst의 vbgout_min은
+    # 1.05인데 판정 dict는 1.2451을 들고 PASS를 낸다.)
+    #
+    # 잠긴 제약은 그대로다 - cli.py가 실패한 스윕에서 FAIL로 끊으므로
+    # **판정 자체는 틀리지 않는다**. 다만 "잡힌다"가 뜻하는 것은 실행이
+    # 올바르게 끝난다는 것뿐이고, 들인 일이 유계라는 뜻은 아니다.
     # 조용히 두지 않기 위해 여기서 못박는다.
     assert worst["measurements"]["vbgout_v"] > nominal["measurements"]["vbgout_v"]
     assert worst["measurements"]["vbgout_v"] == worst["corner_worst"]["vbgout_max"]["value"]
@@ -214,7 +235,10 @@ async def test_a_probe_run_records_its_corner_in_history(entry_sweep, tmp_path):
     assert result["probe"]["corner"] == "tt/1.62/27.0"
     assert events == [("corner_probe", result["probe"])]
 
-    # tt는 이 덱에서 모든 기준을 통과하므로 승격은 없다. 회전만 진행된다.
+    # 승격은 없다. 회전만 진행된다. **관찰된 범위를 정확히 적는다**: 위에서
+    # testbenches를 dc_tc 하나로 줄였으므로 spec.all_criteria도 8개이고,
+    # 탐침이 통과한 것은 22개 전부가 아니라 그 **8개**다. 나머지 14개는 이
+    # 실행에서 탐침 코너에 대고 평가되지 않았다.
     assert result["probe"]["failed"] is False
     assert result["probe"]["promoted"] is False
     assert corner_state.corner_set.corners == cs.corners
