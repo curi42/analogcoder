@@ -12,6 +12,7 @@ from analogcoder.netlist import (
     parse_netlist,
     resolve_change_scopes,
 )
+from analogcoder.patterns import find_patterns
 from analogcoder.signal_path import build_signal_paths
 from analogcoder.state import RunState
 from analogcoder.structure import derive_structure
@@ -120,7 +121,7 @@ async def run_orchestration(
                 for change in entry["proposal"]["proposed_changes"]
             }
             focus = select_focus(structure, paths, failing_nets, touched_refdes)
-            structure_view = render_structure(structure, paths, [], focus)
+            structure_view = render_structure(structure, paths, find_patterns(structure), focus)
             netlist_view = render_netlist(netlist_texts[canonical_name], focus)
             state.log_event(
                 "focus",
