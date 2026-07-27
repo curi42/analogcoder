@@ -67,6 +67,13 @@ def measurement_nets(control_block: str) -> dict[str, set[str]]:
         line = raw_line.strip()
         lowered = line.lower()
         if lowered.startswith(_MEAS_PREFIXES):
+            # CLAUDE.md는 SPICE 줄을 str.split()으로 쪼개는 것을 금지하지만,
+            # 그 규칙은 **부품 줄**에 대한 것이다: split_tokens가 지키는 것은
+            # `W='wn * 2'`와 `{...}` 처럼 공백을 품은 파라미터 값이고, 그것을
+            # 쪼개면 모델 이름이 노드 목록으로 밀려 들어간다. 여기는 컨트롤
+            # 블록의 meas 줄이라 그런 토큰이 없고, 필요한 것은 앞의 세 토큰
+            # (meas / analysis / name)뿐이다 - 나머지는 다시 이어 붙여 정규식
+            # 으로 처리하므로 토큰 경계 자체가 결과에 영향을 주지 않는다.
             tokens = line.split()
             # meas <analysis> <name> <func> <ref...>
             if len(tokens) < 3:

@@ -284,11 +284,21 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
             continue
 
         if fold_start is not None:
-            elided += 1
+            # 지시문(`.param`, `.model`, ...)은 부품이 아니다. 앵커를 그대로
+            # 세면 `.param` + `.model` + 소자 하나뿐인 본문이 "(3 components
+            # elided)"로 나와, 접힌 블록의 규모를 모델에게 잘못 알려준다.
+            if not code.startswith("."):
+                elided += 1
             continue
 
         out.append(raw_line)
         emitted_anchors.add(idx)
+
+    if fold_start is not None:
+        # `.ends` 없이 파일이 끝난 경우(잘린 덱, 발췌 붙여넣기). 닫는 지점이
+        # 영영 오지 않아 마커도 `.ends`도 안 나오고 프롬프트가 그냥 끊겨,
+        # 모델은 뒤에 무엇이 있었는지 알 길이 없다. 접힘의 존재만은 남긴다.
+        out.append(f"* ... ({elided} components elided)")
 
     return "\n".join(out)
 

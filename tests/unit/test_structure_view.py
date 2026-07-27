@@ -253,6 +253,35 @@ def test_the_netlist_view_never_truncates_a_continued_subckt_header():
     assert "elided" in text
 
 
+def test_the_elision_count_counts_components_not_directives():
+    # ".param"/".model"은 부품이 아니다. 앵커를 세는 방식이라 이것들까지
+    # 함께 세어, 소자가 하나뿐인 본문이 "(3 components elided)"로 나왔다 -
+    # 접힌 블록의 규모를 모델에게 잘못 알려주는 숫자다.
+    deck = (
+        ".subckt SKIP a b\n"
+        ".param rr=1k\n"
+        ".model NMOS nmos level=1\n"
+        "R9 a b {rr}\n"
+        ".ends SKIP\n"
+    )
+
+    assert "(1 components elided)" in render_netlist(deck, set())
+
+
+def test_an_unterminated_subckt_at_eof_still_gets_its_elision_marker():
+    # `.ends` 없이 파일이 끝나면 접힘을 닫는 지점이 영영 오지 않아 마커도
+    # `.ends`도 안 나오고 프롬프트가 그냥 끊긴다 - 모델은 뒤에 뭐가 있었는지
+    # 알 길이 없다. 잘린 덱은 흔하고(발췌를 붙여넣는 경우), 뷰가 조용히
+    # 삼키는 것이 최악이다.
+    deck = ".subckt SKIP a b\nR9 a b 1k\nR8 a b 2k\n"
+
+    text = render_netlist(deck, set())
+
+    assert ".subckt SKIP a b" in text
+    assert "R9" not in text
+    assert "(2 components elided)" in text
+
+
 def test_a_proposal_outside_focus_is_reported_so_a_wrong_focus_leaves_evidence():
     changes = [{"refdes": "SPARE.M9", "param": "W"}, {"refdes": "DRIVER.M1", "param": "W"}]
 

@@ -86,9 +86,14 @@ async def run_orchestration(
         measurement_by_criterion = {
             c.name: c.measurement for tb in spec.testbenches for c in tb.criteria
         }
+        # 테스트벤치를 가로질러 **합집합**으로 병합한다. dict.update로 덮어쓰면
+        # 두 테스트벤치가 같은 measurement 이름을 정의할 때(PSR 테스트벤치들이
+        # 실제로 이름을 재사용한다) 앞선 것이 보던 넷이 조용히 사라져, 초점이
+        # 마지막 테스트벤치가 본 블록만 가리킨다.
         nets_by_measurement: dict[str, set[str]] = {}
         for tb in spec.testbenches:
-            nets_by_measurement.update(measurement_nets(tb.control_block))
+            for name, nets in measurement_nets(tb.control_block).items():
+                nets_by_measurement.setdefault(name, set()).update(nets)
 
         for outer_iter in range(1, MAX_OUTER_ITERATIONS + 1):
             netlist_texts = state.current_netlist_texts()

@@ -82,13 +82,14 @@ def test_the_tunable_index_covers_both_named_params_and_positional_values():
     assert ("AMP.X1", "value") not in entries
 
 
-def test_nets_are_scope_qualified_so_two_blocks_cannot_collide():
+def test_the_structure_exposes_no_field_that_nothing_consumes():
+    # net_terminals는 계산되고 스냅샷되고 아무도 안 썼다. 게다가 키 공간이
+    # 스코프 한정("AMP.tail")이라 signal_path.net_blocks의 최상위 넷 이름과
+    # 달랐다 - 나중에 누가 둘을 같은 것으로 알고 조인하면 조용히 빈 결과를
+    # 낸다. 죽은 필드에 서로 다른 키 규약까지 붙으면 그건 함정이다.
     s = derive_structure(TWO_BLOCK, "demo")
 
-    assert "AMP.tail" in s.net_terminals
-    assert {t.refdes for t in s.net_terminals["AMP.tail"]} == {"AMP.X1", "AMP.X2"}
-    # Xa1은 서브회로 인스턴스라 단자 역할을 내지 않으므로 out에는 Rf만 남는다.
-    assert {t.refdes for t in s.net_terminals["out"]} == {"Rf"}
+    assert not hasattr(s, "net_terminals")
 
 
 def test_derivation_is_deterministic():

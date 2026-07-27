@@ -83,7 +83,6 @@ class NetlistStructure:
     circuit_name: str
     blocks: dict[str | None, BlockStructure]
     tunable: list[TunableEntry]
-    net_terminals: dict[str, list[Terminal]]
 
 
 def _qualify(scope: str | None, name: str) -> str:
@@ -163,18 +162,18 @@ def derive_structure(netlist_text: str, circuit_name: str) -> NetlistStructure:
 
     blocks: dict[str | None, BlockStructure] = {}
     tunable: list[TunableEntry] = []
-    net_terminals: dict[str, list[Terminal]] = {}
 
     for scope, components in scoped:
         facts = [_fact(scope, component) for component in components]
         for fact, component in zip(facts, components):
-            if not is_top_level_stimulus(scope, component.ctype):
-                for name in sorted(fact.params):
-                    tunable.append(TunableEntry(refdes=fact.refdes, param=name))
-                if _is_numeric_value(component.value):
-                    tunable.append(TunableEntry(refdes=fact.refdes, param="value"))
-            for terminal, net in zip(fact.terminals, fact.nodes):
-                net_terminals.setdefault(_qualify(scope, net), []).append(terminal)
+            if is_top_level_stimulus(scope, component.ctype):
+                # 최상위 자극/전원은 주소록에 올리지 않는다. 이유는
+                # netlist.is_top_level_stimulus 참고.
+                continue
+            for name in sorted(fact.params):
+                tunable.append(TunableEntry(refdes=fact.refdes, param=name))
+            if _is_numeric_value(component.value):
+                tunable.append(TunableEntry(refdes=fact.refdes, param="value"))
 
         ports = parsed.subckts[scope].ports if scope is not None else []
         blocks[scope] = BlockStructure(
@@ -184,6 +183,4 @@ def derive_structure(netlist_text: str, circuit_name: str) -> NetlistStructure:
             instance_count=instance_counts[scope] if scope is not None else 1,
         )
 
-    return NetlistStructure(
-        circuit_name=circuit_name, blocks=blocks, tunable=tunable, net_terminals=net_terminals
-    )
+    return NetlistStructure(circuit_name=circuit_name, blocks=blocks, tunable=tunable)

@@ -706,6 +706,40 @@ async def test_the_criterion_to_measurement_to_net_mapping_produces_a_non_degene
 
 
 @pytest.mark.asyncio
+async def test_two_testbenches_defining_the_same_measurement_name_do_not_collapse(tmp_path):
+    # nets_by_measurement.update(...)는 테스트벤치를 가로질러 last-writer-wins
+    # 로 병합했다. 두 테스트벤치가 같은 measurement 이름을 정의하면(PSR
+    # 테스트벤치들이 실제로 이름을 재사용한다) 앞선 테스트벤치가 보던 넷이
+    # 조용히 사라져, 초점이 원인 블록 대신 마지막 테스트벤치의 블록만
+    # 가리킨다. 합집합이어야 한다.
+    gain = SimpleNamespace(name="gain", measurement="gain_db", operator=">=", threshold=19.5)
+    tb_out = SimpleNamespace(
+        name="ac_loop_gain",
+        criteria=[gain],
+        control_block=".control\nmeas ac gain_db find vdb(vout) at=1k\n.endc\n",
+    )
+    tb_ref = SimpleNamespace(
+        name="psr",
+        criteria=[],
+        control_block=".control\nmeas ac gain_db find vdb(iref) at=1k\n.endc\n",
+    )
+    spec = SimpleNamespace(
+        circuit_name="two_subckt", testbenches=[tb_out, tb_ref], canonical=tb_out
+    )
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr"])
+
+    await run_orchestration(
+        {"ac_loop_gain": TWO_SUBCKT_NETLIST, "psr": TWO_SUBCKT_NETLIST}, spec, state, agents
+    )
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    focus_events = [e for e in events if e["step"] == "focus"]
+    assert focus_events[0]["blocks"] == ["AMP", "BIAS"]
+
+
+@pytest.mark.asyncio
 async def test_verify_pre_sees_the_full_body_of_an_out_of_focus_block_the_proposal_touches(tmp_path):
     # Regression for a verify_pre-specific failure mode: render_netlist folds
     # an out-of-focus subckt's body to "* ... (N components elided)", but
