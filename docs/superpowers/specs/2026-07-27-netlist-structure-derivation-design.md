@@ -334,3 +334,35 @@ iteration은 튜너가 넷리스트 전문을 보던 조건에서 나온 값이�
   — 스코프 한정 refdes와 다중 블록 벤치마크. 초점 선정이 검증되는 무대다.
 - `docs/superpowers/specs/2026-07-25-area-aware-tuning-design.md` — 에어리어
   게이트. `check_param_applicability`가 자리와 철학을 그대로 따른다.
+
+## 개정 — 최종 브랜치 리뷰 이후 (2026-07-27)
+
+이 문서의 예시 렌더링은 설계 시점의 것이다. 병합 전 마지막 전(全)브랜치
+리뷰에서 파생층 자체는 견고하다는 판정을 받았고, 결함은 전부 **파생과 LLM이
+만나는 이음매**에 있었다. 다음 다섯 가지가 위 예시와 달라졌다.
+
+1. **`tunable` 줄은 필터가 아니다.** 튜너 프롬프트의 "tunable에 있는 것만
+   제안하라"는 문장을 걷어냈다. 그 문장은 초점이 틀렸을 때 정답 노브를
+   지시로 지워 버린다 - `vbg0_min`의 초점은 `{BUF_P}`인데 유일한 수정
+   지점(`XRl1`/`XRl2`)은 접힌 `BANDGAP` 안에 있다. 프롬프트는 이제 그 줄이
+   "이 뷰에서 보이는 주소"일 뿐이고 접힌 블록도 전체 경로로 지목할 수 있다고
+   말한다.
+2. **주소 표기는 `refdes=<R> param=<P>`.** `BUF_P.X6.W`는 점 하나가 스코프
+   구분자와 param 구분자를 겸해, 스키마의 두 칸을 뷰가 한 덩어리로 보여 준다.
+3. **최상위 `V`/`I`는 주소록에서 빠지고 `stimulus (not tunable):`로 보인다.**
+   `Vin`의 AC 크기를 100배로 키우면 `gain_db`가 20dB에서 60dB가 되고 세
+   게이트 어느 것도 막지 않는다 - 회로를 안 고친 채 PASS가 난다.
+   `netlist.check_stimulus_untouched`가 결정론적으로 거부한다.
+4. **`net_blocks`의 값은 역할의 집합이다.** drive가 sense를 이기게 하면
+   피드백 버퍼가 `senses -`로 나와 루프의 존재를 부정한다. 위 예시의
+   `BUF_P ... senses b0_i,vt05`는 실제로는 `drives vbg0  senses vbg0`이다
+   (`b0_i`와 `vout`이 최상위에서 같은 넷으로 접히고, `vt05`는 `BANDGAP`
+   내부 넷이라 최상위 좌표가 없다). 전원/자극 넷은 레벨 0 요약과 초점
+   씨앗에서 제외한다.
+5. **`cascode` 대신 `stacked_pair`.** 캐스코드와 source follower와 파워
+   게이팅 스위치는 지역 서브그래프가 같아 구별할 수 없다. 거짓 양성 0이
+   기준이면 답은 침묵 아니면 참인 이름이지 틀린 이름이 아니다. 위 예시의
+   `cascode(Xc1 over X1)`은 이제 `stacked_pair(BUF_P.Xc1,BUF_P.Xn1)` 형태다.
+
+`NetlistStructure.net_terminals`는 삭제했다 - 아무도 쓰지 않았고 키 공간이
+`net_blocks`와 달랐다.
