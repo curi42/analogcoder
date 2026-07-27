@@ -157,6 +157,35 @@ def test_worst_case_measurements_fails_criterion_when_any_corner_is_missing_the_
     assert worst_corners["phase_margin"]["value"] is None
 
 
+def test_the_deck_itself_is_a_valid_point_and_is_never_reported_as_a_corner():
+    # The reduced-corner loop (corner_selection.NOMINAL) hands this function a
+    # list whose first entry is None - the deck as it is, rendered through no
+    # corner at all. Reading .process off it would crash; inventing "tt"/27 for
+    # it would be worse, because tt/27 is a real corner and this is not one.
+    corners = [None, CornerPoint(process="fs", voltage=1.98, temperature=125)]
+    per_corner_measurements = [{"gain_db": 41.0}, {"gain_db": 52.0}]
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert measurements == {"gain_db": 41.0}
+    assert worst_corners["gain"]["process"] == "(deck)"
+    assert worst_corners["gain"]["voltage"] is None
+    assert worst_corners["gain"]["temperature"] is None
+    assert worst_corners["gain"]["value"] == 41.0
+
+
+def test_a_measurement_missing_at_the_deck_itself_names_the_deck():
+    corners = [None, CornerPoint(process="fs", voltage=1.98, temperature=125)]
+    per_corner_measurements = [{}, {"gain_db": 52.0}]
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0)]
+
+    measurements, worst_corners = worst_case_measurements(corners, per_corner_measurements, criteria)
+
+    assert "gain_db" not in measurements
+    assert worst_corners["gain"]["process"] == "(deck)"
+
+
 def test_two_sided_window_keeps_both_worst_cases_separate():
     # A min/max window is two criteria over ONE measurement with opposite
     # operators. Keying the worst-case pool by measurement name lets the

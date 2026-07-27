@@ -482,9 +482,15 @@ async def test_simulate_fn_merges_a_non_success_status_across_testbenches(tmp_pa
     # status 키가 **없으면** 성공으로 읽으므로, 이 신호가 없는 것은 틀린 것보다
     # 나쁘다 - 어떤 mock에도 보이지 않는다.
     run_dir = str(tmp_path / "runs" / "s1")
+    # control_block은 프로덕션의 SIMULATION_SCHEMA가 required로 두는 키다.
+    # 이 대역은 cli.agent_simulate를 통째로 갈아끼워 스키마 검증을 지나치므로
+    # 없어도 오늘은 통과하지만, 프로덕션이 내놓지 않는 모양을 흉내내는 대역은
+    # 그 키를 읽는 소비자가 생기는 순간 조용히 폴백 경로만 재게 된다.
     per_testbench = [
-        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": []},
-        {"measurements": {"iq_ua": 1.0}, "status": "convergence_failure", "warnings": []},
+        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": [],
+         "control_block": ".control\n.endc\n"},
+        {"measurements": {"iq_ua": 1.0}, "status": "convergence_failure", "warnings": [],
+         "control_block": ".control\n.endc\n"},
     ]
 
     async def fake_agent_simulate(*args, **kwargs):
@@ -511,8 +517,10 @@ async def test_simulate_fn_reports_success_only_when_every_testbench_succeeded(t
     # 성공 경로가 성공으로 남는지 같이 고정한다.
     run_dir = str(tmp_path / "runs" / "s2")
     per_testbench = [
-        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": []},
-        {"measurements": {"iq_ua": 200.0}, "status": "success", "warnings": []},
+        {"measurements": {"gain_db": 40.0}, "status": "success", "warnings": [],
+         "control_block": ".control\n.endc\n"},
+        {"measurements": {"iq_ua": 200.0}, "status": "success", "warnings": [],
+         "control_block": ".control\n.endc\n"},
     ]
 
     async def fake_agent_simulate(*args, **kwargs):

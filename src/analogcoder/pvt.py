@@ -53,8 +53,28 @@ def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
     ]
 
 
+def _corner_fields(corner: CornerPoint | None) -> dict:
+    """The reported coordinates of one point in a corner list.
+
+    `None` is the deck as it is - rendered through no corner at all - which is
+    how corner_selection.NOMINAL travels. It has no process/voltage/temperature
+    to read, so it is reported as "(deck)" (the same name corner_selection.label
+    gives it) with no numbers. Substituting a stand-in CornerPoint here instead
+    would put fabricated coordinates into worst_case_corners, where every
+    consumer reads them as a real corner - and tt/27 IS a real corner, distinct
+    from the unrendered deck. run_full_pvt_sweep never passes None, so this
+    changes nothing for it."""
+    if corner is None:
+        return {"process": "(deck)", "voltage": None, "temperature": None}
+    return {
+        "process": corner.process,
+        "voltage": corner.voltage,
+        "temperature": corner.temperature,
+    }
+
+
 def worst_case_measurements(
-    corners: list[CornerPoint], per_corner_measurements: list[dict], criteria: list[Criterion]
+    corners: list[CornerPoint | None], per_corner_measurements: list[dict], criteria: list[Criterion]
 ) -> tuple[dict, dict]:
     """For each criterion, finds the worst-case value across
     per_corner_measurements (parallel to corners) - the minimum observed
@@ -86,12 +106,7 @@ def worst_case_measurements(
 
         if missing_corners:
             corner = missing_corners[0]
-            worst_corners[criterion.name] = {
-                "process": corner.process,
-                "voltage": corner.voltage,
-                "temperature": corner.temperature,
-                "value": None,
-            }
+            worst_corners[criterion.name] = {**_corner_fields(corner), "value": None}
             continue  # withhold the measurement so evaluate_criteria fails it as missing
 
         if criterion.operator in (">=", ">"):
@@ -99,12 +114,7 @@ def worst_case_measurements(
         else:
             value, corner = max(values_with_corner, key=lambda vc: vc[0])
         measurements[criterion.measurement] = value
-        worst_corners[criterion.name] = {
-            "process": corner.process,
-            "voltage": corner.voltage,
-            "temperature": corner.temperature,
-            "value": value,
-        }
+        worst_corners[criterion.name] = {**_corner_fields(corner), "value": value}
     return measurements, worst_corners
 
 
