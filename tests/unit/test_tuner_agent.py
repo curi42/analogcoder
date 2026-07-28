@@ -134,8 +134,19 @@ def test_the_tuner_prompt_presents_past_attempts_as_facts_not_as_a_restriction()
 
     assert "past attempts this run" in prompt
     assert "you may propose the same component" in prompt
-    for banned in ("do not propose", "never propose", "must not repeat", "avoid proposing"):
-        assert banned not in prompt, f"히스토리가 제한으로 서술되었다: {banned!r}"
+    banned = (
+        "do not propose",
+        "never propose",
+        "must not repeat",
+        "avoid proposing",
+        "should not propose",
+        "refrain from",
+        "avoid re-propos",
+        "discouraged",
+        "must not propose",
+    )
+    for phrase in banned:
+        assert phrase not in prompt, f"히스토리가 제한으로 서술되었다: {phrase!r}"
 
 
 @pytest.mark.asyncio
