@@ -54,8 +54,41 @@ class SwapCandidate:
 class SwapRejection:
     block_path: str
     topology_id: str
-    reason: str  # "ports" | "models" | "scale" | "missing_in_testbench" | "identical_body"
+    # "ports" | "models" | "scale" | "missing_in_testbench" | "identical_body"
+    # | "already_tried"
+    reason: str
     detail: str
+
+
+# `topology_unavailable`이 실을 사유 코드. 후보가 0개라는 **하나의 관측**이
+# 서로 다른 사실 넷을 덮고 있었다: 덱에 `.subckt` 정의가 아예 없다 / 라이브러리가
+# 비었다 / 모든 쌍을 이미 시도했다 / 호환성 규칙이 전부 기각했다. 넷 다
+# `{"outer_iter": N}` 한 줄로 나가면 "검사했고 후보가 없음"과 "검사가 사라짐"이
+# 로그에서 구별되지 않는다 - 이 저장소가 다섯 번 반복한 침묵한 게이트의 모양이다.
+NO_SUBCKT_DEFINITIONS = "no_subckt_definitions"
+EMPTY_LIBRARY = "empty_library"
+ALL_PAIRS_ALREADY_TRIED = "all_pairs_already_tried"
+ALL_PAIRS_REJECTED = "all_pairs_rejected"
+
+
+def unavailable_reason(
+    netlist_texts: dict[str, str],
+    library: dict[str, Topology],
+    rejections: list[SwapRejection],
+) -> str:
+    """`compatible_swaps`가 후보를 하나도 내지 못했을 때 그 사유 코드.
+
+    파싱된 사실만 읽는다 - 추측이 없다. 순서가 중요하다: 정의가 없으면
+    라이브러리가 무엇이든 쌍이 열거되지 않고, 라이브러리가 비어 있으면 정의가
+    무엇이든 마찬가지다. 두 경우 모두 `rejections`가 비어 있어 사유를 기각
+    목록에서 되읽을 수 없다."""
+    if not any(parse_netlist(text).subckts for text in netlist_texts.values()):
+        return NO_SUBCKT_DEFINITIONS
+    if not library:
+        return EMPTY_LIBRARY
+    if rejections and all(r.reason == "already_tried" for r in rejections):
+        return ALL_PAIRS_ALREADY_TRIED
+    return ALL_PAIRS_REJECTED
 
 
 def _is_model_name(value: str | None) -> bool:
@@ -155,6 +188,21 @@ def compatible_swaps(
     for block_path in all_block_paths:
         for topology_id in sorted(library):
             if (block_path, topology_id) in tried:
+                # 기각으로 **기록한다**. 그냥 continue하면 "이미 써 본 쌍이라
+                # 뺐다"가 로그에서 부재로만 나타나, 라이브러리 소진과
+                # "판정이 사라짐"이 똑같이 `candidates: [], rejections: []`로
+                # 보인다.
+                rejections.append(
+                    SwapRejection(
+                        block_path=block_path,
+                        topology_id=topology_id,
+                        reason="already_tried",
+                        detail=(
+                            f"({block_path!r}, {topology_id!r}) was already attempted "
+                            f"earlier in this run"
+                        ),
+                    )
+                )
                 continue
 
             topology = library[topology_id]

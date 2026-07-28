@@ -19,7 +19,7 @@ from analogcoder.state import RunState
 from analogcoder.structure import derive_structure
 from analogcoder.structure_view import focus_misses, render_netlist, render_structure, select_focus
 from analogcoder.topologies import TOPOLOGY_LIBRARY
-from analogcoder.topology_match import SwapCandidate, compatible_swaps
+from analogcoder.topology_match import SwapCandidate, compatible_swaps, unavailable_reason
 
 MAX_OUTER_ITERATIONS = 10
 MAX_TUNING_RETRIES = 3
@@ -37,14 +37,27 @@ class OrchestratorAgents:
 
 
 def _final_result(
-    status: str, state: RunState, iterations_used: int, judge_result: dict | None, failure_reason: str | None = None
+    status: str,
+    state: RunState,
+    iterations_used: int,
+    judge_result: dict | None,
+    failure_reason: str | None = None,
+    topology_swaps: list[dict] | None = None,
 ) -> dict:
+    """`topology_swaps`는 **항상** 실린다(비었으면 빈 목록). 결과는 자기가
+    돌려주는 덱을 설명해야 한다 - 실측 실행에서 `BUF_P`의 16소자 본문이 통째로
+    교체됐는데도 `result.json`과 `report.md` 어디에도 그 사실이 없었다. 이
+    저장소가 최적화 단계에서 이미 같은 값을 치른 모양이다("212.99 µA 옆에
+    212.25 µA를 재는 넷리스트"). 키를 조건부로 넣지 않는 이유도 같다:
+    "스왑이 없었다"와 "기록이 사라졌다"가 같은 부재로 보이면 안 된다.
+    리포트 쪽에서 빈 목록이면 섹션을 그리지 않는다."""
     result = {
         "status": status,
         "final_netlist_paths": state.current_netlist_paths(),
         "run_dir": state.run_dir,
         "iterations_used": iterations_used,
         "final_criteria": judge_result["criteria"] if judge_result else [],
+        "topology_swaps": list(topology_swaps or []),
     }
     if failure_reason:
         result["failure_reason"] = failure_reason
@@ -117,6 +130,9 @@ async def run_orchestration(
     state.push_netlist_version(initial_netlist_texts)
     outer_iter = 0
     judge_result: dict = {}
+    # try 밖에서 초기화한다 - 두 except 절이 이것을 읽는데, try 안에서 처음
+    # 대입하면 첫 줄에서 터진 실행이 NameError로 바뀐다.
+    topology_swaps: list[dict] = []
 
     try:
         # No structural precondition on the deck (no more len(subckts) == 1
@@ -173,7 +189,9 @@ async def run_orchestration(
             state.log_event("judge", {"outer_iter": outer_iter, **judge_result})
 
             if judge_result["overall_pass"]:
-                return _final_result("PASS", state, outer_iter, judge_result)
+                return _final_result(
+                    "PASS", state, outer_iter, judge_result, topology_swaps=topology_swaps
+                )
 
             failing_nets: set[str] = set()
             for criterion in judge_result["criteria"]:
@@ -233,7 +251,16 @@ async def run_orchestration(
                     # applicable (block, topology) pair exists (or all have
                     # already been tried), so stay in parameter-tuning mode
                     # this iteration rather than dead-ending the run.
-                    state.log_event("topology_unavailable", {"outer_iter": outer_iter})
+                    # 사유 코드가 함께 나가야 한다 - `.subckt` 정의가 아예 없는
+                    # 덱과 라이브러리를 정말로 소진한 실행이 같은 한 줄을 내면
+                    # "검사했고 후보가 없음"과 "검사가 사라짐"이 구별되지 않는다.
+                    state.log_event(
+                        "topology_unavailable",
+                        {
+                            "outer_iter": outer_iter,
+                            "reason": unavailable_reason(netlist_texts, TOPOLOGY_LIBRARY, rejections),
+                        },
+                    )
                 else:
                     resolved = None
                     rejection_feedback = None
@@ -251,100 +278,156 @@ async def run_orchestration(
                         rejection_feedback = feedback
 
                     if resolved is None:
-                        return _final_result(
-                            "FAIL", state, outer_iter, judge_result,
-                            failure_reason="topology proposal repeatedly rejected",
+                        # **에스컬레이션 시도의 실패가 에스컬레이션하지 않은
+                        # 것보다 나빠서는 안 된다.** 예전에는 여기서 런 전체를
+                        # FAIL로 끝냈는데, 그것은 남은 outer iteration과 아직
+                        # 살아 있는 파라미터 튜닝 경로를 통째로 버리는 것이었다.
+                        # 실측(bandgap 시드 덱): block_path를 넣으면 iteration
+                        # 4에서 PASS(buf0_gain_db 100.158), 빼면 같은 iteration
+                        # 4에서 FAIL하고 덱이 netlist_v0(73.515)로 되돌아갔다 -
+                        # 스키마가 block_path를 required로 두지 않으므로(약한
+                        # 모델 보호) 생략은 언제든 일어날 수 있고, 후보 블록이
+                        # 여럿인 덱(이 브랜치가 존재하는 이유인 바로 그 덱)에서
+                        # 생략은 **항상** 모호하다.
+                        #
+                        # 그래서 결정론적 게이트 소진은 파라미터 튜닝 롤백처럼
+                        # 다룬다 - area 게이트가 이미 세운 선례이며, 파라미터
+                        # 경로도 LLM verifier가 거부했을 때(verify_pre_rejected_any)
+                        # 에만 하드 FAIL한다.
+                        state.log_event(
+                            "topology_unavailable",
+                            {
+                                "outer_iter": outer_iter,
+                                "reason": "proposal_unresolved",
+                                "detail": rejection_feedback,
+                            },
                         )
+                        # 리셋하지 않으면 카운터가 임계값 위에 머물러 이후 모든
+                        # iteration이 다시 3번의 토폴로지 LLM 호출을 태운다.
+                        # 스왑 iteration은 유지되든 롤백되든 카운터를 리셋한다는
+                        # 기존 규칙과도 같다.
+                        consecutive_rollbacks = 0
+                    else:
+                        tried_topologies.add((resolved.block_path, resolved.topology_id))
+                        topology = TOPOLOGY_LIBRARY[resolved.topology_id]
+                        # Applied to every deck that defines the block, not just
+                        # canonical - compatible_swaps' missing_in_testbench rule
+                        # guarantees a genuine candidate is defined in all of
+                        # them, and push_netlist_version versions every testbench
+                        # atomically, so a partial swap across testbenches would
+                        # be an inconsistent state no rollback could describe.
+                        new_netlist_texts = {
+                            name: apply_topology_swap(text, resolved.block_path, topology.subckt_body)
+                            for name, text in netlist_texts.items()
+                        }
 
-                    tried_topologies.add((resolved.block_path, resolved.topology_id))
-                    topology = TOPOLOGY_LIBRARY[resolved.topology_id]
-                    # Applied to every deck that defines the block, not just
-                    # canonical - compatible_swaps' missing_in_testbench rule
-                    # guarantees a genuine candidate is defined in all of
-                    # them, and push_netlist_version versions every testbench
-                    # atomically, so a partial swap across testbenches would
-                    # be an inconsistent state no rollback could describe.
-                    new_netlist_texts = {
-                        name: apply_topology_swap(text, resolved.block_path, topology.subckt_body)
-                        for name, text in netlist_texts.items()
-                    }
-
-                    swapped_block = parse_netlist(new_netlist_texts[canonical_name]).subckts[resolved.block_path]
-                    # Among the swapped-in block's own components, split by
-                    # what the frozen baseline (netlist_v0) can still say
-                    # about them - fully-qualified "<block_path>.<refdes>"
-                    # keys in both lists, since a bare refdes is ambiguous the
-                    # moment a deck has more than one amp (this repo's
-                    # bandgap benchmark always does).
-                    #
-                    # unconstrained: no baseline entry at all - a later
-                    # area-growth check has nothing to compare against, so
-                    # this refdes is simply unbound for the rest of the run.
-                    #
-                    # stale_baseline_refdes: a baseline entry exists (so a
-                    # later check will still run one), but its geometry
-                    # belongs to a component this refdes no longer is - the
-                    # component parameters differ from what actually got
-                    # swapped in. Reporting only "unconstrained" reads as "the
-                    # gate is intact everywhere else", when a stale entry
-                    # tiers a growth proposal against the PREVIOUS topology's
-                    # geometry, not the current one. This is logging only -
-                    # the area gate itself, and the choice to never refresh
-                    # the baseline, are unchanged; see the baseline_components
-                    # comment above.
-                    unconstrained_refdes = []
-                    stale_baseline_refdes = []
-                    for component in swapped_block.components:
-                        key = f"{resolved.block_path}.{component.refdes}"
-                        baseline_component = baseline_components.get(key)
-                        if baseline_component is None:
-                            unconstrained_refdes.append(key)
-                        elif _component_signature(baseline_component) != _component_signature(component):
-                            stale_baseline_refdes.append(key)
-                    unconstrained_refdes.sort()
-                    stale_baseline_refdes.sort()
-                    state.log_event(
-                        "topology_swap",
-                        {
+                        swapped_block = parse_netlist(new_netlist_texts[canonical_name]).subckts[resolved.block_path]
+                        # Among the swapped-in block's own components, split by
+                        # what the frozen baseline (netlist_v0) can still say
+                        # about them - fully-qualified "<block_path>.<refdes>"
+                        # keys in both lists, since a bare refdes is ambiguous the
+                        # moment a deck has more than one amp (this repo's
+                        # bandgap benchmark always does).
+                        #
+                        # unconstrained: no baseline entry at all - a later
+                        # area-growth check has nothing to compare against, so
+                        # this refdes is simply unbound for the rest of the run.
+                        #
+                        # stale_baseline_refdes: a baseline entry exists (so a
+                        # later check will still run one), but its geometry
+                        # belongs to a component this refdes no longer is - the
+                        # component parameters differ from what actually got
+                        # swapped in. Reporting only "unconstrained" reads as "the
+                        # gate is intact everywhere else", when a stale entry
+                        # tiers a growth proposal against the PREVIOUS topology's
+                        # geometry, not the current one. This is logging only -
+                        # the area gate itself, and the choice to never refresh
+                        # the baseline, are unchanged; see the baseline_components
+                        # comment above.
+                        unconstrained_refdes = []
+                        stale_baseline_refdes = []
+                        for component in swapped_block.components:
+                            key = f"{resolved.block_path}.{component.refdes}"
+                            baseline_component = baseline_components.get(key)
+                            if baseline_component is None:
+                                unconstrained_refdes.append(key)
+                            elif _component_signature(baseline_component) != _component_signature(component):
+                                stale_baseline_refdes.append(key)
+                        unconstrained_refdes.sort()
+                        stale_baseline_refdes.sort()
+                        state.log_event(
+                            "topology_swap",
+                            {
+                                "outer_iter": outer_iter,
+                                "block_path": resolved.block_path,
+                                "topology_id": resolved.topology_id,
+                                "unconstrained_refdes": unconstrained_refdes,
+                                "stale_baseline_refdes": stale_baseline_refdes,
+                            },
+                        )
+                        # history.jsonl에만 남기면 최종 산출물(result.json /
+                        # report.md)은 자기가 돌려주는 덱을 설명하지 못한다.
+                        # 결과에는 목록이 아니라 **개수**를 싣는다 - 전문은
+                        # 이미 위 이벤트에 있고, 리포트가 필요한 것은 "면적
+                        # 게이트가 몇 개를 더 이상 묶지 못하는가"다.
+                        swap_record = {
                             "outer_iter": outer_iter,
                             "block_path": resolved.block_path,
                             "topology_id": resolved.topology_id,
-                            "unconstrained_refdes": unconstrained_refdes,
-                            "stale_baseline_refdes": stale_baseline_refdes,
-                        },
-                    )
+                            "unconstrained_refdes": len(unconstrained_refdes),
+                            "stale_baseline_refdes": len(stale_baseline_refdes),
+                            "outcome": None,
+                        }
+                        topology_swaps.append(swap_record)
 
-                    state.push_netlist_version(new_netlist_texts)
+                        state.push_netlist_version(new_netlist_texts)
 
-                    new_sim_result = await agents.simulate(new_netlist_texts, spec)
-                    state.log_event(
-                        "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
-                    )
+                        new_sim_result = await agents.simulate(new_netlist_texts, spec)
+                        state.log_event(
+                            "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
+                        )
 
-                    new_judge_result = await agents.judge(new_sim_result["measurements"], spec)
-                    state.log_event(
-                        "judge", {"outer_iter": outer_iter, "post_topology_swap": True, **new_judge_result}
-                    )
+                        new_judge_result = await agents.judge(new_sim_result["measurements"], spec)
+                        state.log_event(
+                            "judge", {"outer_iter": outer_iter, "post_topology_swap": True, **new_judge_result}
+                        )
 
-                    post_review = await agents.verify_post(
-                        judge_result, new_judge_result, [{"topology_id": resolved.topology_id}]
-                    )
-                    state.log_event(
-                        "verify_post", {"outer_iter": outer_iter, "topology_swap": True, **post_review}
-                    )
+                        # block_path를 함께 넘긴다. 유지/롤백 판정 자체는
+                        # before/after judge 결과로 결정되므로 정확성 문제는
+                        # 아니지만, verifier의 자유 서술 feedback이
+                        # history.jsonl에 남는 사람이 읽는 기록이다 -
+                        # bandgap처럼 앰프가 넷인 덱에서 "swapped
+                        # folded_cascode_pmos_in_cs"는 어느 블록인지 말하지
+                        # 않는다.
+                        post_review = await agents.verify_post(
+                            judge_result,
+                            new_judge_result,
+                            [{
+                                "topology_id": resolved.topology_id,
+                                "block_path": resolved.block_path,
+                            }],
+                        )
+                        state.log_event(
+                            "verify_post", {"outer_iter": outer_iter, "topology_swap": True, **post_review}
+                        )
 
-                    consecutive_rollbacks = 0
+                        consecutive_rollbacks = 0
 
-                    if post_review["recommendation"] == "rollback":
-                        state.rollback()
+                        if post_review["recommendation"] == "rollback":
+                            swap_record["outcome"] = "rolled_back"
+                            state.rollback()
+                            judge_result = new_judge_result
+                            continue
+
+                        swap_record["outcome"] = "kept"
+
+                        if new_judge_result["overall_pass"]:
+                            return _final_result(
+                                "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps
+                            )
+
                         judge_result = new_judge_result
                         continue
-
-                    if new_judge_result["overall_pass"]:
-                        return _final_result("PASS", state, outer_iter, new_judge_result)
-
-                    judge_result = new_judge_result
-                    continue
 
             approved_proposal = None
             rejection_feedback = None
@@ -456,6 +539,7 @@ async def run_orchestration(
                     return _final_result(
                         "FAIL", state, outer_iter, judge_result,
                         failure_reason="tuning proposal repeatedly rejected",
+                        topology_swaps=topology_swaps,
                     )
                 consecutive_rollbacks += 1
                 continue
@@ -489,14 +573,20 @@ async def run_orchestration(
             consecutive_rollbacks = 0
 
             if new_judge_result["overall_pass"]:
-                return _final_result("PASS", state, outer_iter, new_judge_result)
+                return _final_result(
+                    "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps
+                )
 
             judge_result = new_judge_result
 
-        return _final_result("FAIL", state, MAX_OUTER_ITERATIONS, judge_result, failure_reason="max iterations reached")
+        return _final_result(
+            "FAIL", state, MAX_OUTER_ITERATIONS, judge_result,
+            failure_reason="max iterations reached", topology_swaps=topology_swaps,
+        )
     except AgentExecutionError as exc:
         return _final_result(
-            "FAIL", state, max(outer_iter - 1, 0), judge_result, failure_reason=f"agent execution error: {exc}"
+            "FAIL", state, max(outer_iter - 1, 0), judge_result,
+            failure_reason=f"agent execution error: {exc}", topology_swaps=topology_swaps,
         )
     except ValueError as exc:
         # Belt-and-braces: check_refdes_resolution above is meant to reject an
@@ -507,5 +597,6 @@ async def run_orchestration(
         # yields a clean FAIL instead of an uncaught crash - the same guarantee
         # CLAUDE.md documents for the AgentExecutionError catch above.
         return _final_result(
-            "FAIL", state, max(outer_iter - 1, 0), judge_result, failure_reason=str(exc)
+            "FAIL", state, max(outer_iter - 1, 0), judge_result,
+            failure_reason=str(exc), topology_swaps=topology_swaps,
         )

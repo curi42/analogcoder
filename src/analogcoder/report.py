@@ -120,6 +120,38 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
     return lines
 
 
+def _topology_lines(swaps: list | None) -> list[str]:
+    """토폴로지 스왑을 설명하는 섹션. 스왑이 없었으면 빈 목록.
+
+    스왑은 블록 본문을 통째로 갈아끼운다 - 실측 실행에서 `BUF_P`의 16소자
+    본문이 극성도 사이징도 다른 본문으로 바뀌었는데 `result.json`도
+    `report.md`도 그 사실을 한 줄도 말하지 않았다. 최적화 단계에서 이미 같은
+    값을 치렀다("결과는 자기가 돌려주는 덱을 설명해야 한다").
+
+    `unconstrained`/`stale` 개수를 함께 적는 이유는 그것이 **면적 게이트가 이
+    실행의 나머지 구간에서 무엇을 더 이상 묶지 못하는지**이기 때문이다.
+    기준선은 `netlist_v0`에서 한 번만 잡히고 스왑 후 갱신되지 않는다(의도된
+    설계) - 그 침묵을 리포트에 적는다.
+
+    돌지 않은 실행에 빈 섹션을 그리지 않는 것은 최적화/코너 축소 섹션과 같은
+    규칙이다."""
+    if not swaps:
+        return []
+
+    lines = ["", "## Topology swaps", ""]
+    for swap in swaps:
+        outcome = swap.get("outcome") or "unknown"
+        lines.append(
+            f"- iteration {swap.get('outer_iter')}: `{swap.get('block_path')}` <- "
+            f"`{swap.get('topology_id')}` ({outcome})"
+        )
+        lines.append(
+            f"  - area gate after this swap: {swap.get('unconstrained_refdes')} refdes "
+            f"unconstrained, {swap.get('stale_baseline_refdes')} with a stale baseline"
+        )
+    return lines
+
+
 def write_report_md(run_dir: str, result: dict) -> str:
     lines = [
         "# Run Report",
@@ -138,6 +170,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
     for c in result["final_criteria"]:
         mark = "PASS" if c["pass"] else "FAIL"
         lines.append(f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} (margin {c['margin']})")
+    lines += _topology_lines(result.get("topology_swaps"))
     lines += _optimization_lines(result.get("optimization"))
     lines += _corner_reduction_lines(result.get("corner_reduction"))
     if result.get("failure_reason"):

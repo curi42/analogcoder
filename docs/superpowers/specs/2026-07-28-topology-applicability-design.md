@@ -174,7 +174,9 @@ class SwapCandidate:
 class SwapRejection:
     block_path: str
     topology_id: str
-    reason: str              # "ports", "models", "scale", "missing_in_testbench"
+    # "ports", "models", "scale", "missing_in_testbench",
+    # "identical_body", "already_tried"
+    reason: str
     detail: str
 
 def compatible_swaps(
@@ -347,9 +349,33 @@ TOPOLOGY_SCHEMA = {
 - 없으면, 후보들의 `block_path`가 **하나로 결정될 때만** 그것을 쓴다.
 - 결정되지 않으면 재시도 피드백으로 후보 목록을 돌려준다 —
   기존 거부-재시도 루프와 같은 모양, 같은 `MAX_TUNING_RETRIES` 상한.
+- **`MAX_TUNING_RETRIES`를 소진해도 런을 끝내지 않는다.** 사유를
+  (`topology_unavailable`, `reason: "proposal_unresolved"`) 남기고
+  `consecutive_rollbacks`를 0으로 되돌린 뒤, 그 iteration은 **파라미터
+  튜닝으로 흘러간다** — 후보가 0개일 때와 정확히 같은 경로다.
+
+마지막 항목이 최종 리뷰에서 고쳐진 부분이며, 그 근거는 이 브랜치가 존재하는
+이유인 바로 그 덱들이다. `block_path`는 `required`가 아니므로(위의 약한 모델
+보호) 생략은 언제든 일어날 수 있는데, `bandgap/spec.yaml`은 후보 6개에
+토폴로지 id당 블록 3개, `spec_seed_topology.yaml`은 후보 7개에 최대 4개다 —
+즉 **생략은 이 덱들에서 항상 모호**하고, 옛 동작은 그때마다 3번의 재시도 뒤
+런 전체를 FAIL로 끝내며 남은 outer iteration 6개와 아직 살아 있는 파라미터
+튜닝 경로를 버렸다. 실측(에이전트만 스텁, ngspice는 실제): `block_path`가
+있으면 iteration 4에서 PASS(`buf0_gain_db` 100.158), 빼면 같은 iteration
+4에서 FAIL하고 덱이 `netlist_v0`(73.515)로 되돌아갔다. **에스컬레이션 시도의
+실패가 에스컬레이션하지 않은 것보다 나빠서는 안 된다.**
+
+이는 area 게이트가 이미 세운 선례와 같다(CLAUDE.md: "면적 기각만으로 재시도를
+소진한 것은 즉시 런 실패가 아니라 파라미터 튜닝 롤백처럼 다룬다"). 파라미터
+경로도 **LLM verifier가 거부했을 때**(`verify_pre_rejected_any`)에만 하드
+FAIL하며, 결정론적 게이트 소진으로는 결코 그러지 않는다.
+`consecutive_rollbacks` 리셋이 함께 필요한 이유는 비용이다: 리셋하지 않으면
+카운터가 임계값 위에 머물러 이후 **모든** iteration이 다시 3번의 토폴로지 LLM
+호출을 태운다(측정: 9회 → 21회). 스왑 iteration은 유지되든 롤백되든 카운터를
+리셋한다는 기존 규칙과도 일치한다.
 
 이는 "결정론적 계층이 해소하되 절대 추측하지 않는다"는 이 저장소의 규율
-그대로다.
+그대로다 — 생략된 `block_path`를 대신 골라 주는 것은 **하지 않는다**.
 
 `TOPOLOGY_TUNER_SYSTEM_PROMPT`는 두 곳이 바뀐다. **게이트 규칙이 바뀌면
 그것을 되풀이하는 프롬프트를 반드시 다시 읽는다** — `verify_pre`가 `Xq1.m`을
@@ -373,9 +399,47 @@ TOPOLOGY_SCHEMA = {
   기각 사유를 사유 코드와 함께 담는다. 위반이 있을 때만 로깅하면
   "검사했고 문제없음"과 "검사가 사라짐"이 로그에서 구별되지 않는다 —
   `optimize_guard_infeasible`에서 이미 세운 원칙이다.
-- `topology_unavailable` — 트리거가 걸렸는데 호환 후보가 0개일 때, 사유
-  요약과 함께. 이것이 없으면 F1은 다시 "조용히 꺼진 기능"이 된다.
+- `topology_unavailable` — 스왑이 이 iteration에 일어나지 않았을 때,
+  **사유 코드와 함께**. 이것이 없으면 F1은 다시 "조용히 꺼진 기능"이 된다.
+  후보 0개는 하나의 관측이지만 사실은 여럿이고, 사유 코드가 없던 동안
+  `.subckt`가 아예 없는 덱(`benchmarks/inverting_amp/spec.yaml`)과 진짜로
+  소진된 라이브러리가 **바이트 단위로 같은** 두 줄을 냈다 — 그리고 그 두 줄은
+  "검사가 사라짐"과도 구별되지 않았다. 사유 코드
+  (`topology_match.unavailable_reason`):
+  - `no_subckt_definitions` — 덱에 `.subckt` 정의가 없어 쌍을 열거할 수 없다.
+  - `empty_library` — 라이브러리가 비었다.
+  - `all_pairs_already_tried` — 모든 쌍을 이 런에서 이미 시도했다.
+  - `all_pairs_rejected` — 호환성 규칙이 전부 기각했다.
+  - `proposal_unresolved` — 후보는 있었으나 에이전트의 제안이
+    `MAX_TUNING_RETRIES` 동안 하나의 쌍으로 해소되지 않았다(위 "에이전트
+    표면" 참고). `detail`에 마지막 재시도 피드백이 실린다.
+
+  소진을 **부재가 아니라 기록으로** 만들기 위해, `compatible_swaps`는
+  `tried`에 든 쌍을 그냥 건너뛰지 않고 `already_tried` 사유의 기각으로
+  남긴다.
 - `topology_swap` — 기존 이벤트에 `block_path`가 추가된다.
+
+## 산출물 (result.json / report.md)
+
+스왑은 블록 본문을 **통째로** 갈아끼운다. 실측 실행에서 `BUF_P`의 16소자
+본문이 극성도 사이징도 다른 본문으로 바뀌었는데 `result.json`에도
+`report.md`에도 그 사실이 한 줄도 없었다 — 최적화 단계에서 이미 같은 값을
+치른 모양이다(CLAUDE.md: "결과는 자기가 돌려주는 덱을 설명해야 한다").
+
+- `result["topology_swaps"]` — **항상** 있는 키(스왑이 없으면 빈 목록).
+  항목마다 `{outer_iter, block_path, topology_id, unconstrained_refdes,
+  stale_baseline_refdes, outcome}`이며 `outcome`은 `"kept"` 또는
+  `"rolled_back"`이다. refdes는 **개수**로 싣는다 — 전문은 이미
+  `topology_swap` 이벤트에 있고, 여기서 필요한 것은 "면적 게이트가 이 런의
+  나머지 구간에서 몇 개를 더 이상 묶지 못하는가"다.
+- `report.md`의 `## Topology swaps` 섹션 — 스왑이 없었으면 **그리지 않는다**
+  (최적화/코너 축소 섹션과 같은 규칙: 빈 섹션은 "시도했는데 아무것도 못
+  했다"로 읽힌다).
+- `verify_post`에 넘기는 `applied_changes`에도 `block_path`를 넣는다.
+  유지/롤백 판정은 before/after judge 결과로 결정되므로 정확성 문제는 아니지만,
+  verifier의 자유 서술 `feedback`이 `history.jsonl`에 남는 사람이 읽는
+  기록이고, 앰프가 넷인 bandgap에서 "swapped folded_cascode_pmos_in_cs"는
+  어느 블록인지 말하지 않는다.
 
 ## 에어리어 게이트
 
@@ -429,25 +493,41 @@ TOPOLOGY_SCHEMA = {
    - 한 테스트벤치에만 없는 블록은 `missing_in_testbench` 사유로 기각되고
      **후보에 오르지 않는다**.
    - `tried`에 든 `(블록, 토폴로지)` 쌍은 후보에서 빠지지만, **같은 블록의
-     다른 항목**과 **다른 블록의 같은 항목**은 남는다.
+     다른 항목**과 **다른 블록의 같은 항목**은 남는다. 그리고 그 탈락은
+     `already_tried` 사유의 기각으로 **기록된다** — 부재로 두면 소진이
+     "판정이 사라짐"과 구별되지 않는다.
+   - `unavailable_reason`이 후보 0개의 서로 다른 사실 넷을 구별한다.
 3. `tests/unit/test_netlist.py` (확장) — `apply_topology_swap`의 점 표기
    경로: 중첩 정의를 정확히 지목, 부분 경로 거부, 이름 모호 시 `ValueError`,
    헤더/푸터 보존.
 4. `tests/unit/test_orchestrator.py` (확장, 에이전트 모킹):
    - 다중 블록 덱에서 스왑이 **가용**하다(오늘은 불가능).
-   - 호환 후보가 0개면 `topology_unavailable`이 로깅되고 파라미터 모드가
-     계속된다.
+   - 호환 후보가 0개면 `topology_unavailable`이 **사유 코드와 함께**
+     로깅되고 파라미터 모드가 계속된다 — `.subckt`가 없는 덱은
+     `no_subckt_definitions`, 규칙이 전부 기각하면 `all_pairs_rejected`,
+     라이브러리를 소진하면 `all_pairs_already_tried`로 서로 구별된다.
    - `block_path` 생략 + 후보 블록이 하나 → 해소된다.
    - `block_path` 생략 + 후보 블록이 둘 → 재시도 피드백, 그리고
-     `MAX_TUNING_RETRIES` 소진 시 기존 FAIL 사유.
+     `MAX_TUNING_RETRIES`를 소진하면 **런이 끝나지 않고**
+     `topology_unavailable`(`reason: "proposal_unresolved"`)가 남은 뒤 그
+     iteration이 파라미터 튜닝으로 이어진다. 그 iteration에서 PASS까지 갈 수
+     있어야 한다(실측 시나리오). `consecutive_rollbacks`가 0으로 리셋되므로
+     이후 iteration이 매번 3번의 토폴로지 LLM 호출을 태우지 않는다(9회 vs
+     21회로 못박는다).
    - 스왑이 **대상 블록만** 바꾸고 다른 블록의 튜닝 결과는 보존한다.
    - `topology_candidates`가 승인/기각 양쪽에서 기록된다.
+   - 유지된 스왑과 되돌린 스왑이 `result["topology_swaps"]`에 결말과 면적
+     개수까지 실리고, 스왑이 없던 실행은 빈 목록을 갖는다.
+   - `verify_post`가 받는 `applied_changes`에 `block_path`가 들어 있다.
 5. `tests/unit/test_topology_seed_ngspice.py` (신규, 실 ngspice) — 시드 덱을
    그대로 시뮬레이션하면 `buf0_gain_db < 90`이고,
    `apply_topology_swap`으로 `folded_cascode_pmos_in_cs`를 적용하면
    `>= 90`이 된다. LLM 없이, 결정론적으로. 이 테스트가 F1이 실제로 도는지를
    증명하는 자리다. 예상 실행 시간 10초 미만이므로 `slow` 마커를 붙이지
    않는다.
+6. `tests/unit/test_report.py` (확장) — `## Topology swaps` 섹션이 블록 경로/
+   토폴로지 id/iteration/결말/면적 개수를 적고, 스왑이 없던 실행에는 섹션이
+   아예 없다.
 
 전 구간에서 새 테스트마다 "이 테스트는 어떤 변형을 잡는가"를 묻는다 — 이
 저장소에서 "통과하지만 아무것도 검증하지 않는 테스트"가 한 브랜치에서만

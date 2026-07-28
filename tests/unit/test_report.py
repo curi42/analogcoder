@@ -223,3 +223,62 @@ def test_write_report_md_surfaces_a_path_disagreement_and_a_skipped_re_entry(tmp
     assert "fs/1.98/125.0" in content
     assert "Re-entry skipped" in content
     assert "max iterations reached" in content
+
+
+# --- 최종 리뷰 I-3: 토폴로지 스왑이 result.json에도 report.md에도 없었다 ------
+# 실측 실행에서 BUF_P의 16소자 본문이 극성도 사이징도 다른 본문으로 통째로
+# 교체됐는데 두 산출물 어디에도 그 사실이 없다. 최적화 단계에서 이미 같은 값을
+# 치른 모양이다("결과는 자기가 돌려주는 덱을 설명해야 한다").
+
+SAMPLE_SWAPPED_RESULT = {
+    **SAMPLE_RESULT,
+    "topology_swaps": [
+        {
+            "outer_iter": 4,
+            "block_path": "BUF_P",
+            "topology_id": "folded_cascode_pmos_in_cs",
+            "unconstrained_refdes": 14,
+            "stale_baseline_refdes": 2,
+            "outcome": "kept",
+        },
+        {
+            "outer_iter": 7,
+            "block_path": "TRIMAMP",
+            "topology_id": "folded_cascode_nmos_in_cs",
+            "unconstrained_refdes": 3,
+            "stale_baseline_refdes": 0,
+            "outcome": "rolled_back",
+        },
+    ],
+}
+
+
+def test_write_report_md_reports_every_topology_swap(tmp_path):
+    """어떤 변형을 잡는가: `_topology_lines`를 통째로 지우거나
+    `write_report_md`에서 그 호출을 빼는 변형, 그리고 유지/롤백 결말이나
+    면적 개수를 빼는 변형. 블록 경로가 없으면 bandgap처럼 앰프가 넷인 덱에서
+    어느 블록이 바뀌었는지 리포트만 보고는 알 수 없다."""
+    path = write_report_md(str(tmp_path), SAMPLE_SWAPPED_RESULT)
+    with open(path) as f:
+        content = f.read()
+
+    assert "## Topology swaps" in content
+    assert "BUF_P" in content and "folded_cascode_pmos_in_cs" in content
+    assert "TRIMAMP" in content and "folded_cascode_nmos_in_cs" in content
+    assert "iteration 4" in content and "iteration 7" in content
+    # 유지된 스왑과 되돌린 스왑은 다른 사실이다 - 둘을 구별하지 않으면 리포트가
+    # 실제로 출하된 덱을 잘못 설명한다.
+    assert "(kept)" in content
+    assert "(rolled_back)" in content
+    # 면적 게이트가 이 실행의 나머지 구간에서 무엇을 더 이상 묶지 못하는가.
+    assert "14 refdes unconstrained, 2 with a stale baseline" in content
+    assert "3 refdes unconstrained, 0 with a stale baseline" in content
+
+
+def test_write_report_md_says_nothing_about_topology_when_no_swap_happened(tmp_path):
+    # 스왑이 없었던 실행에 빈 섹션을 그리면 "스왑을 시도했는데 아무것도 못
+    # 했다"로 읽힌다 - 최적화/코너 축소 섹션과 같은 규칙.
+    path = write_report_md(str(tmp_path), {**SAMPLE_RESULT, "topology_swaps": []})
+    with open(path) as f:
+        content = f.read()
+    assert "Topology" not in content

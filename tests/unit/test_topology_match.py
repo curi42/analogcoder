@@ -1,5 +1,5 @@
 from analogcoder.topologies import Topology
-from analogcoder.topology_match import SwapCandidate, compatible_swaps
+from analogcoder.topology_match import SwapCandidate, compatible_swaps, unavailable_reason
 
 FIVE_PORT = Topology(
     id="five_port", description="d", addresses=[],
@@ -80,8 +80,38 @@ def test_a_block_missing_from_one_testbench_is_not_a_candidate():
 
 def test_a_tried_pair_is_dropped_but_its_siblings_survive():
     two_blocks = DECK_9 + DECK_9.replace("AMP", "AMP2").replace("* t\n.option scale=1.0u\n", "")
-    cands, _ = compatible_swaps({"tb": two_blocks}, LIB, {("AMP", "nine_port")})
+    cands, rej = compatible_swaps({"tb": two_blocks}, LIB, {("AMP", "nine_port")})
     assert cands == [SwapCandidate(block_path="AMP2", topology_id="nine_port")]
+    # 그리고 그 탈락이 **기록된다**. 그냥 continue하면 "이미 써 봤다"가 부재로만
+    # 나타나, 라이브러리 소진이 "판정이 사라짐"과 똑같이 보인다. 사유를 지우는
+    # 변형은 여기서 걸린다.
+    tried = [r for r in rej if r.reason == "already_tried"]
+    assert [(r.block_path, r.topology_id) for r in tried] == [("AMP", "nine_port")]
+    assert "already attempted" in tried[0].detail
+
+
+def test_the_reason_for_zero_candidates_distinguishes_four_different_facts():
+    """후보 0개는 하나의 관측이지만 사실은 넷이다. 넷을 한 줄로 뭉개면
+    "검사했고 후보가 없음"과 "검사가 사라짐"이 로그에서 같아진다 - 이 저장소가
+    다섯 번 반복한 침묵한 게이트의 모양이다. 사유 코드를 상수 하나로 되돌리는
+    변형이 여기서 걸린다."""
+    flat_deck = "* t\n.option scale=1.0u\nRf a b 10k\n.end\n"
+    assert unavailable_reason({"tb": flat_deck}, LIB, []) == "no_subckt_definitions"
+    # 정의는 있는데 라이브러리가 비었다 - 기각 목록도 비므로 그것으로는
+    # 구별할 수 없다.
+    assert unavailable_reason({"tb": DECK_5}, {}, []) == "empty_library"
+
+    _, all_tried = compatible_swaps(
+        {"tb": DECK_5}, {"five_port": FIVE_PORT}, {("AMP", "five_port")}
+    )
+    assert unavailable_reason({"tb": DECK_5}, {"five_port": FIVE_PORT}, all_tried) == (
+        "all_pairs_already_tried"
+    )
+
+    _, refused = compatible_swaps({"tb": DECK_5}, {"nine_port": NINE_PORT}, set())
+    assert unavailable_reason({"tb": DECK_5}, {"nine_port": NINE_PORT}, refused) == (
+        "all_pairs_rejected"
+    )
 
 
 def test_the_candidate_order_is_deterministic():

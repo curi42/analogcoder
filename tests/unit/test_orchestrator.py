@@ -401,6 +401,12 @@ async def test_no_compatible_candidate_logs_topology_unavailable_and_stays_in_pa
     assert all(e["rejections"] for e in candidates_events)  # rejections recorded, not just silence
     assert unavailable_events
     assert len(candidates_events) == len(unavailable_events)
+    # Zero candidates is one observation covering several different facts.
+    # This deck DOES define a block, and every pair was refused by the
+    # compatibility rules - which is not the same fact as "the library was
+    # exhausted" or "there is no .subckt here at all". A reason code that
+    # collapses those (or is missing entirely) is what this pins.
+    assert all(e["reason"] == "all_pairs_rejected" for e in unavailable_events)
 
 
 @pytest.mark.asyncio
@@ -787,8 +793,33 @@ async def test_the_swap_event_records_which_refdes_the_area_gate_can_no_longer_b
 
 
 @pytest.mark.asyncio
-async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
-    async def always_bad_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+async def test_a_topology_proposal_that_never_resolves_falls_back_to_parameter_tuning(tmp_path):
+    """A failed *escalation attempt* must never be worse than not escalating.
+
+    This used to return FAIL("topology proposal repeatedly rejected"),
+    throwing away the remaining outer iterations and a still-viable
+    parameter-tuning path. That mirrors the precedent CLAUDE.md records for
+    the area gate: exhausting all retries on a *deterministic* gate is
+    treated like a parameter-tuning rollback, never an immediate run failure
+    - the parameter path itself hard-FAILs only when an LLM verifier
+    rejected (verify_pre_rejected_any).
+
+    Two mutations this catches:
+
+    1. Restoring the `return _final_result("FAIL", ..., "topology proposal
+       repeatedly rejected")`: failure_reason becomes that string, and no
+       tuning_proposal is logged at the iteration the escalation failed.
+    2. Dropping the `consecutive_rollbacks = 0` reset: the counter stays at
+       or above TOPOLOGY_SWITCH_THRESHOLD forever, so EVERY subsequent
+       iteration burns another MAX_TUNING_RETRIES topology LLM calls. With
+       the reset, the threshold is re-reached only every 3rd iteration, so
+       iterations 4/7/10 escalate - 3 attempts x 3 retries = 9 calls. Without
+       it, iterations 4..10 all escalate - 7 x 3 = 21.
+    """
+    propose_calls = []
+
+    async def always_unresolvable_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        propose_calls.append(rejection_feedback)
         return {"topology_id": "not_a_real_topology", "reasoning": "x", "confidence": 50}
 
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
@@ -797,14 +828,237 @@ async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
     agents = make_agents(
         judge=lambda m, s: _async(FAIL_JUDGE),
         verify_post=verify_post_always_rollback,
-        propose_topology=always_bad_topology,
+        propose_topology=always_unresolvable_topology,
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
     result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
-    assert result["failure_reason"] == "topology proposal repeatedly rejected"
+    assert result["failure_reason"] == "max iterations reached"
+
+    # The retry loop still ran the full MAX_TUNING_RETRIES with feedback -
+    # the coverage the old FAIL-pinning test provided must not be lost.
+    assert len(propose_calls) == 9  # 3 escalating iterations x MAX_TUNING_RETRIES
+    assert propose_calls[0] is None
+    assert propose_calls[1] is not None and propose_calls[2] is not None
+    assert "not_a_real_topology" in propose_calls[1]
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    unavailable = [e for e in events if e["step"] == "topology_unavailable"]
+    assert [e["reason"] for e in unavailable] == ["proposal_unresolved"] * 3
+    assert unavailable[0]["outer_iter"] == 4
+    # ...and the SAME iteration went on to tune parameters instead of ending.
+    assert any(e["step"] == "tuning_proposal" and e["outer_iter"] == 4 for e in events)
+
+
+@pytest.mark.asyncio
+async def test_an_always_omitted_block_path_on_an_ambiguous_deck_does_not_end_the_run(tmp_path):
+    """The measured scenario behind this fix.
+
+    TOPOLOGY_SCHEMA deliberately leaves block_path out of `required` (a weak
+    model omitting a required field would hard-FAIL every spec), and on the
+    decks this branch exists for an omitted block_path is ALWAYS ambiguous:
+    bandgap/spec.yaml offers 6 candidates with 3 blocks per topology id.
+    So the resolver correctly refuses to guess, all MAX_TUNING_RETRIES are
+    spent, and the old code ended the run right there.
+
+    Measured on real ngspice with only the agent stubbed: with block_path
+    present the run PASSes at iteration 4 (buf0_gain_db 100.158); with it
+    omitted it FAILed at iteration 4 with the deck back at netlist_v0
+    (73.515). Here the same shape is reproduced with stubs: the failed
+    escalation must leave the run free to reach PASS through parameter
+    tuning in that very iteration. Restoring the FAIL return turns this into
+    FAIL("topology proposal repeatedly rejected") - the mutation caught.
+    """
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    propose_calls = []
+
+    async def propose_topology_always_omits_block_path(structure_view, judge_result, candidates, library, rejection_feedback):
+        # TWO_BLOCK_5PORT_SWAPPABLE_NETLIST defines AMP1 and AMP2, both
+        # compatible with miller_nulling_resistor - so this is genuinely
+        # ambiguous and the deterministic layer must not guess a block.
+        propose_calls.append(rejection_feedback)
+        return {"topology_id": "miller_nulling_resistor", "reasoning": "x", "confidence": 90}
+
+    agents = make_agents(
+        judge=judge_sequence, verify_post=verify_post_sequence,
+        propose_topology=propose_topology_always_omits_block_path,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": TWO_BLOCK_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    assert result["iterations_used"] == 4
+    assert len(propose_calls) == 3  # the escalation really was attempted and exhausted
+    assert "AMP1" in propose_calls[1] and "AMP2" in propose_calls[1]
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    assert [e["step"] for e in events].count("topology_swap") == 0  # nothing was guessed
+    unavailable = [e for e in events if e["step"] == "topology_unavailable"]
+    assert len(unavailable) == 1
+    assert unavailable[0]["reason"] == "proposal_unresolved"
+    assert any(e["step"] == "tuning_proposal" and e["outer_iter"] == 4 for e in events)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_swap_reaches_the_result_with_its_block_topology_and_area_counts(tmp_path):
+    """A topology swap replaces a block's ENTIRE body - in the measured
+    bandgap run, BUF_P's 16 devices, a different polarity and a different
+    sizing - and neither result.json nor report.md said so. CLAUDE.md already
+    records this exact shape from the optimization phase: "the result must
+    describe the deck it returns".
+
+    Deleting the swap record (or the `topology_swaps=` argument on the PASS
+    return, so the result is built from an empty list) is what this catches;
+    so is dropping the area counts, which are what says how much of the deck
+    the area gate can no longer bound for the rest of the run."""
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    assert result["topology_swaps"] == [{
+        "outer_iter": 4,
+        "block_path": "AMP",
+        "topology_id": "miller_nulling_resistor",
+        # miller_nulling_resistor's body has 16 components; Xn1 and Xcc share
+        # a refdes with GENERIC_5PORT_SWAPPABLE_BODY (so they keep a - now
+        # stale - baseline entry), the other 14 were never indexed at all.
+        "unconstrained_refdes": 14,
+        "stale_baseline_refdes": 2,
+        "outcome": "kept",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_swap_is_recorded_as_rolled_back_not_omitted(tmp_path):
+    """A swap that was tried and rolled back is a fact about the run, not a
+    non-event: it consumed an iteration and burned a library entry. Recording
+    only kept swaps (e.g. appending after the rollback check instead of
+    before it) would make a run that attempted two swaps look like it never
+    escalated at all."""
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    async def propose_topology_first_candidate(structure_view, judge_result, candidates, library, rejection_feedback):
+        chosen = candidates[0]
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 80,
+        }
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_first_candidate,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    swaps = result["topology_swaps"]
+    assert len(swaps) == 2
+    assert [s["outcome"] for s in swaps] == ["rolled_back", "rolled_back"]
+    assert [s["block_path"] for s in swaps] == ["AMP", "AMP"]
+    assert swaps[0]["topology_id"] != swaps[1]["topology_id"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_without_any_swap_carries_an_empty_swap_list(tmp_path):
+    """The key is unconditional so "no swap happened" and "the record was
+    dropped" are not the same absence - the report is what decides not to
+    draw an empty section."""
+    agents = make_agents()
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    assert result["topology_swaps"] == []
+
+
+@pytest.mark.asyncio
+async def test_verify_post_is_told_which_block_the_swap_replaced(tmp_path):
+    """The keep/rollback verdict is fully determined by the before/after
+    judge results, so this is not a correctness issue - but the verifier's
+    free-text feedback is the human-readable record that lands in
+    history.jsonl, and "swapped folded_cascode_pmos_in_cs" is ambiguous
+    across the four amplifiers of benchmarks/bandgap. Dropping block_path
+    from the applied_changes payload is the mutation this catches."""
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+    applied_seen = []
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        applied_seen.append(applied_changes)
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    assert applied_seen[-1] == [
+        {"topology_id": "miller_nulling_resistor", "block_path": "AMP"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -911,6 +1165,57 @@ async def test_the_library_can_genuinely_exhaust_and_the_run_falls_back_to_param
     events = [json.loads(line) for line in open(state.history_path)]
     unavailable_events = [e for e in events if e["step"] == "topology_unavailable"]
     assert unavailable_events  # the (only) candidate was genuinely exhausted
+    # ...and it says WHY. Before this, a genuinely exhausted library and a
+    # deck with no .subckt at all emitted byte-identical history:
+    # {"step":"topology_candidates","candidates":[],"rejections":[]} then
+    # {"step":"topology_unavailable","outer_iter":N} - neither of which is
+    # distinguishable from someone deleting the check. Exhaustion is now a
+    # recorded rejection ("already_tried"), not an absence.
+    assert all(e["reason"] == "all_pairs_already_tried" for e in unavailable_events)
+    candidates_events = [e for e in events if e["step"] == "topology_candidates"]
+    assert candidates_events[-1]["rejections"]
+    assert {r["reason"] for r in candidates_events[-1]["rejections"]} == {"already_tried"}
+
+
+@pytest.mark.asyncio
+async def test_a_deck_with_no_subckt_at_all_says_so_rather_than_just_no_candidates(tmp_path):
+    """`benchmarks/inverting_amp/spec.yaml` is this shape: a flat deck with no
+    `.subckt` definition anywhere, so no (block, topology) pair can even be
+    enumerated. That is a different fact from "the library was exhausted"
+    and from "every pair was refused by the rules", and all three used to
+    produce identical history. Collapsing the reason codes back into one
+    string - or reporting this deck as all_pairs_rejected, which would claim
+    rejections that never happened - is the mutation this catches."""
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_spy(structure_view, judge_result, candidates, library, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return FAKE_TOPOLOGY_PROPOSAL
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_spy,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    assert propose_topology_calls["count"] == 0
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    unavailable_events = [e for e in events if e["step"] == "topology_unavailable"]
+    assert unavailable_events
+    assert all(e["reason"] == "no_subckt_definitions" for e in unavailable_events)
+    candidates_events = [e for e in events if e["step"] == "topology_candidates"]
+    # No pair exists to reject, so an empty rejections list here is the truth -
+    # which is exactly why the reason code has to carry the fact instead.
+    assert all(e["candidates"] == [] and e["rejections"] == [] for e in candidates_events)
 
 
 @pytest.mark.asyncio
