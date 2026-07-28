@@ -102,6 +102,63 @@ def test_a_structurally_compatible_candidate_passes_structure_check():
     assert result.detail["topology_id"] == "cand_ok"
 
 
+# X1 instantiates model MODELX (a non-numeric positional value, so
+# topology_match._is_model_name reads it as a model name rather than a node).
+DECK_MODELX_SCALE_2 = """* t
+.option scale=2.0u
+.subckt BLOCK a b
+X1 a b MODELX
+.ends BLOCK
+.end
+"""
+
+# Same block/ports, but this deck never instantiates MODELX anywhere - it
+# fails the "models" check instead (and its own scale is irrelevant, since
+# the models check fails first and short-circuits to the next testbench).
+DECK_NO_MODELX = """* t
+.option scale=1.0u
+.subckt BLOCK a b
+R1 a b 1k
+.ends BLOCK
+.end
+"""
+
+
+def test_multiple_matching_rejections_reports_the_first_testbench_in_sorted_order():
+    """A slot with two testbenches where the same (block, topology) pair is
+    rejected for a DIFFERENT reason in each testbench: tb_a's deck does
+    instantiate MODELX (so its models check passes), but its `.option scale`
+    is 2.0u against the candidate's 1e-6 assumption, so it fails on scale.
+    tb_b's deck never instantiates MODELX at all, so it fails on models
+    before scale is ever checked for it.
+
+    compatible_swaps iterates testbenches in `sorted(netlist_texts)` order
+    and appends one rejection per testbench as it visits it, so the
+    resulting rejections list has tb_a's ("scale") before tb_b's
+    ("models") purely because "tb_a" < "tb_b" alphabetically. check_structure
+    documents that it reports matching[0] - the first entry in that
+    already-ordered list, not an arbitrary pick - and this test pins that
+    behaviour along with the fact that nothing is lost: both reasons are
+    still visible in detail["rejections"]."""
+    candidate = Candidate(
+        topology_id="cand_multi",
+        subckt_body="X1 a b MODELX\n",
+        ports=["a", "b"],
+        assumes_scale=1e-6,
+        provenance="authored",
+    )
+    netlist_texts = {"tb_a": DECK_MODELX_SCALE_2, "tb_b": DECK_NO_MODELX}
+    slot = _dummy_slot()
+
+    result = check_structure(candidate, slot, netlist_texts)
+
+    assert result.status == "fail"
+    assert result.detail["reason"] == "scale"
+    reasons = {r["reason"] for r in result.detail["rejections"]}
+    assert reasons == {"scale", "models"}
+    assert len(result.detail["rejections"]) == 2
+
+
 # --- reproduce_characteristics -----------------------------------------------
 
 DECK_SWAPPABLE = """* t
@@ -160,6 +217,27 @@ def test_a_missing_measurement_fails_reproduction():
     # candidate run produces no gain_db at all; baseline does (irrelevant -
     # the requirement is on the candidate side only).
     backend = _SequencedBackend([{}, {"gain_db": 42.0}])
+
+    result, addresses = reproduce_characteristics(_candidate(), slot, {"tb1": DECK_SWAPPABLE}, backend)
+
+    assert result.status == "fail"
+    assert result.detail["missing"] == ["gain"]
+    assert addresses == []
+
+
+def test_a_measurement_present_as_literal_none_is_treated_as_missing():
+    """A measurement key that EXISTS but holds None - a simulator reporting
+    "no threshold crossing found" as a null rather than omitting the key -
+    must be treated the same as a fully absent key. This repo has hit
+    exactly this shape (a settling-time criterion produced no value at 14 of
+    45 corners). A key-absence-only check (`c.measurement not in
+    candidate_measurements`) would miss it, since the key is present here;
+    routing the missing-check through judge_tools.evaluate_criteria (which
+    reads `measurements.get(...) is None` and fills NaN either way) catches
+    it."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0)]
+    slot = _slot_with_criteria(criteria)
+    backend = _SequencedBackend([{"gain_db": None}, {"gain_db": 42.0}])
 
     result, addresses = reproduce_characteristics(_candidate(), slot, {"tb1": DECK_SWAPPABLE}, backend)
 

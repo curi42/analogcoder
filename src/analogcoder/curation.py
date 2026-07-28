@@ -21,13 +21,15 @@ cascode-compensation 후보가 기각된 것은 그 후보가 나빠서가 아�
 실수다.
 """
 
+import math
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import apply_topology_swap
-from analogcoder.spec import Testbench
+from analogcoder.spec import TargetSpec, Testbench
 from analogcoder.topologies import Topology
 from analogcoder.topology_match import SwapCandidate, compatible_swaps
 
@@ -52,7 +54,7 @@ class Candidate:
 class Slot:
     """후보가 겨루는 대상 - 어느 스펙의 어느 블록인지."""
 
-    spec: "object"  # spec.TargetSpec - 순환 임포트를 피하려 문자열 주석만 둔다
+    spec: TargetSpec
     spec_dir: Path
     block_path: str
 
@@ -121,11 +123,23 @@ def check_structure(candidate: Candidate, slot: Slot, netlist_texts: dict[str, s
     # compatible_swaps는 라이브러리의 모든 (block_path, topology_id) 쌍에
     # 대해, 후보가 되지 못하면 반드시 적어도 하나의 SwapRejection을 남긴다
     # (각 테스트벤치 루프에서 실패마다 append한다) - 그래서 matching이 비어
-    # 있는 경우는 이 함수의 버그이지 정상 동작이 아니다.
-    assert matching, (
-        f"compatible_swaps produced neither a candidate nor a rejection for "
-        f"({slot.block_path!r}, {candidate.topology_id!r}) - this should be unreachable"
-    )
+    # 있는 경우는 이 함수의 버그이지 정상 동작이 아니다. `assert`가 아니라
+    # 명시적으로 raise하는 이유는 `assert`가 `python -O` 아래서 통째로
+    # 사라지기 때문이다 - 이 불변식은 최적화 플래그와 무관하게 지켜야 한다.
+    if not matching:
+        raise RuntimeError(
+            f"compatible_swaps produced neither a candidate nor a rejection for "
+            f"({slot.block_path!r}, {candidate.topology_id!r}) - this should be unreachable"
+        )
+    # 같은 (block, topology) 쌍이 테스트벤치마다 다른 사유로 거부될 수 있다
+    # (예: tb1은 scale 불일치, tb2는 필요한 모델이 없음). rejections 리스트는
+    # compatible_swaps가 `for tb in sorted(netlist_texts)` 순서로 append한
+    # 것이므로, matching[0]은 "임의의 하나"가 아니라 **정렬된 테스트벤치
+    # 이름 순으로 가장 먼저 실패한 테스트벤치의 사유**다 - compatible_swaps
+    # 자신이 이미 확립한 순서를 그대로 따르는 것이지 이 함수가 새로 순서를
+    # 매기는 것이 아니다. 전체 사유 목록은 detail["rejections"]에 남아 있어
+    # 손실되지 않는다 (test_multiple_matching_rejections_reports_the_first_
+    # testbench_in_sorted_order로 고정).
     first = matching[0]
     return StageResult(
         name="structure",
@@ -186,7 +200,11 @@ def reproduce_characteristics(
     요구는 스펙 전체 통과가 아니다 - 항목은 한 블록만 바꾸므로 스펙 전체를
     만족할 의무가 없다. 요구는 둘뿐이다: 후보 쪽에서 모든 기준의 measurement가
     나올 것, 그리고 시뮬레이터가 예외를 던지면 그것은 거부가 아니라
-    inconclusive로 남을 것.
+    inconclusive로 남을 것. 두 덱 모두 `judge_tools.evaluate_criteria`를
+    거친다 - measurement 존재 여부와 기준별 실제값을 이 함수의 판정 하나로
+    통일하기 위해서다. 손수 만든 "키가 dict에 있는가" 검사는 값이 리터럴
+    `None`으로 존재하는 경우를 놓친다(evaluate_criteria는 그 경우도 actual을
+    NaN으로 채워 결측으로 잡는다).
 
     반환하는 `addresses`(둘째 값)는 측정에서 나온다 - 후보가 기존 본문보다
     나은 기준의 이름들이고, "낫다"는 그 기준의 연산자 방향으로 판정한다."""
@@ -214,7 +232,20 @@ def reproduce_characteristics(
             [],
         )
 
-    missing = sorted({c.name for c in criteria if c.measurement not in candidate_measurements})
+    # evaluate_criteria가 "measurement가 나왔는가"의 유일한 판정처다 - 키가
+    # 아예 없을 때뿐 아니라, 키는 있지만 값이 리터럴 None일 때도
+    # (measurements.get(...)이 None을 돌려주면) actual을 math.nan으로
+    # 채운다. 시뮬레이터가 "임계값 교차를 못 찾았다"를 키 생략이 아니라
+    # None 값으로 보고하는 모양은 이 저장소가 이미 겪은 사실이다(45코너 중
+    # 14곳에서 값 없는 settling time). 그래서 여기서 `c.measurement not in
+    # candidate_measurements`처럼 키 존재만 보는 손수 만든 대체 검사를 쓰지
+    # 않는다 - 그 검사는 키가 있고 값이 None인 경우를 놓친다.
+    candidate_eval = evaluate_criteria(candidate_measurements, criteria)
+    baseline_eval = evaluate_criteria(baseline_measurements, criteria)
+    candidate_by_name = {r["name"]: r for r in candidate_eval["criteria"]}
+    baseline_by_name = {r["name"]: r for r in baseline_eval["criteria"]}
+
+    missing = sorted(name for name, r in candidate_by_name.items() if math.isnan(r["actual"]))
     if missing:
         return (
             StageResult(
@@ -233,13 +264,9 @@ def reproduce_characteristics(
     per_criterion: dict = {}
     addresses: list[str] = []
     for c in criteria:
-        candidate_value = candidate_measurements.get(c.measurement)
-        baseline_value = baseline_measurements.get(c.measurement)
-        better = (
-            baseline_value is not None
-            and candidate_value is not None
-            and _is_better(c.operator, candidate_value, baseline_value)
-        )
+        candidate_value = candidate_by_name[c.name]["actual"]
+        baseline_value = baseline_by_name[c.name]["actual"]
+        better = not math.isnan(baseline_value) and _is_better(c.operator, candidate_value, baseline_value)
         per_criterion[c.name] = {
             "measurement": c.measurement,
             "operator": c.operator,
