@@ -183,6 +183,97 @@ that number was measured.
   set atomically — never partially applied across testbenches). See
   `docs/superpowers/specs/2026-07-25-psr-verification-design.md`.
 
+### Topology curation — how a new library entry gets in
+
+- `curation.py` / `agents/curator.py` / `agents/variant_author.py` /
+  `cli_curate.py` — a second console script, `analogcoder-curate`, that decides
+  whether a candidate topology earns a place in `TOPOLOGY_LIBRARY`. It **never
+  writes the library**: it emits `curation_report.md`, `curation.json` and a
+  `topology_candidate.py` snippet, and a human commits. "Pre-verified" has to
+  keep meaning "a person read the measured evidence", or the library's only
+  value is gone.
+- **A library entry exists for exactly one reason: to reach where parameter
+  tuning cannot.** That is why the gate's centre is not "does it simulate and
+  reproduce its numbers" — the cascode-compensation candidate F1 rejected would
+  have passed that. Submission is `(candidate, verification slot)`, because
+  "better" needs an incumbent to be better *than*. Stages: structure (reuses
+  `compatible_swaps`) → characteristic reproduction (measures candidate **and**
+  incumbent; `addresses` is **measured** here, never declared) → corner
+  verification → scoped comparison. Verdicts are `ADMIT`/`REJECT`/
+  `INCONCLUSIVE`; a crash at any stage still writes all three artifacts.
+- **Corner verification is required for `provenance == "authored"` only, and
+  that asymmetry is the entire licence for letting an LLM write SPICE here.**
+  The repo forbids the *tuner* from authoring structure because its proposals
+  reach the deck with only text gates in between — the circuit's behaviour
+  appears only after it is applied. Curation is the opposite: a three-stage
+  simulation gate, a corner sweep, and a human commit sit in between, and the
+  authoring is a *local modification of an already-sized working block*, not a
+  blank page. The danger was never authoring; it was **application without
+  verification**. Two sweeps only (candidate, incumbent) — knobs are never
+  swept at corners.
+- **The scoped comparison sweeps one knob at a time and says what it looked
+  at.** Knobs, ranges, point counts, simulation totals, omitted knobs,
+  unresolved knobs and excluded points all land in the record. It never claims
+  to have excluded all tuning: this repo has twice found the winning fix in a
+  knob combination no single-knob sweep tried.
+- **Zero-tolerance Pareto cannot reject on a real multi-block slot, and it
+  manufactures claims out of solver noise. Both were measured on the same
+  run.** On `benchmarks/bandgap/spec_curate_slot.yaml` (8 criteria over four
+  amps sharing bias rails), 30 knobs × 5 points = 120 simulations: the Ahuja
+  candidate — this project's own proof case — came out **ADMIT** with
+  `dominating: None`, because two criteria physically decoupled from the swept
+  knob sat `0.0011°` and `0.0001 dB` short at *every* point. The same
+  strictness in the other direction turned `+0.0028°` and `+0.0001 dB` into
+  *measured* `addresses`, which `agents/tuner.py` renders straight into the
+  swap prompt — defeating the "no unverified claim reaches the tuner" rule via
+  noise rather than via an agent.
+  `COMPARISON_REL_TOLERANCE = 1e-3` fixes both, and **the value is arithmetic,
+  not a round number**: the largest measured noise is `0.0028/66.08 = 4.2e-5`
+  and the real improvement is `8.3/81.14 = 0.102`, so 1e-3 sits ~24× above the
+  noise and ~100× below the signal. Applied symmetrically to `_is_better` (an
+  improvement must exceed it) and `_at_least_as_good` (a near-tie is a tie).
+  Set it to 0 and the shipped run ADMITs again — that counter-run is pinned.
+  This is the guard-band lesson a second time: a guessed ratio fails, a
+  measured one works.
+- **The cheapest tuning is changing nothing, and the gate excluded it.**
+  `_sweep_values` dropped the baseline point because stage 2 had already
+  measured it — and stage 2's measurement was then never passed on. So a
+  candidate strictly worse than the incumbent on every criterion was
+  **ADMITted**. The incumbent now enters the Pareto test as a labelled
+  zero-cost point (`point="incumbent"`, `knob`/`swept_value` `None`,
+  `simulated_here: False`). Not a contrived shape: it needs only a knob whose
+  baseline sits near an optimum, which is what a shipped design *is*.
+- **A count-based knob cap is order-dependent, and the default made the gate
+  blind.** `--max-knobs 8` truncated alphabetically; `TRIMAMP.XRz.l` is the
+  9th of 30, so the one knob that decides the case was never swept and the
+  shipped run ADMITted after 16 simulations. The cap is now opt-in. Curation is
+  offline and once per candidate, so the honest default is "sweep everything":
+  measured **120 simulations / 2 min 41 s** on a single-testbench slot (the
+  estimator's 150 is an upper bound). A 5-testbench slot is ~12 min — the same
+  testbenches-outside multiplication corner reduction already paid for, which
+  is why single-testbench validation slots are the documented recommendation.
+- **`verified_at` is a property of (body × slot), not of the SPICE text.**
+  `BUF_P`'s 45-corner PASS was earned inside its original surrounding circuit;
+  proposing that body for another slot is a new, unverified pairing. So
+  extracted and file candidates ship `verified_at="nominal"` and writing
+  `"corners"` would be the misrepresentation. When this was found the fix was
+  to the *report*, which printed `nominal` beside a line asserting the source
+  had passed a full sweep.
+- **Only source B used to check that a declared port is referenced by the
+  body.** Sources A and C copied the header verbatim, and the justification —
+  "stage 1 judges port compatibility anyway" — was false: the ports handed to
+  stage 1 are the block's own, so the subset test is an identity, `leftover
+  ports` is empty and F1's floating-net check never runs. An entry whose
+  `ports` overstates its body makes that check vacuous for every future match.
+  All three sources now share `reject_unreferenced_ports`. It reads
+  `component.nodes` only, so a port referenced solely inside a behavioural
+  expression (`B1 out 0 V=V(nbias)*2`) is reported unreferenced — it fails
+  *closed*, and zero shipped blocks trip it.
+- **The area gate never blocks shrinking** (`evaluate_area_growth` short-
+  circuits on `ratio <= 1.0`). Any code describing a symmetric
+  `[baseline/M, baseline*M]` window as "the area gate's allowance" is wrong on
+  the low half; the curation sweep's lower bound is self-imposed and says so.
+
 ### The optimization phase
 
 - `optimizer.py` / `agents/optimizer.py` / `area.py` — a second phase that runs
@@ -277,7 +368,14 @@ that number was measured.
   read as metres, include-only wrapper cells, wrapper instance parameters, and
   now a zero baseline), and the first three were invisible in every run log.
   A new gate ships with the record of when it did nothing, not just the rule.
-  **The running total is six**, and the last two came from the topology-swap
+  **The running total is nine.** Curation added three more, all of them a gate
+  that *passed* without being able to fail: `tunable_range` taking the direct
+  branch where the judging path takes the traced one (so every geometry knob on
+  a wrapper-cell deck vanished while the record blamed the area gate), the
+  zero-tolerance Pareto that could not reject on a coupled multi-block slot,
+  and the incumbent's own point being excluded from that same comparison. Ask
+  "what does this look like in the log when the gate does nothing?" while
+  writing the gate, not after. The six before them came from the topology-swap
   branch: `unconstrained_refdes` logging `[]` while the devices it covered were
   tiered against the previous topology's geometry (#5), and
   `topology_unavailable` carrying no reason, so "no `.subckt` in this deck",
@@ -678,6 +776,27 @@ Requires `ngspice` on PATH for the real-simulator tests and any actual run
 its own netlist file (resolved relative to the spec file), control block,
 and criteria — there's no separate `--netlist` flag.
 
+A second console script judges whether a candidate topology may join
+`TOPOLOGY_LIBRARY`. It writes artifacts and never touches the library — a
+human commits the emitted snippet. See "Topology curation" under Architecture.
+
+```bash
+# extract a block from a verified deck
+.venv/bin/analogcoder-curate --from-deck benchmarks/bandgap/netlist_loops.cir \
+  --from-block BUF_P --slot-spec benchmarks/bandgap/spec_curate_slot.yaml \
+  --slot-block BUF_P --id folded_cascode_pmos_in_cs --out-dir runs/curate1
+
+# let an agent modify the incumbent block by technique name (provenance=authored,
+# so this one must pass corner verification)
+.venv/bin/analogcoder-curate --technique "cascode (indirect) compensation: ..." \
+  --slot-spec benchmarks/bandgap/spec_curate_slot.yaml --slot-block TRIMAMP \
+  --id folded_cascode_indirect_comp --out-dir runs/curate2
+```
+
+`--max-knobs` and `--knobs` are opt-in speed caps; by default every knob of the
+block is swept, because a count cap truncates alphabetically and once hid the
+knob that decided the shipped proof case.
+
 ## Benchmarks
 
 - `benchmarks/inverting_amp/` — ideal op-amp (VCVS), single criterion (gain),
@@ -794,6 +913,17 @@ and criteria — there's no separate `--netlist` flag.
   direction — there the agent found a knob the sweep missed, here the designer
   underestimated a knob the sweep already had. Full table in
   `docs/superpowers/specs/2026-07-28-topology-applicability-design.md`.
+  `spec_curate_slot.yaml` is the **curation validation slot**: one testbench
+  (`amp_loops`), the 9-corner grid, 8 criteria across all four amps, 30 tunable
+  knobs on `TRIMAMP`, no `optimize:` and no `corner_reduction:`. It is the only
+  spec against which an authored (source C) candidate can reach
+  `verified_at="corners"`, and it is where the curation gate was measured
+  reproducing F1's hand judgement: the Ahuja body as a candidate for `TRIMAMP`
+  gives **REJECT**, dominated by the swept point `TRIMAMP.XRz.l = 25.98` at
+  **99.90° vs the candidate's 89.42°**, with `addresses` narrowed to
+  `['trim_phase_margin']`. 120 simulations, 2 min 41 s. The same run ADMITs if
+  `COMPARISON_REL_TOLERANCE` is set to 0 — that counter-run is what the
+  tolerance's justification rests on and it is pinned.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -1093,10 +1223,14 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~45 s).** Both files above
-  carry the `slow` marker, registered in `pyproject.toml` — per-test on the
-  optimizer case (the rest of that file is fast) and file-wide via `pytestmark`
-  on the corner-reduction one. A plain `pytest -q` is ~3 min (corner reduction
+- **`pytest -m "not slow"` is the normal TDD cycle (~70 s, 904 tests).** It was
+  ~45 s until topology curation added a real-ngspice test of its own
+  (`test_curation_ngspice.py`, ~18 s); that one stays unmarked because the
+  marker here means minutes, not seconds. Both files below carry the `slow`
+  marker, registered in `pyproject.toml` — per-test on the optimizer case (the
+  rest of that file is fast) and file-wide via `pytestmark` on the
+  corner-reduction one. A plain `pytest -q` is ~3 min (corner reduction
   included, optimizer case still deselected by node id) and ~33 min with
   everything. Before this marker existed `pytest -q` had silently gone 45 s →
-  3 min with no documented way to opt out.
+  3 min with no documented way to opt out. **Re-measure this line when you add
+  a real-simulator test** — it has drifted twice.
