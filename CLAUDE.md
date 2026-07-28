@@ -383,6 +383,18 @@ that number was measured.
   Both are described under "Spec, topologies, and the area gate" above. Six
   occurrences is no longer a run of bad luck — treat "what does this log look
   like when the gate does nothing?" as part of writing the gate.
+  **The same shape reaches measurements, and the count deliberately does not
+  absorb that.** D1's repeat-proposal-rate metric produced `0.000` on its
+  baseline run because that run had **zero** rollbacks and zero rejections, and
+  the metric only fires on a `(refdes, param)` that already failed — so `0.000`
+  was the only value it could return (see "D1 ships unproven" under
+  "Deterministic netlist derivation"). That is this defect class applied to a
+  metric rather than a gate. It is **not** counted here and the total stays at
+  **nine**: this ledger enumerates gates, and folding a metric in would make the
+  number mean two things. The transferable rule is the question, not the count —
+  for a gate ask "what does the log look like when it does nothing?", for a
+  metric ask **"was the condition under which this could return a different
+  answer present in the runs I measured?"**, and ask it while choosing the runs.
 - **The optimization phase has no FAIL outcome, and that has to include
   crashing.** `_run_simulation` and `_run_sweep` each swallow a bare
   `Exception` for that reason; the module's one LLM call (`agents.propose`) did
@@ -751,6 +763,101 @@ that number was measured.
   while told to reject anything absent from it, fixed by rendering its view with
   the focus extended to the blocks the proposal names. **Whenever a gate's rule
   changes, re-read the prompt that mirrors it.**
+- **The tuner is shown what it already tried in this run, as facts.**
+  `attempt_log.py` keeps one `Attempt` per *component change* — not per
+  proposal — because "which knob did what" is the only thing the tuner needs
+  back, and a proposal-level record cannot be read apart again. Each entry
+  carries `(outer_iter, retry, refdes, param, old_value, new_value, outcome)`,
+  where `outcome` is `kept` / `rolled_back` / `rejected`, plus the measured
+  per-criterion `deltas` and the `regressed` names for the first two, and a
+  `reason`/`detail` pair for the third. The last `ATTEMPT_RENDER_LIMIT = 30`
+  entries are rendered into the tuner prompt; an empty list renders the **empty
+  string**, because an empty table reads as "something happened" rather than
+  "nothing did". An `attempt_log` event is written **every retry, including
+  when the history is empty**, so "recorded, zero entries" and "the record is
+  gone" are distinguishable — the same rule as `optimize_guard_infeasible`.
+  **Regressions are computed from the judge's own `pass` flips, never from
+  `verify_post`'s `regressed_criteria`.** That field is schema-attached but it
+  is still an LLM's claim, while `deltas_between`/`regressed_between` are
+  arithmetic on the numbers `judge` returned before and after. Where the two
+  disagree the fact wins — the same rule that made curation *measure*
+  `addresses` instead of accepting a declared one. `deltas_between` also drops
+  any criterion missing from either side rather than reading an absent
+  measurement as 0.0, which is the shape `corner_allowances` already paid for.
+- **A rejection's reason code is recorded where it is decided, not re-parsed
+  out of `history.jsonl`.** The five codes are `area`, `refdes`, `param`,
+  `stimulus` and `verify_pre` (`_record_rejected` in `orchestrator.py`). They
+  cannot be recovered from the event stream: `area_check` and `refdes_check`
+  both write their text under the same `feedback` key, so a reader after the
+  fact can only tell them apart by which event name it happened to be reading,
+  and any future gate that reuses the key silently joins the wrong bucket.
+  A gate rejects the **whole** proposal, so every change in it gets an entry
+  with the same code — which change tripped the gate is not something the gate
+  reports, and guessing it would be an unsupported attribution. The gate's own
+  feedback string goes into `detail` verbatim and usually names the refdes.
+- **`deltas`/`regressed` are measured once per proposal and stamped onto every
+  change in it, so the render is a joint fact wearing a per-knob shape.** A
+  3-change proposal renders as three lines each ending with the *same* delta,
+  shape-illustrated as `pm +18.4` (a format example from the schema test and
+  design doc, not a measured value), and the only grouping signal is the
+  shared `iter N.R` prefix.
+  `after/two_stage-1` really did feed the tuner that: iterations 4, 5, 6r2 and
+  8 were all 3-change proposals. This is the shape this repo has now paid for
+  three times (F2's agent-declared `addresses`, the zero-tolerance Pareto
+  turning solver noise into a measured claim, and this). The fix is one clause
+  in `TUNER_SYSTEM_PROMPT` stating that lines sharing an `iter N.R` prefix were
+  applied together and their numbers are the group's effect, pinned by
+  `test_the_tuner_prompt_says_lines_sharing_an_iteration_prefix_were_applied_together`.
+  Splitting the measurement per knob is not available — one simulation measures
+  one deck.
+- **D1 ships unproven, and a session that finds `attempt_log` events in
+  `history.jsonl` should learn that here rather than assume the mechanism was
+  demonstrated.** Tasks 1-4 prove the record *reaches the prompt* (code and
+  tests). Whether it changes behaviour was measured in task 5 and **the
+  measurement failed to answer it**. Measured on
+  `benchmarks/two_stage_opamp/spec.yaml` (a full 10-iteration run of this spec
+  costs ~103 min — 6161 s; the 1348 s run only looks cheaper because it died
+  at iteration 3 on an agent execution error, `iterations_used: 2`, not
+  because it paid for a full budget): repeat-proposal rate 0.000 before D1 vs
+  0.741 and 0.429 after, and
+  0.000 vs 0.429–0.636 with iterations matched. **Those comparisons are
+  confounded and the "it went up" reading is withdrawn.** The metric counts a
+  change as a repeat only when that `(refdes, param)` already ended in a
+  rollback or a rejection, and the baseline run had **0 rollbacks, 0 gate
+  rejections and 0 `verify_pre` rejections across 4 proposal events** — so
+  `0.000` was the only value it could return. Two further limits: the metric
+  keys on `(refdes, param)` and never on the proposed **value**, so a search
+  walk on one knob (`OPAMP2STAGE.Xcc` 13 → 14 → 15 → 16 → 16.4 → 16.3 → 16.5,
+  not monotone, and revisiting a value that was rejected earlier) counts
+  identically to rediscovering a known-bad change — and the design document
+  *defends* that walk (`TRIMAMP.XRz.l` 15 → 60 → 120). The one genuine
+  rediscovery in the data is a single event and it is the branch's most
+  informative one: `OPAMP2STAGE.X6.W 8 -> 14` was `verify_pre`-rejected at
+  iter1.r1 and re-proposed **byte-identically** at iter6.r1 with that rejection
+  still inside the 30-entry window, and was rejected again — one LLM call plus
+  a retry burned with the record sitting in the prompt. **This is exactly the
+  failure D1 was built to prevent, occurring with D1 active**, and it is the one
+  repeat the prompt's `verify_pre` carve-out ("an identical resubmission is not
+  guaranteed to draw the same verdict") arguably licensed. Verdict: **D2 (a
+  deterministic suppression gate) is not opened** — but on the ground that the
+  measurement was uninformative, not that repeats are frequent. Do **not**
+  remove the prompt's "You MAY propose the same component and parameter again"
+  sentence on this evidence: the before run performed the same walk on a commit
+  where that sentence did not exist, its effect is unmeasured in both
+  directions, and the settled design rule is that history is presented as facts
+  and never as a restriction — the same rule the focus view is under. Full
+  numbers, the retracted claims and the redesigned next experiments are in
+  `docs/superpowers/specs/2026-07-28-tuning-attempt-record-measurement.md`.
+- **The original cross-run D was deferred (to D3) because it would have carried
+  between runs the fields one run was already throwing away**: the within-run
+  history already reached the tuner, but it held
+  `{outer_iter, proposal, recommendation}` with **no measured values**, and a
+  gate- or `verify_pre`-rejected attempt never survived its iteration at all
+  (`rejection_feedback` is reset every outer iteration and overwritten on every
+  assignment). Make one run able to read its own attempts, measure what that
+  changes, and only then widen. Full argument in
+  `docs/superpowers/specs/2026-07-28-tuning-attempt-record-design.md` and its
+  predecessor `2026-07-28-cross-run-experience-design.md`.
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -1223,7 +1330,7 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~70 s, 904 tests).** It was
+- **`pytest -m "not slow"` is the normal TDD cycle (~69 s, 923 tests).** It was
   ~45 s until topology curation added a real-ngspice test of its own
   (`test_curation_ngspice.py`, ~18 s); that one stays unmarked because the
   marker here means minutes, not seconds. Both files below carry the `slow`

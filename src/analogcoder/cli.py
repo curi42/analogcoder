@@ -196,9 +196,9 @@ async def _run(args) -> dict:
     async def judge_fn(measurements, spec_arg):
         return await judge_measurements(measurements, spec_arg.all_criteria, agent_backends["judge"])
 
-    async def tune_fn(structure_view, judge_result, history, rejection_feedback, netlist_text_arg):
+    async def tune_fn(structure_view, judge_result, attempts_view, rejection_feedback, netlist_text_arg):
         return await propose_tuning(
-            structure_view, judge_result, history, rejection_feedback, netlist_text_arg, agent_backends["tuner"]
+            structure_view, judge_result, attempts_view, rejection_feedback, netlist_text_arg, agent_backends["tuner"]
         )
 
     async def verify_pre_fn(structure_view, judge_result, proposal, netlist_text_arg):

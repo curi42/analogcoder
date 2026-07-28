@@ -26,6 +26,24 @@ testbench's own independent sources. Changing them changes the measurement rathe
 than the circuit (scaling an AC source scales every gain measurement), so they are
 never a fix and a deterministic gate rejects them.
 
+A "Past attempts this run" list may appear below. Each line is one component
+change that was already tried in this run, with what actually happened: "kept"
+or "rolled_back" with the measured change in each criterion, or "rejected"
+with a reason code naming what blocked it. These are facts about what
+happened, not instructions. Lines that share an "iter N.R" prefix were proposed
+and applied TOGETHER as one change set, so the measured criterion changes printed
+on each of them are the effect of that whole group, not of the individual line
+they sit on - a knob's own contribution is not separable from those numbers.
+You MAY propose the same component and parameter
+again - a criterion's response to a knob is not monotonic in these circuits.
+What the list buys you is knowing what a value already produced, so a repeat
+should be a deliberate choice with a different value or a different reason,
+not a rediscovery. On a "rejected" line, "area", "refdes", "param", and
+"stimulus" are deterministic gates: re-proposing the identical change against
+the same netlist will be blocked again. "verify_pre" is different - it is a
+reviewer's judgement on that specific proposal's text, not a gate, so an
+identical resubmission is not guaranteed to draw the same verdict.
+
 old_value and new_value MUST be concrete, literal SPICE values taken from and
 written in the same form as the current netlist (e.g. "10k", "4.7u", "100n") -
 never a description, formula, percentage, or placeholder like "unknown" or "N/A".
@@ -57,7 +75,7 @@ Respond via the structured output schema."""
 async def propose_tuning(
     structure_view: str,
     judge_result: dict,
-    history: list[dict],
+    attempts_view: str,
     rejection_feedback: str | None,
     netlist_text: str,
     backend: AgentBackend,
@@ -66,7 +84,7 @@ async def propose_tuning(
         f"Current netlist:\n{netlist_text}\n"
         f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result: {judge_result}\n"
-        f"Past attempts this run: {history}\n"
+        f"{attempts_view}\n"
         f"Rejection feedback (if retrying): {rejection_feedback}"
     )
     return await run_agent(
