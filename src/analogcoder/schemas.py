@@ -151,3 +151,19 @@ CURATOR_SCHEMA = {
     "required": ["description"],
     "additionalProperties": False,
 }
+
+# 큐레이션 소스 C(agents/variant_author.py)가 쓰는 스키마. `addresses`나
+# `topology_id` 같은 판정/식별 필드가 없는 것은 CURATOR_SCHEMA와 같은 이유다 -
+# 이 에이전트는 본문을 저술할 뿐, 그 본문이 슬롯에 맞는지(1단)나 기존 것보다
+# 나은지(2단)는 결정론적 게이트가 시뮬레이션으로 잰다. `additionalProperties:
+# False`가 에이전트 스스로의 판정 주장이 스키마를 통과해 다음 단계로 새는
+# 것을 막는다.
+VARIANT_AUTHOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "subckt_body": {"type": "string"},
+        "rationale": {"type": "string"},
+    },
+    "required": ["subckt_body", "rationale"],
+    "additionalProperties": False,
+}

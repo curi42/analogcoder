@@ -143,6 +143,26 @@ def candidate_from_file(body: str, ports: list[str], assumes_scale: float, topol
     )
 
 
+def candidate_from_technique(subckt_body: str, ports: list[str], assumes_scale: float, topology_id: str) -> Candidate:
+    """소스 C: `agents.variant_author.author_variant`가 슬롯의 기존 본문을
+    기법 하나로 국소 수정해 낸 본문을 후보로 감싼다.
+
+    `ports`/`assumes_scale`은(소스 A처럼) 파싱에서 나온 것이 아니라 슬롯의
+    기존 블록에서 그대로 물려받은 값이다 - 에이전트에게 요구한 것이 백지
+    설계가 아니라 국소 수정이므로, 포트 집합과 스케일 가정은 애초에 바뀔
+    이유가 없다. 소스 B(`candidate_from_file`)와 달리 선언된 포트가 본문에서
+    실제로 참조되는지 여기서 다시 검증하지 않는다 - 저술본은 반드시
+    `check_structure`(1단)를 거치고, 그 단계가 이미 포트 호환성을 판정하므로
+    같은 검사를 여기서 미리 하는 것은 이중 판정이지 새 방어가 아니다."""
+    return Candidate(
+        topology_id=topology_id,
+        subckt_body=subckt_body,
+        ports=list(ports),
+        assumes_scale=assumes_scale,
+        provenance="authored",
+    )
+
+
 @dataclass(frozen=True)
 class Slot:
     """후보가 겨루는 대상 - 어느 스펙의 어느 블록인지."""
