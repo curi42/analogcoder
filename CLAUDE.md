@@ -41,10 +41,101 @@ that number was measured.
 
 ### Spec, topologies, and the area gate
 
-- `topologies.py` — a small curated library of pre-verified amplifier
-  topologies the orchestrator can swap in as a last resort after repeated
-  parameter-tuning rollbacks (`TOPOLOGY_SWITCH_THRESHOLD`), instead of only
-  ever changing existing component values. See "Benchmarks" below.
+- `topologies.py` / `topology_match.py` — a small curated library of
+  pre-verified amplifier topologies the orchestrator can swap in as a last
+  resort after repeated parameter-tuning rollbacks
+  (`TOPOLOGY_SWITCH_THRESHOLD`), instead of only ever changing existing
+  component values. Four entries, each declaring the `ports` its body requires
+  and the `assumes_scale` its geometry is written in. See "Benchmarks" below.
+  **The swap used to be gated on `len(subckts) == 1`, which meant it was live
+  on exactly one benchmark and structurally dead everywhere else** — `bandgap`
+  has 6 definitions, the production decks have 21 — and the fact that it was
+  off reached no log. `topology_match.compatible_swaps` replaces that: it
+  judges each `(block_path, topology_id)` pair on four rules and is used as a
+  **candidate generator, not a gate**, so the agent is offered only pairs that
+  can actually be applied. `tried` is a set of *pairs* — trying an entry on
+  `BUF_N` says nothing about `BUF_P`.
+  The rules are ports (**bidirectional** set equality, order ignored — a
+  one-directional check lets a 5-port body into a 9-port block and leaves four
+  bias ports as silently floating internal nodes), models (the body's model
+  names must already appear somewhere in the deck — decidable without
+  following `.include`, because a deck that instantiates a model has whatever
+  provides it), `.option scale`, and `identical_body`. A candidate must be
+  compatible in **every** testbench that is versioned together
+  (`missing_in_testbench`), which closes the non-canonical-deck `ValueError`
+  hole for this path — `push_netlist_version` is atomic, so a swap applied to
+  only some decks would have `judge` merging measurements from two different
+  circuits.
+  **`identical_body` is judged against the *current* deck, so it is not a
+  static property of an entry.** `miller_basic` is byte-identical to
+  `OPAMP2STAGE`'s own body, so `two_stage_opamp` offers **1** candidate, not
+  2 — and after a swap to `miller_nulling_resistor` the roles invert and
+  `miller_basic` becomes a candidate again. Likewise
+  `folded_cascode_nmos_in_cs` ≡ `TRIMAMP` and `folded_cascode_pmos_in_cs` ≡
+  the shipped `BUF_P`, taking bandgap from 8 raw pairs to **6** candidates.
+  Without this rule the agent can pick a swap that changes nothing, spending
+  an outer iteration and resetting `consecutive_rollbacks` — delaying the very
+  escalation that triggered it.
+- **A failed escalation must never be worse than not escalating.** When the
+  topology proposal loop exhausts its retries, the run does **not** end: it
+  logs `topology_unavailable` with a reason, resets `consecutive_rollbacks`,
+  and falls through to parameter tuning — the same policy the area gate
+  already had ("exhausting all retries on area rejection alone is treated like
+  a parameter-tuning rollback"). This is not hypothetical tidying. `block_path`
+  is deliberately **not** in `TOPOLOGY_SCHEMA`'s `required` (a required field a
+  weak model omits hard-FAILs every spec — this repo hit that with
+  `control_block`), and the orchestrator can only resolve an omitted one when a
+  single candidate carries that `topology_id`. On bandgap that is *never* true
+  — 3 to 4 blocks share each entry — so omission was always ambiguous and the
+  old code returned `FAIL` after three retries. Measured on
+  `spec_seed_topology.yaml` with real ngspice: with `block_path` supplied,
+  PASS at iteration 4, `buf0_gain_db` 100.158; with it omitted, **FAIL at
+  iteration 4 with the deck back at `netlist_v0`**, six outer iterations and a
+  working tuning path thrown away. The mitigation the optional field bought was
+  void exactly where it was needed. It now ends `max iterations reached` at
+  81.643 dB, having tuned in the same iteration the proposal failed.
+  **The prompt requires `block_path` while the schema does not, and that
+  asymmetry is deliberate** — prompt stricter than gate is the safe direction.
+  Do not "fix the inconsistency" by relaxing the prompt or by adding the field
+  to `required`.
+- **`topology_unavailable` carries a reason code, and that is the point.**
+  `no_subckt_definitions`, `empty_library`, `all_pairs_already_tried`,
+  `all_pairs_rejected`, `proposal_unresolved`. Without it, a deck with no
+  `.subckt` at all, an exhausted library, and *a deleted check* produced
+  byte-identical history — silently-inert-gate shape #6 in this repo, and the
+  same argument `optimize_guard_infeasible` already settled. Known precision
+  limit: `all_pairs_already_tried` requires *every* rejection to be
+  `already_tried`, and a real multi-block deck always also carries `ports` and
+  `identical_body` rejections (measured on `spec_corner_reduction.yaml`:
+  `ports` 80, `identical_body` 10, `already_tried` 6), so genuine exhaustion
+  there reports `all_pairs_rejected`. Literally true, and the finer fact
+  survives per-pair in the `topology_candidates` event.
+- **The result must describe the deck it returns — again.** `result.json`
+  carries `topology_swaps` (always present, empty when none) and `report.md`
+  grows a Topology section, because a swap replaces an entire block body and
+  the run otherwise reported PASS beside a 16-device structural change without
+  a word. This is the same shape as the optimization phase's
+  `final_criteria`/`final_netlist_paths` mismatch, and it recurred **twice on
+  one branch**: `cli.py`'s corner-reduction re-entry overwrites `result`
+  wholesale while explicitly carrying the *deck* forward
+  (`state.current_netlist_texts()`), so a swap kept in attempt 0 vanished from
+  the report while its `Rz` was still in the returned netlist. Swaps are
+  accumulated across attempts and each record carries an `attempt` index —
+  `outer_iter` restarts per attempt, and `tried` resets too, so one block can
+  legitimately be swapped in more than one attempt.
+- **The area gate's baseline is `netlist_v0` and is deliberately never
+  refreshed after a swap** — swapped-in components have nothing in the original
+  to compare against. The `topology_swap` event therefore logs *two* lists:
+  `unconstrained_refdes` (no baseline entry at all) and `stale_baseline_refdes`
+  (has one, but the parameters differ, so it is bounded against geometry that
+  is no longer its own). The second exists because the first alone was
+  misleading: on four of bandgap's six candidates `unconstrained_refdes` is
+  `[]`, which reads as "the gate is intact here" while ~14 of 15 devices are
+  tiered against the previous topology's geometry. Concretely, post-swap
+  `BUF_P.Xt` is `W=24` against a baseline of `W=8`, so a proposal of `W=48` is
+  scored 6.0× instead of its true 2.0×. That direction is conservative for the
+  current four entries, but that is an accident of these bodies, not a property
+  of the rule.
 - `area_limits.py` — a deterministic gate the orchestrator runs before every
   parameter-tuning proposal is applied: rejects (with retryable feedback)
   proposals that grow a component's size beyond a size-tiered limit relative
@@ -186,6 +277,14 @@ that number was measured.
   read as metres, include-only wrapper cells, wrapper instance parameters, and
   now a zero baseline), and the first three were invisible in every run log.
   A new gate ships with the record of when it did nothing, not just the rule.
+  **The running total is six**, and the last two came from the topology-swap
+  branch: `unconstrained_refdes` logging `[]` while the devices it covered were
+  tiered against the previous topology's geometry (#5), and
+  `topology_unavailable` carrying no reason, so "no `.subckt` in this deck",
+  "library exhausted" and "someone deleted the check" were byte-identical (#6).
+  Both are described under "Spec, topologies, and the area gate" above. Six
+  occurrences is no longer a run of bad luck — treat "what does this log look
+  like when the gate does nothing?" as part of writing the gate.
 - **The optimization phase has no FAIL outcome, and that has to include
   crashing.** `_run_simulation` and `_run_sweep` each swallow a bare
   `Exception` for that reason; the module's one LLM call (`agents.propose`) did
@@ -394,6 +493,15 @@ that number was measured.
   (fallback), with the measured bandgap case — where *both* sides pass, so the
   fallback is what runs — in `test_corner_reduction_bandgap_ngspice.py`.
   `corner_worst` still carries both sides per criterion either way.
+- **A topology swap moves the circuit far more than a parameter step, and the
+  corner set is not re-seeded afterwards.** `seed_from_sweep` reads the *entry*
+  sweep once; a swap mid-run replaces a whole block body. The locked invariant
+  still holds — every corner in the set is a real corner of whatever deck is
+  current, so a mid-loop FAIL is still genuine and a mid-loop PASS still merely
+  optimistic, with the full sweep as the verdict — so this costs **relevance,
+  never correctness**, the same shape as a wrong focus. Recorded so nobody
+  "fixes" it by re-seeding mid-run, which would spend a full sweep to buy
+  nothing the verdict sweep does not already guarantee.
 - **Best-arm identification was considered and rejected.** Pure-exploration
   bandits (successive halving, LUCB, racing) exist to spend a sampling budget
   well when each evaluation is *noisy* — their entire gain structure comes from
@@ -575,7 +683,9 @@ and criteria — there's no separate `--netlist` flag.
 - `benchmarks/inverting_amp/` — ideal op-amp (VCVS), single criterion (gain),
   passes immediately with no tuning needed. The "golden path" smoke test.
 - `benchmarks/two_stage_opamp/` — real transistor-level 2-stage CMOS op-amp
-  (generic ngspice level-1 devices, no PDK needed), three criteria (DC gain,
+  (**sky130**, `.option scale=1.0u` plus `pdk_corner.inc`; it was generic
+  level-1 before the 2026-07-26 PDK migration and this line said so until
+  2026-07-28), three criteria (DC gain,
   unity-gain bandwidth, phase margin) with a genuine trade-off: increasing the
   Miller compensation cap (`Cc`) improves phase margin but reduces UGBW. Starts
   with phase margin failing by design, so running this benchmark actually
@@ -652,6 +762,38 @@ and criteria — there's no separate `--netlist` flag.
   `min(#criteria, #corners)` and this spec has 22 criteria (see "Corner
   reduction and re-entry" under Architecture). `spec_pvt.yaml`'s 45-corner grid
   is untouched.
+  `netlist_seed_topology.cir` / `spec_seed_topology.yaml` are the seed that
+  **only a topology swap fixes**. The deck is `netlist_loops.cir` with `BUF_P`'s
+  body replaced verbatim by `BUF_N`'s — an NMOS-input fold put where the
+  complementary PMOS-input fold belongs — and one testbench (`amp_loops`) with
+  `buf0_loop_gain` raised 60 → **90 dB**. The block it buffers sits at 0.4999 V,
+  which is below an NMOS pair's reach: measured, the tail current source is left
+  with **10.1 mV** of Vds and `buf0_gain_db` collapses 100.16 → **73.52 dB**
+  with UGBW down 19×. Widening the input pair is the knob the physics points at
+  and it *does* help — but only ~7 mV of tail headroom per doubling, reaching
+  83.45 dB at W=80 before W=150 aborts the run on sky130's 100 µm bin ceiling.
+  So 90 dB sits strictly between what sizing reaches and the 100.16 dB the swap
+  reaches, and the failure is structural rather than a sizing problem. The seed
+  is localised the same way the other `spec_seed_*` variants are: on the DC
+  testbench all 8 criteria still hold (`vbg0` 0.4999 → 0.5003 V, TC unchanged,
+  `iq` 212.99 → 178.95 µA — the starved fold draws less). Pinned without any LLM
+  in `tests/unit/test_topology_seed_ngspice.py` (2.5 s, no `slow` marker).
+  **Do not "unify" the seed body with the library entry
+  `folded_cascode_nmos_in_cs`** — that one came from `TRIMAMP` and differs in
+  `Xcl` and the `Xcc`/`XRz` sizes, so the 73.52 dB / 10.1 mV numbers above were
+  measured with `BUF_N`'s body and only hold for it.
+  **Cascode (Ahuja/indirect) compensation was tried here and rejected, with
+  data.** Moving the compensation cap from the Miller path to the cascode source
+  node peaked at 89.4° / 5.45 MHz on `TRIMAMP`, while Miller+`Rz` at the *same*
+  cap area reaches **99.7° / 27.0 MHz** — better on both axes. The cause was not
+  the technique but the shipped sizing: `TRIMAMP.XRz.l = 15` is badly under-set,
+  and raising it to 60 lifts phase margin 81° → 125° and UGBW 4.8 → 24.8 MHz
+  together (it collapses again by 120, so the optimum is not monotone). A
+  library entry exists to reach where value tuning cannot; this one does not
+  qualify. Same shape as `spec_topology_required.yaml`'s caveat, opposite
+  direction — there the agent found a knob the sweep missed, here the designer
+  underestimated a knob the sweep already had. Full table in
+  `docs/superpowers/specs/2026-07-28-topology-applicability-design.md`.
 
 Default backend is Claude (`--agent-backend claude`, the default — uses whatever
 `claude` CLI auth is already configured, no env var needed). To run against a
@@ -910,7 +1052,7 @@ assuming a weak-model failure is a code bug.
   subckt this deck does not define, so no trace is possible;
   `Component.undefined_subckt`), `unjudged` (a value could not be resolved).
   This gate had by then been silently inert twice, neither time visible in a
-  run log; it has happened four times now (the running count is under
+  run log; it has happened six times now (the running count is under
   `optimizer.py`/`area.py` in Architecture). A sky130 primitive is `bounded`,
   not `blind` — it is classified by its model name and tiered on geometry.
 - **Per-instance parameter resolution is a different tool from
