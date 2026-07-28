@@ -307,14 +307,33 @@ def _log_expected_cost(
     points: int,
     knob_names: list[tuple[str, str]] | None = None,
 ) -> None:
+    """실행 시작 시 예상 시뮬 횟수/시간을 로그로 낸다 - 다중/단일 테스트벤치
+    슬롯을 가리지 않는다.
+
+    **이전에는 `len(spec.testbenches) > 1`일 때만 불렸다.** `--max-knobs`
+    기본값이 절삭 없음으로 바뀐 뒤(위 "3단의 기본값" 주석), 기본 실행 비용은
+    이미 단일 테스트벤치 슬롯만으로도 120회 시뮬 / 2분 40초에 달한다 - 그리고
+    설계 문서가 검증 슬롯에 권장하는 모양이 정확히 그 단일 테스트벤치 슬롯이다.
+    그 다중 테스트벤치 전용 조건 아래서는 이 로그가 존재하는 이유(사용자가
+    실행 전에 비용을 볼 수 있게 하는 것)가 정확히 그것이 가장 필요한 자리에서
+    빠졌다 - 다중 테스트벤치 케이스가 강조를 잃지 않도록 그 접두어는 그대로
+    남긴다."""
     cost = estimate_curation_cost(spec, netlist_texts, block_path, max_knobs, points, knob_names)
-    logger.info(
-        "multi-testbench slot (%d testbenches): expected ~%d simulations (~%.1fs) for stages 2+3 alone - %s",
-        cost["testbench_count"],
-        cost["total_simulations"],
-        cost["estimated_seconds"],
-        cost,
-    )
+    if cost["testbench_count"] > 1:
+        logger.info(
+            "multi-testbench slot (%d testbenches): expected ~%d simulations (~%.1fs) for stages 2+3 alone - %s",
+            cost["testbench_count"],
+            cost["total_simulations"],
+            cost["estimated_seconds"],
+            cost,
+        )
+    else:
+        logger.info(
+            "expected ~%d simulations (~%.1fs) for stages 2+3 alone - %s",
+            cost["total_simulations"],
+            cost["estimated_seconds"],
+            cost,
+        )
 
 
 # --- 파이프라인 --------------------------------------------------------------
@@ -473,10 +492,13 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
             netlist_texts[tb.name] = resolve_includes(f.read(), os.path.dirname(tb.netlist_path))
     ctx.slot = Slot(spec=spec, block_path=args.slot_block)
 
-    # 브리프 규칙 5: 다중 테스트벤치 슬롯이면 시작 시 예상 시뮬 횟수/시간을
-    # 로그로 낸다. 판정에는 아무 영향도 주지 않는다 - 순수한 기록이다.
-    if len(spec.testbenches) > 1:
-        _log_expected_cost(spec, netlist_texts, ctx.slot.block_path, args.max_knobs, args.points, knob_names)
+    # 브리프 규칙 5: 시작 시 예상 시뮬 횟수/시간을 로그로 낸다 - 다중 테스트벤치
+    # 슬롯만이 아니라 모든 실행에서. `--max-knobs` 기본값이 절삭 없음으로 바뀐
+    # 뒤로는 단일 테스트벤치 슬롯도 기본값으로 120회 시뮬/2분 40초에 달하고,
+    # 그것이 정확히 설계 문서가 검증 슬롯에 권장하는 모양이다 - 다중 테스트벤치
+    # 전용 조건은 이 로그가 가장 필요한 자리에서 빠지게 했다. 판정에는 아무
+    # 영향도 주지 않는다 - 순수한 기록이다.
+    _log_expected_cost(spec, netlist_texts, ctx.slot.block_path, args.max_knobs, args.points, knob_names)
 
     if ctx.source == "technique":
         base_text = netlist_texts[spec.canonical.name]
@@ -733,7 +755,12 @@ def write_topology_candidate_py(out_dir: str, result: dict) -> str:
 
 
 def _stage_section(stage: StageResult) -> list[str]:
-    lines = [f"### Stage: {stage.name} - {stage.status}", "", "```json", json.dumps(stage.detail, indent=2, default=str), "```", ""]
+    # `_json_safe` 먼저: `curation.json`은 이미 이 함수를 거쳐 비유한 float를
+    # "NaN"/"Infinity" 문자열로 적는데(위 정의부 주석), 여기서 이 호출을 빼면
+    # 리포트의 같은 fenced json 블록은 bare `NaN` 토큰을 그대로 낸다 - 두
+    # 산출물이 같은 값(예: `per_criterion[...]["baseline"]`이 기존 본문 쪽
+    # measurement 결측일 때의 math.nan)을 다르게 말하는 셈이다.
+    lines = [f"### Stage: {stage.name} - {stage.status}", "", "```json", json.dumps(_json_safe(stage.detail), indent=2, default=str), "```", ""]
     if stage.name == "comparison":
         lines.append(f"**Comparison scope:** {_comparison_scope_text(stage.detail)}")
         dominating = stage.detail.get("dominating_point")

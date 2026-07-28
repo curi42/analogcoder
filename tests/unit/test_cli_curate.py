@@ -685,12 +685,14 @@ def test_estimate_curation_cost_narrows_swept_count_by_knob_names_but_keeps_the_
 
 
 @pytest.mark.asyncio
-async def test_expected_cost_is_logged_only_for_multi_testbench_slots(tmp_path, caplog):
+async def test_expected_cost_is_logged_with_extra_emphasis_for_multi_testbench_slots(tmp_path, caplog):
     """Brief rule 5: a multi-testbench slot must log its expected simulation
-    count/time at the start of the run; a single-testbench slot (every
-    other test in this file) must not. Catches a mutation that logs
-    unconditionally (noise on the common case) or never logs at all
-    (silently dropping the rule)."""
+    count/time at the start of the run, carrying the "multi-testbench slot"
+    emphasis that a single-testbench run's log line does not (see the sibling
+    test below - both must log, only this shape gets the extra prefix).
+    Catches a mutation that drops the multi-testbench prefix entirely
+    (indistinguishable from a single-testbench run's log line) or never logs
+    at all (silently dropping the rule)."""
     (tmp_path / "slot.cir").write_text(SLOT_DECK)
     spec_text = """circuit_name: test
 testbenches:
@@ -735,7 +737,18 @@ testbenches:
 
 
 @pytest.mark.asyncio
-async def test_expected_cost_is_not_logged_for_a_single_testbench_slot(tmp_path, caplog):
+async def test_expected_cost_is_logged_for_a_single_testbench_slot_too(tmp_path, caplog):
+    """R2 fix: `_log_expected_cost` used to run only `if len(spec.testbenches)
+    > 1`, so a single-testbench slot - exactly the shape the design doc
+    recommends for validation slots, and the shape whose default run (no
+    `--max-knobs` cap) now costs 120 simulations / ~2 min 41 s - emitted no
+    cost line at all. Every run must log an expected-cost line; only the
+    multi-testbench case gets the extra "multi-testbench slot" emphasis
+    (pinned by the sibling test above).
+
+    Mutation this catches: reintroducing the `if len(spec.testbenches) > 1`
+    guard around the call in `_curate` (observed: no log record at all is
+    emitted for this single-testbench slot, so the assertion below fails)."""
     spec_path = _write_slot(tmp_path, SPEC_NO_CORNERS)
     out_dir = tmp_path / "out"
     deck_path = tmp_path / "source_deck.cir"
@@ -747,6 +760,8 @@ async def test_expected_cost_is_not_logged_for_a_single_testbench_slot(tmp_path,
     with caplog.at_level(logging.INFO, logger="analogcoder.cli_curate"):
         await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
 
+    assert any("expected ~" in rec.message and "simulations" in rec.message for rec in caplog.records)
+    # The multi-testbench-only emphasis must not leak onto a single-testbench run.
     assert not any("multi-testbench slot" in rec.message for rec in caplog.records)
 
 
@@ -1200,6 +1215,57 @@ def test_curation_json_is_valid_rfc_8259_even_with_a_missing_baseline(tmp_path):
     assert criteria["bw"]["baseline"] == "-Infinity"
     # ... and a finite float is untouched, so the tagging is not indiscriminate.
     assert criteria["gain"]["candidate"] == 5.0
+
+
+def test_curation_report_and_json_agree_on_a_non_finite_value(tmp_path):
+    """R1 (final-branch-review residual): `curation.json` is routed through
+    `_json_safe` (test above), but `_stage_section` in cli_curate.py rendered
+    `json.dumps(stage.detail, indent=2, default=str)` straight into the
+    report's fenced json blocks, bypassing that sanitiser - so the report
+    still emitted a BARE `NaN` token for the exact same
+    `per_criterion[...]["baseline"]` value that `curation.json` writes as the
+    string `"NaN"`. The two artifacts describing the same run disagreed about
+    the same fact.
+
+    Mutation this catches: removing the `_json_safe(...)` wrap from
+    `_stage_section`'s `json.dumps` call (observed:
+    `'"baseline": "NaN"' in report_text` fails, and
+    `'"baseline": NaN' not in report_text` fails instead - the report reverts
+    to the bare, non-RFC-8259 token)."""
+    result = {
+        "verdict": "REJECT",
+        "reason": "stage 2 (reproduce) rejected: missing measurements: []",
+        "source": "body",
+        "block_path": "BLOCK",
+        "verified_at": "nominal",
+        "addresses": [],
+        "description": "",
+        "description_source": "not_reached",
+        "rationale": None,
+        "available_models": None,
+        "candidate": None,
+        "stages": [
+            StageResult(
+                name="reproduce",
+                status="pass",
+                detail={
+                    "criteria": {
+                        "gain": {"candidate": 5.0, "baseline": float("nan"), "better": False},
+                    }
+                },
+            )
+        ],
+    }
+    write_curation_artifacts(str(tmp_path), result)
+
+    report_text = (Path(tmp_path) / "curation_report.md").read_text()
+    json_payload = json.loads((Path(tmp_path) / "curation.json").read_text())
+
+    assert json_payload["stages"][0]["detail"]["criteria"]["gain"]["baseline"] == "NaN"
+    # The report's fenced json block must say the same thing curation.json
+    # does - the quoted string, not the bare (non-RFC-8259) token.
+    assert '"baseline": "NaN"' in report_text
+    assert '"baseline": NaN' not in report_text
 
 
 # --- M9: an un-admitted snippet must not be pasteable -----------------------
