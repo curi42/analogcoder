@@ -418,7 +418,18 @@ def verify_corners(
     per_address: dict = {}
     worse: list[str] = []
     for name in addresses:
-        criterion = criteria_by_name[name]
+        criterion = criteria_by_name.get(name)
+        if criterion is None:
+            # addresses is produced by reproduce_characteristics from this same
+            # slot's criteria list (see its docstring), so every name in it is
+            # necessarily a key in criteria_by_name - this is unreachable under
+            # the current call graph, not a normal "not found" case. Raising
+            # explicitly here matches check_structure's own should-be-
+            # unreachable guard rather than surfacing a bare KeyError.
+            raise RuntimeError(
+                f"addresses contains {name!r}, which is not a criterion name in "
+                f"slot.spec.all_criteria - this should be unreachable"
+            )
         candidate_value = candidate_by_name[name]["actual"]
         baseline_value = baseline_by_name[name]["actual"]
         better = _is_better(criterion.operator, candidate_value, baseline_value)

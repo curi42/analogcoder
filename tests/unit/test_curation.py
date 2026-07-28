@@ -1078,6 +1078,37 @@ def test_winning_at_nominal_but_losing_at_the_worst_corner_fails():
     assert result.detail["criteria"]["gain"]["baseline_worst"] == pytest.approx(50.0)
 
 
+def test_a_lower_bound_criterion_wins_at_nominal_but_loses_at_the_worst_corner_fails():
+    """The '<=' mirror of test_winning_at_nominal_but_losing_at_the_worst_
+    corner_fails (which only ever exercises '>='). This repo's real criteria
+    are majority '<=' (iq_ua, psrr_dc, psr_minus_db), and a direction bug of
+    exactly this shape escaped Task 3's first pass - every other test in this
+    file uses a '>=' criterion, so a comparison hardcoded to '>=' inside
+    verify_corners would pass all of them and only be caught here.
+
+    At 1.8V ("nominal") the candidate beats the baseline (150 < 200 - lower is
+    better for iq_ua). But '<=' means the worst case is the MAXIMUM across
+    corners: candidate's worst is 250 (at 1.62V), baseline's worst is 220 (at
+    1.62V too). 250 is not <= (better than) 220, so the candidate must fail
+    despite winning at 1.8V."""
+    criteria = [Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=1000.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate_iq = {1.8: 150.0, 1.62: 250.0}
+    baseline_iq = {1.8: 200.0, 1.62: 220.0}
+    backend = _CornerBackend(
+        lambda is_candidate, voltage: {"iq_ua": (candidate_iq if is_candidate else baseline_iq)[voltage]}
+    )
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["iq"])
+
+    assert result.status == "fail"
+    assert "iq" in result.detail["worse"]
+    assert result.detail["criteria"]["iq"]["candidate_worst"] == pytest.approx(250.0)
+    assert result.detail["criteria"]["iq"]["baseline_worst"] == pytest.approx(220.0)
+
+
 def test_only_two_sweeps_are_run(monkeypatch):
     """Regardless of how many corners/testbenches a real sweep would cover,
     verify_corners must call run_full_pvt_sweep EXACTLY twice - once for the
