@@ -58,7 +58,7 @@ bandgap`의 `TRIMAMP` 본문과 컴포넌트 시퀀스가 완전히 같다. 이�
 
 from dataclasses import dataclass
 
-from analogcoder.netlist import Component, ParsedNetlist, netlist_scale, parse_netlist, parse_spice_value
+from analogcoder.netlist import Component, ParsedNetlist, Subckt, netlist_scale, parse_netlist, parse_spice_value
 from analogcoder.topologies import Topology
 
 
@@ -176,7 +176,7 @@ def _instances_of(parsed: ParsedNetlist, subckt_name: str) -> list[tuple[str | N
 def _leftover_ports_float_reason(
     parsed: ParsedNetlist,
     block_path: str,
-    subckt,
+    subckt: Subckt,
     leftover_ports: list[str],
 ) -> str | None:
     """남는 포트들이 스왑 후 뜬 넷이 되지 않는지 판정한다. 문제 없으면 None,

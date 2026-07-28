@@ -60,6 +60,18 @@ Xu1 a1 b1 c1 vdd vss nbias ncas pbias pcas AMP
 .end
 """
 
+# 인스턴스(Xu1)의 노드가 5개뿐인데(위치 인자 부족 - 잘못된 SPICE) AMP는
+# 포트를 9개 선언한다. 남는 포트(nbias 등) 위치가 인스턴스의 노드 목록
+# 범위를 벗어난다 - _leftover_ports_float_reason의 방어 분기.
+DECK_9_SHORT_INSTANCE = """* t
+.option scale=1.0u
+.subckt AMP vinp vinn vout vdd vss nbias ncas pbias pcas
+M1 vout vinp vdd vss NMOSG W=2 L=1
+.ends AMP
+Xu1 a1 b1 c1 vdd vss AMP
+.end
+"""
+
 # 같은 정의(AMP)를 세 번 인스턴스화한다: Xu1a/Xu1b는 남는 포트의 넷
 # (nbias/ncas/pbias/pcas)을 서로 공유해 통과하지만, Xu2는 별도의 넷
 # (nbias2/...)을 혼자 쓴다 - 유일 참여자라 실패. "모든 인스턴스가 통과해야
@@ -291,18 +303,52 @@ def test_a_definition_with_no_instance_and_leftover_ports_is_rejected():
     assert _reasons(rej, "five_port") == {"ports"}
 
 
+def test_an_instance_with_fewer_nodes_than_declared_ports_is_rejected_not_crashed():
+    """Xu1은 노드가 5개뿐인데(위치 인자가 모자란 잘못된 SPICE) AMP는 포트를
+    9개 선언한다 - 남는 포트(nbias 등) 위치가 인스턴스 노드 목록 범위를
+    벗어난다. 이 방어 분기가 없으면 IndexError로 죽는다; 대신 판정 불가로
+    보고 거부한다."""
+    cands, rej = compatible_swaps({"tb": DECK_9_SHORT_INSTANCE}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") not in cands
+    assert _reasons(rej, "five_port") == {"ports"}
+
+
 def test_the_port_subset_relaxation_admits_nothing_today():
-    """이 완화는 규칙으로서 옳지만 오늘의 라이브러리/덱에서는 0쌍을 추가한다.
-    5포트 항목 둘 다 sky130_fd_pr__cap_mim_m3_1 을 쓰고 bandgap 덱은 MOS 캡만
-    쓰기 때문이다. 라이브러리나 덱이 바뀌어 참이 아니게 되면 이 테스트가 깨지고,
-    그때 이 사실을 다시 적어야 한다."""
+    """이 완화는 규칙으로서 옳지만 오늘의 라이브러리/덱에서는 0쌍을 추가한다 -
+    미리보기 리뷰가 잡은 결함(초판은 `cands`를 버리고 사유를 `topology_id`만
+    으로 접어 6개 블록 중 마지막 하나만 봤다) 이후 다시 쓴 버전: `cands`에
+    두 5포트 항목이 후보로 전혀 나오지 않는 것을 직접 확인하고, 기각 사유를
+    (block_path, topology_id)별로 전부 고정한다.
+
+    실측: `BANDGAP`/`BGR_CORE`는 `vinp`/`vinn`/`vout` 자체가 없어 포트
+    부분집합 검사에서부터 걸려 `ports`. `ERRAMP`/`TRIMAMP`/`BUF_N`/`BUF_P`는
+    9포트라 포트 부분집합 검사와 부동 넷 검사(bandgap의 바이어스 체인을
+    같은 스코프의 형제 인스턴스들이 공유하므로 통과)를 모두 통과하고, 그
+    다음 `models`에서 걸린다 - 5포트 항목 둘 다 `sky130_fd_pr__cap_mim_m3_1`을
+    쓰는데 bandgap 덱은 MOS 캡만 쓰기 때문이다. 라이브러리나 덱이 바뀌어
+    이 사실이 참이 아니게 되면 이 테스트가 깨지고, 그때 이 사실을 다시
+    적어야 한다."""
     from pathlib import Path
 
     from analogcoder.topologies import TOPOLOGY_LIBRARY
 
     text = Path("benchmarks/bandgap/netlist_loops.cir").read_text()
-    _, rej = compatible_swaps({"loops": text}, TOPOLOGY_LIBRARY, set())
+    cands, rej = compatible_swaps({"loops": text}, TOPOLOGY_LIBRARY, set())
     five_port = {"miller_basic", "miller_nulling_resistor"}
-    reasons = {r.topology_id: r.reason for r in rej if r.topology_id in five_port}
-    assert set(reasons) == five_port
-    assert set(reasons.values()) == {"models"}  # ports가 아니라 models로 걸린다
+
+    # 두 5포트 항목은 어떤 블록에 대해서도 후보가 아니다 - 이것이 이 테스트의
+    # 이름이 주장하는 사실인데, 초판은 이걸 전혀 확인하지 않았다.
+    assert not any(c.topology_id in five_port for c in cands)
+
+    reasons = {
+        (r.block_path, r.topology_id): r.reason
+        for r in rej
+        if r.topology_id in five_port
+    }
+    expected_blocks = {"BANDGAP", "BGR_CORE", "ERRAMP", "TRIMAMP", "BUF_N", "BUF_P"}
+    assert {block for block, _ in reasons} == expected_blocks
+    for topology_id in five_port:
+        assert reasons[("BANDGAP", topology_id)] == "ports"
+        assert reasons[("BGR_CORE", topology_id)] == "ports"
+        for block in ("ERRAMP", "TRIMAMP", "BUF_N", "BUF_P"):
+            assert reasons[(block, topology_id)] == "models"
