@@ -7,6 +7,7 @@ from analogcoder.area_limits import (
     check_area_growth,
     evaluate_area_growth,
     index_baseline_components,
+    tunable_range,
 )
 from tests.unit.wrapper_decks import (
     CONTESTED_NAME_DECK,
@@ -525,6 +526,38 @@ def test_wrapper_instance_width_growth_within_tier_is_allowed():
     )
 
     assert ok is True, feedback
+
+
+def test_tunable_range_agrees_with_evaluate_area_growth_on_a_traced_wrapper_param():
+    """xin1.wn reaches ma1.w (and ma1.m=4) by tracing, not by directly
+    addressing a device - xin1's own positional value is the subckt name
+    WRAPCELL_A, which _direct_target cannot tier at all. tunable_range must
+    follow evaluate_area_growth's own branch (`traced = component.
+    traced_params.get(param)`, `_traced_targets` when present) rather than
+    unconditionally falling back to `_direct_target`, or it reports "no
+    tier" for a knob the judging path actually bounds at 3.0x (see
+    test_wrapper_instance_width_growth_is_bounded above, which pins that
+    same 3.0x figure via check_area_growth on this exact deck/refdes/param)."""
+    components = index_baseline_components(WRAPPER_NETLIST)
+    component = components["xin1"]
+
+    baseline, allowed = tunable_range(component, "wn")
+
+    assert baseline == pytest.approx(2e-6)
+    assert allowed == 3.0
+
+    # Cross-check against the judging path itself, not just a hardcoded
+    # number: comfortably inside the tier passes, comfortably outside it is
+    # rejected with that same 3.0x figure in the feedback.
+    within_ok, _ = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": str(2e-6 * (allowed - 0.5))}]
+    )
+    over_ok, over_feedback = check_area_growth(
+        components, [{"refdes": "xin1", "param": "wn", "new_value": str(2e-6 * (allowed + 0.5))}]
+    )
+    assert within_ok is True
+    assert over_ok is False
+    assert "3.0x" in over_feedback
 
 
 def test_wrapper_tier_comes_from_this_instances_own_values():

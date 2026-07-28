@@ -27,7 +27,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from analogcoder.area_limits import index_baseline_components, is_count_param, tunable_range
+from analogcoder.area_limits import (
+    index_baseline_components,
+    is_count_param,
+    is_neutral_param,
+    tunable_range,
+)
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import apply_changes, apply_topology_swap
 from analogcoder.spec import TargetSpec, Testbench
@@ -330,13 +335,23 @@ def _sweep_values(baseline: float, allowed_multiplier: float, points: int, is_co
     기하평균 `sqrt((baseline/M)*(baseline*M)) == baseline`과 정확히 같아지므로,
     끝점만이 아니라 매 값을 기준선과 비교해 걸러낸다.
 
-    개수 노브(`m`/`nf`)는 반올림 후 정수로 중복 제거한다 - 이 저장소는
-    비정수 `m` 제안을 이미 거부하는 규칙(`area_limits._integrality_violation`)을
-    갖고 있고, 스윕이 그 규칙이 거부할 값을 애초에 만들어 시뮬레이션을
-    낭비하지 않기 위해서다. 반올림이 두 로그 지점을 같은 정수로 뭉갤 수
-    있으므로 중복 제거가 필요하다 - "노브 하나에 N점"을 약속하지 않는다;
-    실제로 스윕한 값 목록을 그대로 `detail`에 담아 무엇을 봤는지 숨기지
-    않는다."""
+    양끝(`low`/`high`)은 `math.exp(math.log(...))` 왕복을 거치지 않고 그대로
+    쓴다 - 로그·지수를 왕복하면 `low`가 `499.99999999999983`처럼 부동소수점
+    잡음을 얻어 `detail["range"]`(같은 `low`/`high`를 나눗셈/곱셈으로 직접
+    계산)와 어긋난다. 중간 점들만 로그 등간격 보간이 필요하므로 `exp`를 쓴다.
+
+    개수 노브(`m`/`nf`)는 반올림 후 정수로 중복 제거하고, **최소 1로
+    죈다** - `m`은 병렬 소자의 개수이고 `m=0`은 튜닝이 아니라 소자를 지운
+    것이다(에어리어 게이트의 허용 범위 밖의 변경이지, 그 범위 *안의* 값이
+    아니다). 베이스라인이 1에 가깝고 배수가 크면(`m=1`, `M=2` → 범위
+    [0.5, 2.0]) 반올림만으로는 0이 나올 수 있으므로 반올림 다음에 죈다.
+    이 저장소는 비정수 `m` 제안을 이미 거부하는 규칙
+    (`area_limits._integrality_violation`)을 갖고 있고, 스윕이 그 규칙이
+    거부할 값(또는 그보다 더 나쁜, 소자가 사라진 값)을 애초에 만들어
+    시뮬레이션을 낭비하지 않기 위해서다. 반올림이 두 로그 지점을 같은
+    정수로 뭉갤 수 있으므로 중복 제거가 필요하다 - "노브 하나에 N점"을
+    약속하지 않는다; 실제로 스윕한 값 목록을 그대로 `detail`에 담아 무엇을
+    봤는지 숨기지 않는다."""
     low = baseline / allowed_multiplier
     high = baseline * allowed_multiplier
     if low <= 0 or high <= 0:
@@ -345,9 +360,16 @@ def _sweep_values(baseline: float, allowed_multiplier: float, points: int, is_co
     log_low = math.log(low)
     log_high = math.log(high)
     step_count = max(points - 1, 1)
-    raw = [math.exp(log_low + (log_high - log_low) * i / step_count) for i in range(points)]
+    raw = []
+    for i in range(points):
+        if i == 0:
+            raw.append(low)
+        elif i == points - 1:
+            raw.append(high)
+        else:
+            raw.append(math.exp(log_low + (log_high - log_low) * i / step_count))
     if is_count:
-        raw = [float(round(v)) for v in raw]
+        raw = [max(1.0, float(round(v))) for v in raw]
 
     values: list[float] = []
     seen: set = set()
@@ -382,20 +404,29 @@ def _simulate_point(
     실패 시 그때까지 모인 부분 measurement는 버린다(빈 dict를 돌려준다) -
     한 테스트벤치가 죽었는데 다른 테스트벤치의 값만으로 이 지점을 판정하면
     "이 지점의 완전한 값"이라는 착각을 준다. 실패도 "시도했다"로 세므로
-    반환하는 count는 실패한 시도까지 포함한다."""
+    반환하는 count는 실패한 시도까지 포함한다.
+
+    `apply_changes` 호출도 `try` **안에** 있다 - 그 호출은 (스코프가 없는
+    refdes가 두 컴포넌트에 걸쳐 있을 때) `ValueError`를 던질 수 있고, 이
+    스윕 지점이 캐노니컬이 아닌 테스트벤치를 겨냥했을 때 그런 모호성이
+    생길 수 있다. 이 단계의 규칙은 "값을 못 낸 지점은 결측 처리하고 나머지
+    스윕은 계속한다"이므로, `apply_changes`의 예외만 못 잡게 두면 그 규칙
+    자체가 이 한 곳에서 깨져 스윕 전체가, 나아가 3단 전체가 죽는다 -
+    `run_orchestration`이 `AgentExecutionError`와 나란히 `ValueError`를
+    잡는 것과 같은 이유다."""
     measurements: dict = {}
     count = 0
     for tb in testbenches:
-        text = apply_changes(netlist_texts[tb.name], changes)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            netlist_path = os.path.join(tmpdir, "sweep.cir")
-            with open(netlist_path, "w") as f:
-                f.write(text)
-            try:
+        try:
+            text = apply_changes(netlist_texts[tb.name], changes)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                netlist_path = os.path.join(tmpdir, "sweep.cir")
+                with open(netlist_path, "w") as f:
+                    f.write(text)
                 result = sim_backend.run(netlist_path, {"control_block": tb.control_block})
-            except Exception as exc:  # noqa: BLE001 - 이 지점만 결측 처리, 단계 전체는 아니다
-                count += 1
-                return {}, count, str(exc)
+        except Exception as exc:  # noqa: BLE001 - 이 지점만 결측 처리, 단계 전체는 아니다
+            count += 1
+            return {}, count, str(exc)
         measurements.update(result.measurements)
         count += 1
     return measurements, count, None
@@ -481,9 +512,18 @@ def scoped_comparison(
             knobs_unresolved.append({"knob": knob_name, "reason": "baseline value could not be resolved"})
             continue
         if allowed is None:
-            knobs_unresolved.append(
-                {"knob": knob_name, "reason": "the area gate has no size tier for this parameter"}
+            # "볼 것이 없다"(neutral - nf 같은 손가락 개수, 구조적으로 면적
+            # 중립)와 "볼 수는 있는데 확정 못 했다"(unjudged)는 다른
+            # 사실이다(CLAUDE.md의 bounded/neutral/blind/unjudged 4상태와
+            # 같은 구별). 같은 사유 문자열로 뭉개면 둘 다 "게이트가 티어가
+            # 없다고 했다"로 읽혀, nf처럼 의도적으로 무제약인 노브가 진짜
+            # 판단 불가 노브와 구별되지 않는다.
+            reason = (
+                "area-neutral (finger count / nf) - nothing to sweep, not unresolved"
+                if is_neutral_param(component, param)
+                else "the area gate has no size tier for this parameter"
             )
+            knobs_unresolved.append({"knob": knob_name, "reason": reason})
             continue
         if baseline_value <= 0:
             knobs_unresolved.append(

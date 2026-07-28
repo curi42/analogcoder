@@ -211,6 +211,18 @@ def is_count_param(component: Component | None, param: str) -> bool:
     return bool(param_tokens(component, param) & (_COUNT_TOKENS | _NEUTRAL_TOKENS))
 
 
+def is_neutral_param(component: Component | None, param: str) -> bool:
+    """그 param이 nf(손가락 개수)처럼 **면적 중립**인 토큰에만 도달하는가.
+
+    `is_count_param`은 정수 여야 하는가(m과 nf 둘 다)를 묻지만, 이 함수는
+    그중에서도 "볼 것이 없다"(neutral)는 사실만 따로 집어낸다 - `_visibility`가
+    이미 구별하는 `neutral`(볼 게 없다)과 `unjudged`(볼 수는 있는데 확정
+    못 했다)를 호출자가 같은 사유 문자열로 뭉개지 않도록 하기 위해서다. `m`은
+    개수이지 중립이 아니므로(면적이 그에 비례해 늘어난다) 이 함수는 `m`에는
+    `False`를 돌려준다."""
+    return bool(param_tokens(component, param) & _NEUTRAL_TOKENS)
+
+
 def resolved_token(component: Component, token: str) -> float | None:
     """소자가 쓴 토큰의 해소값을 대소문자 무시로 찾는다. SPICE는 대소문자를
     구분하지 않아 같은 덱에 `W=30`과 `w=1`이 함께 나온다.
@@ -329,22 +341,44 @@ def tunable_range(component: Component, param: str) -> tuple[float | None, float
     "이 제안을 승인/거부하라"(`check_area_growth`/`evaluate_area_growth`) 뿐이고
     "이 파라미터에 배수가 얼마나 허용되는가"를 직접 묻는 조회 함수가 없었다.
 
-    새 함수이지 새 규칙이 아니다: 판정 경로(`evaluate_area_growth`)가 소자를
-    직접 주소지정한 변경 하나에 대해 이미 쓰는 `_direct_target`을 그대로
-    호출할 뿐, 새 분기나 새 값을 만들지 않는다 - 그래서 기존 판정 경로의
-    동작은 한 글자도 바뀌지 않는다(호출하지 않으면 이 함수는 죽은 코드다).
-    `refdes`는 `_direct_target`의 반환값 중 `allowed`에 영향을 주지 않는
-    라벨/키 용도일 뿐이므로 `component.refdes`(스코프 없는 로컬 이름)를
-    그대로 넘긴다 - 호출자가 스코프-한정 이름을 쓰든 안 쓰든 결과는 같다.
+    새 함수이지 새 규칙이 아니다 - `evaluate_area_growth`(`param` 하나를
+    소자에 매핑하는 바로 그 분기, `traced = component.traced_params.get(param)`)를
+    **그대로 거울처럼 따른다**: 추적되면 `_traced_targets`, 아니면
+    `_direct_target`. 이 갈래를 놓치고 항상 `_direct_target`만 쓰면(초판의
+    결함) 인스턴스 파라미터가 다른 소자로 도달하는 래퍼 셀 덱에서 이 함수는
+    "티어 없음"(`allowed=None`)이라고 답하는데 `evaluate_area_growth`는 같은
+    파라미터를 실제로 티어링해 거부한다 - 조회 함수가 판정 경로와 다른
+    사실을 말하는 것이고, 그 결과로 3단이 그 노브를 전혀 스윕하지 않으면서
+    "이 노브는 스윕했다"는 인상을 준다(정확히는 knobs_unresolved에 거짓
+    사유를 남긴다). 도달점이 여럿이면(래퍼가 같은 정의를 두 번 인스턴스화한
+    경우) `evaluate_area_growth`의 그룹 집계와 같은 규칙으로 그중 **가장
+    빡빡한** `allowed`를 쓴다 - 단, 여기서는 같은 (component, param) 하나의
+    도달점들만 모으지, `evaluate_area_growth`처럼 한 제안 안의 다른
+    파라미터와 곱하지는 않는다(그건 "이 제안이 이 소자를 얼마나 키우는가"를
+    묻고, 이 함수는 "이 파라미터 하나의 허용 범위가 얼마인가"를 묻는다 -
+    다른 질문이다).
+
+    판정 경로(`evaluate_area_growth`) 자체는 이 함수가 존재하기 전과 한
+    글자도 다르지 않다 - `_traced_targets`/`_direct_target`을 호출만 할 뿐
+    새 분기나 새 값을 만들지 않는다(호출하지 않으면 이 함수는 죽은 코드다).
 
     베이스라인을 확정할 수 없거나(해소 불가), 이 토큰에 티어가 없으면
-    (`allowed`가 None) `(None, None)`을 돌려준다 - 에어리어 게이트 자신의
-    "판단 불가, 막지 않음" 폴백과 같은 결이다: 범위를 지어내지 않는다."""
+    (`allowed`가 None - `nf`처럼 면적 중립이거나, 진짜로 판단 불가) `(None,
+    None)`을 돌려준다 - 에어리어 게이트 자신의 "판단 불가, 막지 않음"
+    폴백과 같은 결이다: 범위를 지어내지 않는다."""
     baseline_value = _baseline_value_for(component, param)
     if baseline_value is None:
         return None, None
-    target = _direct_target(component.refdes, component, param)
-    return baseline_value, target.allowed
+
+    traced = component.traced_params.get(param)
+    targets = _traced_targets(component.refdes, traced) if traced else [_direct_target(component.refdes, component, param)]
+
+    allowed: float | None = None
+    for target in targets:
+        if target.allowed is None:
+            continue
+        allowed = target.allowed if allowed is None else min(allowed, target.allowed)
+    return baseline_value, allowed
 
 
 def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
