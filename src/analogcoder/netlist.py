@@ -34,6 +34,26 @@ def resolve_includes(text: str, base_dir: str) -> str:
 _SCALE_RE = re.compile(r"^\s*\.option[s]?\b.*?\bscale\s*=\s*(\S+)", re.IGNORECASE | re.MULTILINE)
 
 
+def declares_scale(text: str) -> bool:
+    """Does this deck's OWN text declare `.option scale=`?
+
+    `netlist_scale` collapses "declared as 1.0" and "not declared at all" into
+    the same float, which is right for its callers (they need a multiplier) and
+    wrong for anyone who has to decide whether that 1.0 is a fact or a default.
+    `curation.candidate_from_deck` is the one caller that has to know: a deck
+    whose scale lives only inside a `.include` (which `parse_netlist` never
+    follows) would otherwise have `assumes_scale=1.0` recorded onto a library
+    candidate, wrong by up to 1e6 - the same `.option scale` trap CLAUDE.md
+    already records for the area gate."""
+    return _SCALE_RE.search(text) is not None
+
+
+def declares_include(text: str) -> bool:
+    """Does this deck have at least one top-level `.include`/`.inc` line? Uses
+    the same regex `resolve_includes` rewrites with, so the two cannot drift."""
+    return _INCLUDE_RE.search(text) is not None
+
+
 def netlist_scale(text: str) -> float:
     """The `.option scale=` multiplier applied to device geometry, or 1.0 when
     the deck sets none.

@@ -158,12 +158,27 @@ CURATOR_SCHEMA = {
 # 나은지(2단)는 결정론적 게이트가 시뮬레이션으로 잰다. `additionalProperties:
 # False`가 에이전트 스스로의 판정 주장이 스키마를 통과해 다음 단계로 새는
 # 것을 막는다.
+#
+# `rationale`은 **required가 아니다.** 이유는 두 가지이고 둘 다 실측이다:
+# (1) 이 저장소의 코드 어디도 그것을 읽지 않았다 - `grep rationale src/`가
+#     dataclass 필드 하나만 찾는다. 판정에도, 산출물에도 쓰이지 않는 필드를
+#     required로 두면 모델이 그것 하나를 빠뜨렸다는 이유로 실행이 끝난다.
+# (2) 실제로 끝났다. 유효한 `subckt_body`를 내면서 `rationale`을 빠뜨린 모델은
+#     `jsonschema` 검증 실패 -> `AgentExecutionError`가 되고,
+#     `author_and_verify_variant`는 그것을 **재시도하지 않고** 즉시
+#     `INCONCLUSIVE`로 끝낸다 - 3회의 재시도 예산을 손도 대지 않은 채
+#     시도 1에서. CLAUDE.md의 약한 모델 절은 형식 불량 structured output을
+#     로컬 모델의 **예상된** 실패로 적어 두고 있다.
+# 필드 자체는 남긴다 - 있으면 유용하고, 이제 버리지 않고 기록한다
+# (`VariantAuthorResult.rationale` -> `curation.json`/`curation_report.md`).
+# "스키마 불일치를 재시도해야 하는가"라는 더 넓은 질문은 여기서 건드리지
+# 않는다(후속 과제).
 VARIANT_AUTHOR_SCHEMA = {
     "type": "object",
     "properties": {
         "subckt_body": {"type": "string"},
         "rationale": {"type": "string"},
     },
-    "required": ["subckt_body", "rationale"],
+    "required": ["subckt_body"],
     "additionalProperties": False,
 }

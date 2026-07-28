@@ -343,3 +343,56 @@ async def test_run_passes_timeout_to_httpx_client(monkeypatch):
         await backend.run("system", "user", SCHEMA, [])
 
     assert captured["timeout"] == 7.5
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "model not loaded"}},  # error envelope, no choices
+        {"choices": []},                              # choices present but empty
+        {"choices": [{}]},                            # a choice with no message
+    ],
+    ids=["no-choices", "empty-choices", "no-message"],
+)
+@pytest.mark.asyncio
+async def test_a_200_response_without_choices_0_message_is_an_agent_execution_error(monkeypatch, body):
+    """This backend's contract is that every failure to produce structured
+    output arrives as AgentExecutionError - callers key their fallbacks on
+    that one type. `response.json()["choices"][0]["message"]` was unguarded,
+    so a server that answers 200 with an error envelope, a proxy's HTML, or a
+    truncated stream raised a raw KeyError/IndexError/ValueError straight
+    through the AgentBackend abstraction. curation's description stage then
+    turned a fully measured ADMIT into INCONCLUSIVE.
+
+    Mutation this catches: removing the try/except around that indexing chain
+    (observed: `KeyError: 'choices'`, `IndexError: list index out of range`
+    and `KeyError: 'message'` respectively propagate instead of
+    AgentExecutionError)."""
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value=body)
+    with patch("httpx.AsyncClient.post", AsyncMock(return_value=resp)):
+        with pytest.raises(AgentExecutionError):
+            await backend.run("system", "user", SCHEMA, [])
+
+
+@pytest.mark.asyncio
+async def test_a_200_response_whose_body_is_not_json_is_an_agent_execution_error(monkeypatch):
+    """The same rule for `response.json()` itself raising - a captive portal
+    or reverse proxy answering 200 with HTML. json.JSONDecodeError subclasses
+    ValueError, so it is covered by the same guard.
+
+    Mutation this catches: dropping ValueError from that except tuple
+    (observed: `ValueError: not json` propagates uncaught)."""
+    monkeypatch.setenv("TEST_LLM_KEY", "secret-token")
+    backend = OpenAICompatibleBackend(base_url="http://local", api_key_env="TEST_LLM_KEY", model="glm-5.2")
+
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(side_effect=ValueError("not json"))
+    with patch("httpx.AsyncClient.post", AsyncMock(return_value=resp)):
+        with pytest.raises(AgentExecutionError):
+            await backend.run("system", "user", SCHEMA, [])

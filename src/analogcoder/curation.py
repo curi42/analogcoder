@@ -51,6 +51,8 @@ from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import (
     apply_changes,
     apply_topology_swap,
+    declares_include,
+    declares_scale,
     extract_subckt_body,
     netlist_scale,
     parse_netlist,
@@ -141,15 +143,40 @@ def candidate_from_deck(deck_text: str, block_path: str, topology_id: str) -> Ca
 
     `block_path`가 이 덱에 없으면(스코프까지 포함해 정확히 일치해야 한다 -
     `apply_topology_swap`과 같은 규칙) `ValueError`를 낸다 - 추측하지
-    않는다."""
+    않는다.
+
+    **`.subckt` 헤더를 그대로 베끼는 것이 곧 그 포트들이 본문에 쓰인다는
+    뜻은 아니다.** 그래서 소스 B와 **같은** 한 방향 검사
+    (`reject_unreferenced_ports`)를 여기서도 돌린다 - 왜 세 출처 모두에
+    필요한지는 그 함수의 docstring에 실측과 함께 있다.
+
+    `assumes_scale`은 이 덱 **자신의 텍스트**에 있는 `.option scale=`에서만
+    나온다. `parse_netlist`는 `.include`를 따라가지 않으므로, 스케일이 오직
+    include 안에만 있는 덱은 여기서 조용히 1.0으로 기록될 수 있고 그것은
+    1e6배 틀린 값이다(CLAUDE.md에 이미 기록된 함정 - 면적 게이트의 티어를
+    모든 PDK 벤치마크에서 무력화한 바로 그 실수). 그래서 **추측하지 않고
+    거부한다**: 덱이 `.option scale`을 자기 텍스트에 선언하지 않았는데
+    `.include`를 갖고 있으면 `ValueError`다. include가 하나도 없으면 1.0은
+    추측이 아니라 사실이다."""
     parsed = parse_netlist(deck_text)
     if block_path not in parsed.subckts:
         raise ValueError(f"subckt {block_path!r} not found in the deck")
     body = extract_subckt_body(deck_text, block_path)
+    ports = list(parsed.subckts[block_path].ports)
+    reject_unreferenced_ports(body, ports)
+    if not declares_scale(deck_text) and declares_include(deck_text):
+        raise ValueError(
+            "this deck declares no `.option scale` of its own but does have `.include` "
+            "line(s), so its geometry scale may live only inside an include - and "
+            "parse_netlist never follows includes. Recording assumes_scale=1.0 here "
+            "would be wrong by up to 1e6 (CLAUDE.md's `.option scale` trap). Declare "
+            "`.option scale=` in the deck itself, or submit this body via --from-body "
+            "with an explicit --assumes-scale"
+        )
     return Candidate(
         topology_id=topology_id,
         subckt_body=body,
-        ports=list(parsed.subckts[block_path].ports),
+        ports=ports,
         assumes_scale=netlist_scale(deck_text),
         provenance="extracted",
     )
@@ -171,6 +198,48 @@ def _ports_referenced_in_body(body: str, ports: list[str]) -> set[str]:
     return referenced
 
 
+def reject_unreferenced_ports(body: str, ports: list[str]) -> None:
+    """선언된 포트가 본문에서 실제로 참조되는가 - **세 출처 전부**가 통과해야
+    하는 한 방향 검사. 위반이면 `ValueError`, 아니면 조용히 돌아온다.
+
+    이 검사가 왜 세 출처 모두에 필요한가(리뷰가 실행으로 확인한 사실):
+    소스 A는 `.subckt` 헤더를 그대로 베끼고 소스 C는 슬롯 블록의 포트를 그대로
+    물려받으므로, 둘 다 **본문이 쓰지 않는 포트를 선언한 항목**을 만들 수 있다.
+    소스 C의 옛 docstring은 "1단이 이미 포트 호환성을 판정하므로 여기서 다시
+    볼 필요가 없다"고 적었는데 **그것은 거짓이었다**: 1단
+    (`topology_match.compatible_swaps`)에 넘어가는 `topology.ports`가 바로 그
+    블록 자신의 포트이므로 `set(topology.ports) <= set(block.ports)`는 항등식이
+    되고, `leftover_ports`가 빈 리스트가 되어 부동 넷 검사가 **한 번도 돌지
+    않는다.** 실측:
+
+        source A ports: [... 'nbias']   (본문은 'nbias'를 한 번도 참조하지 않는다)
+        source B 같은 본문: REJECTED - declared port(s) ['nbias'] are not referenced
+        source C 같은 본문: ACCEPTED, provenance='authored'
+
+        그렇게 나온 항목을 nbias 넷의 유일 참여자인 블록에 스왑하면
+          ports = 본문이 실제로 쓰는 것  -> REJECTED ("it would float")
+          ports = 소스 A/C가 선언한 것   -> 스왑 후보로 ADMITTED
+
+    즉 부풀려진 `ports`는 그 항목이 라이브러리에 커밋된 **이후로 영원히**
+    부동 넷 검사를 무력화한다 - 이 저장소가 여섯 번 출하한 "조용히 아무것도
+    하지 않는 게이트"와 같은 모양이고, 이번에는 라이브러리 항목 하나가 그
+    상태를 영구화한다. 소스 C의 일상적인 발동 조건: `--technique "remove the
+    cascode"`는 `ncas`/`pcas`를 더 이상 참조하지 않는 본문을 내는데 항목은
+    여전히 그 포트들을 선언한다.
+
+    역방향(본문이 필요로 하는데 선언에 없는 포트)은 F1에서 확정된 대로
+    구조적으로 판정 불가능하다 - 선언에 없는 포트는 내부 노드와 구별할 방법이
+    없다. 그 방향은 2단의 시뮬레이션이 특성 재현 실패로 잡는다."""
+    referenced = _ports_referenced_in_body(body, ports)
+    unreferenced = [p for p in ports if p not in referenced]
+    if unreferenced:
+        raise ValueError(
+            f"declared port(s) {unreferenced} are not referenced anywhere in the body - "
+            "a port that is declared but never used cannot possibly connect to anything "
+            "once this candidate is swapped into a block"
+        )
+
+
 def candidate_from_file(body: str, ports: list[str], assumes_scale: float, topology_id: str) -> Candidate:
     """소스 B: 어딘가의 완성된 SPICE 조각을 그대로 받아 후보로 삼는다.
     `ports`는(소스 A와 달리) 파싱이 아니라 제출자의 **선언**이므로, 구조적으로
@@ -184,14 +253,7 @@ def candidate_from_file(body: str, ports: list[str], assumes_scale: float, topol
     참조되지 않는 선언 포트가 하나라도 있으면 `ValueError`를 낸다 - 그
     포트는 이 후보를 어떤 블록에 스왑해도 결코 연결될 수 없는 인터페이스를
     약속하는 것이므로, 시뮬레이션까지 가서야 발견하게 두지 않는다."""
-    referenced = _ports_referenced_in_body(body, ports)
-    unreferenced = [p for p in ports if p not in referenced]
-    if unreferenced:
-        raise ValueError(
-            f"declared port(s) {unreferenced} are not referenced anywhere in the body - "
-            "a port that is declared but never used cannot possibly connect to anything "
-            "once this candidate is swapped into a block"
-        )
+    reject_unreferenced_ports(body, ports)
     return Candidate(
         topology_id=topology_id,
         subckt_body=body,
@@ -207,11 +269,19 @@ def candidate_from_technique(subckt_body: str, ports: list[str], assumes_scale: 
 
     `ports`/`assumes_scale`은(소스 A처럼) 파싱에서 나온 것이 아니라 슬롯의
     기존 블록에서 그대로 물려받은 값이다 - 에이전트에게 요구한 것이 백지
-    설계가 아니라 국소 수정이므로, 포트 집합과 스케일 가정은 애초에 바뀔
-    이유가 없다. 소스 B(`candidate_from_file`)와 달리 선언된 포트가 본문에서
-    실제로 참조되는지 여기서 다시 검증하지 않는다 - 저술본은 반드시
-    `check_structure`(1단)를 거치고, 그 단계가 이미 포트 호환성을 판정하므로
-    같은 검사를 여기서 미리 하는 것은 이중 판정이지 새 방어가 아니다."""
+    설계가 아니라 국소 수정이므로, 스케일 가정은 애초에 바뀔 이유가 없다.
+
+    **포트 집합은 다르다.** 이 함수의 옛 docstring은 소스 B와 달리 여기서
+    포트 참조 검사를 하지 않는 근거로 "저술본은 반드시 1단을 거치고 그 단계가
+    이미 포트 호환성을 판정한다"를 들었는데, **그것은 거짓이다** - 1단에
+    넘어가는 `topology.ports`가 바로 그 블록 자신의 포트이므로 포트 규칙은
+    항등식이 되고 부동 넷 검사는 한 번도 돌지 않는다(실측은
+    `reject_unreferenced_ports`의 docstring). 그리고 물려받은 포트가 저술된
+    본문에서 여전히 쓰인다는 보장은 없다: `--technique "remove the cascode"`
+    하나면 `ncas`/`pcas`를 안 쓰는 본문이 나온다. 그래서 세 출처 전부와 같은
+    검사를 여기서도 돌린다 - 이중 판정이 아니라, 그 자리에 검사가 아예 없었던
+    것이다."""
+    reject_unreferenced_ports(subckt_body, ports)
     return Candidate(
         topology_id=topology_id,
         subckt_body=subckt_body,
@@ -260,10 +330,13 @@ class VariantAuthorResult:
     구별해 `"PASS"`로 쓴다 - 이 결과를 최종 판정으로 오해하는 호출자가 생기지
     않도록.
 
-    `structure`/`reproduce`는 실제로 도달한 마지막 시도의 `StageResult`다 -
+    `structure`/`reproduce`/`rationale`은 실제로 도달한 마지막 시도의 값이다 -
     도달하지 못한 단계(예: 구조 검사에서 매번 거부돼 2단에 한 번도 못 간 경우)
     는 `None`으로 남아, "이 단계가 통과했다"와 "이 단계를 아예 못 봤다"가
-    같은 값으로 뭉개지지 않는다."""
+    같은 값으로 뭉개지지 않는다. **모든 반환 경로가 그렇다** - 재시도 상한을
+    소진한 `"REJECT"`도 포함이다. 예전에는 그 경로만 셋을 하드코딩 `None`으로
+    버려서, 3번의 LLM 호출·3번의 구조 검사·3번의 시뮬레이션된 2단 뒤에
+    리포트의 `## Stages`가 비고 `curation.json`의 `"stages"`가 `[]`가 됐다."""
 
     verdict: str  # "PASS" | "REJECT" | "INCONCLUSIVE"
     reason: str | None
@@ -551,6 +624,17 @@ async def author_and_verify_variant(
     사유를 담는다."""
     rejection_feedback: str | None = None
     last_reason: str | None = None
+    # 실제로 **도달한** 마지막 시도의 단계 결과들. 재시도 상한을 다 쓴 뒤의
+    # 반환이 이것들을 버리면 - 예전 코드는 둘 다 하드코딩 `None`이었다 -
+    # `curation_report.md`의 `## Stages`가 텅 비고 `curation.json`의 `"stages"`가
+    # `[]`가 된다. LLM 호출 3회, 구조 검사 3회, 시뮬레이션된 2단 3회를 실제로
+    # 돌고 나서다. 이 dataclass 자신의 docstring이 약속한 것("도달한 마지막
+    # 시도의 StageResult")과 정면으로 어긋나고, 무엇보다 이 저장소가 반복해 온
+    # "검사했고 문제없음"과 "검사가 사라짐"이 로그에서 구별되지 않는 모양
+    # 그대로다.
+    last_structure: StageResult | None = None
+    last_reproduce: StageResult | None = None
+    last_rationale: str | None = None
 
     for attempt in range(1, MAX_VARIANT_AUTHOR_RETRIES + 1):
         try:
@@ -569,26 +653,43 @@ async def author_and_verify_variant(
                 reason=str(exc),
                 attempts=attempt,
                 candidate=None,
-                rationale=None,
-                structure=None,
-                reproduce=None,
+                rationale=last_rationale,
+                structure=last_structure,
+                reproduce=last_reproduce,
                 addresses=[],
             )
 
-        candidate = candidate_from_technique(
-            subckt_body=authored["subckt_body"],
-            ports=ports,
-            assumes_scale=scale,
-            topology_id=topology_id,
-        )
+        last_rationale = authored.get("rationale")
+
+        try:
+            candidate = candidate_from_technique(
+                subckt_body=authored["subckt_body"],
+                ports=ports,
+                assumes_scale=scale,
+                topology_id=topology_id,
+            )
+        except ValueError as exc:
+            # 저술본이 물려받은 포트 중 하나를 더 이상 참조하지 않는다
+            # (`reject_unreferenced_ports`). 이것은 "재보지 못했다"가 아니라
+            # 이 시도의 본문이 나쁘다는 **판정된 사실**이므로, 1단·2단 거부와
+            # 똑같이 사유를 그대로 피드백으로 돌려주고 다시 시도한다 -
+            # 예외로 새어 나가면 CLI의 가드가 그것을 INCONCLUSIVE로 바꾸어
+            # 남은 재시도 예산을 통째로 버린다.
+            rejection_feedback = (
+                f"the authored body no longer references every port it must keep: {exc}"
+            )
+            last_reason = rejection_feedback
+            continue
 
         structure_result = check_structure(candidate, slot, netlist_texts)
+        last_structure = structure_result
         if structure_result.status != "pass":
             rejection_feedback = _stage_rejection_reason("structure", structure_result.detail)
             last_reason = rejection_feedback
             continue
 
         reproduce_result, addresses = reproduce_characteristics(candidate, slot, netlist_texts, sim_backend)
+        last_reproduce = reproduce_result
         if reproduce_result.status == "inconclusive":
             return VariantAuthorResult(
                 verdict="INCONCLUSIVE",
@@ -621,9 +722,9 @@ async def author_and_verify_variant(
         reason=last_reason,
         attempts=MAX_VARIANT_AUTHOR_RETRIES,
         candidate=None,
-        rationale=None,
-        structure=None,
-        reproduce=None,
+        rationale=last_rationale,
+        structure=last_structure,
+        reproduce=last_reproduce,
         addresses=[],
     )
 

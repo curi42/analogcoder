@@ -308,6 +308,23 @@ def _stage_fail_reason(name: str, stage: StageResult) -> str:
     if name == "reproduce":
         return f"stage 2 (reproduce) rejected: missing measurements: {stage.detail.get('missing')}"
     if name == "corners":
+        # `verify_corners`에는 실패 분기가 **둘**이다. 이 함수는 두 번째(요구 2,
+        # 최악 코너 비교)만 알고 있어서, 첫 번째(요구 1, 어느 코너에서 어떤
+        # 기준의 measurement가 빠짐)로 거부된 실행이 `detail`에 `missing=['gain']`
+        # 을 담은 채 사유 문자열로는 "worse at worst-case corner on: None"을
+        # 냈다 - 재보지도 않은 최악 코너 회귀를 **단언**하고, 기준 이름은 하나도
+        # 대지 않으며, 빠진 값이 **기존 본문 쪽**이었을 가능성을 감춘다. 그
+        # 문자열은 리포트의 헤드라인 `**Reason:**`이자 `curation.json`의
+        # `reason`이다. 한 줄 위 `reproduce` 분기는 이미 `missing`을 옳게 읽으므로
+        # 이것은 누락이었다.
+        missing = stage.detail.get("missing")
+        if missing:
+            return (
+                "stage 2.5 (corners) rejected: requirement 1 (every criterion produces a "
+                f"measurement at every corner) failed - missing: {missing} "
+                f"(candidate side: {stage.detail.get('missing_candidate')}, "
+                f"incumbent side: {stage.detail.get('missing_baseline')})"
+            )
         return f"stage 2.5 (corners) rejected: worse at worst-case corner on: {stage.detail.get('worse')}"
     if name == "comparison":
         return f"stage 3 (comparison) rejected: dominated by {stage.detail.get('dominating_point')}"

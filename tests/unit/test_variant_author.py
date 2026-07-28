@@ -1,8 +1,10 @@
 from unittest.mock import AsyncMock, patch
 
+import jsonschema
 import pytest
 
 from analogcoder.agents.variant_author import VARIANT_AUTHOR_SYSTEM_PROMPT, author_variant
+from analogcoder.schemas import VARIANT_AUTHOR_SCHEMA
 
 # `author_and_verify_variant` (the reject-and-retry loop that actually calls
 # check_structure/reproduce_characteristics) lives in curation.py, not here -
@@ -76,3 +78,45 @@ def test_the_prompt_requires_a_local_modification_that_inherits_sizing():
     assert "LOCAL MODIFICATION" in VARIANT_AUTHOR_SYSTEM_PROMPT
     assert "NOT designing from scratch" in VARIANT_AUTHOR_SYSTEM_PROMPT
     assert "inherit" in VARIANT_AUTHOR_SYSTEM_PROMPT.lower()
+
+
+def test_rationale_is_optional_so_omitting_it_does_not_end_the_run():
+    """I5. `rationale` was `required`, read by nothing (`grep rationale src/`
+    found only the dataclass field - never `_finalize`, `curation.json`,
+    `curation_report.md` or `topology_candidate.py`), and its absence raised
+    a schema-validation AgentExecutionError, which `author_and_verify_variant`
+    treats as terminal INCONCLUSIVE. Measured: a model returning a valid
+    `subckt_body` without `rationale` ended the run on attempt 1 with the
+    retry budget of 3 untouched. CLAUDE.md's weak-model section calls
+    malformed structured output the EXPECTED local-model failure.
+
+    `subckt_body` stays required - it is the entire output.
+
+    Mutation this catches: putting "rationale" back into `required`
+    (observed: `jsonschema.validate` raises
+    `ValidationError: 'rationale' is a required property` and the first
+    assertion below fails)."""
+    assert VARIANT_AUTHOR_SCHEMA["required"] == ["subckt_body"]
+    jsonschema.validate({"subckt_body": "R1 a b 1k\n"}, VARIANT_AUTHOR_SCHEMA)
+    jsonschema.validate({"subckt_body": "R1 a b 1k\n", "rationale": "why"}, VARIANT_AUTHOR_SCHEMA)
+
+    # ... and the body itself is still non-negotiable.
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"rationale": "why"}, VARIANT_AUTHOR_SCHEMA)
+
+
+def test_the_prompt_does_not_claim_the_incumbent_body_passed_a_corner_sweep():
+    """M4. The prompt told the model "the block you are given already works
+    and passed a full corner sweep in this PDK". The pipeline has no way to
+    know that: `verify_corners`' skip message and the report's disclaimer
+    both go out of their way to refuse exactly this claim (corner
+    verification is a property of body x slot, and this pipeline never
+    checked the source deck's history).
+
+    Mutation this catches: restoring "passed a full corner sweep" to
+    VARIANT_AUTHOR_SYSTEM_PROMPT (observed: the first assertion fails)."""
+    assert "passed a full corner sweep" not in VARIANT_AUTHOR_SYSTEM_PROMPT
+    # It may still say what IS known - the body is the slot's sized incumbent.
+    assert "already sized in this PDK" in VARIANT_AUTHOR_SYSTEM_PROMPT
+    # ... and it must not silently drop the honesty, so state the unknown.
+    assert "does NOT know" in VARIANT_AUTHOR_SYSTEM_PROMPT

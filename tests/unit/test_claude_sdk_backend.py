@@ -2,7 +2,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import CLIConnectionError, ResultMessage
 
 from analogcoder.agents.backend import AgentExecutionError, ToolSpec
 from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend, _wrap_tool
@@ -131,3 +131,32 @@ async def test_run_uses_explicitly_configured_model():
         await backend.run("system prompt", "user prompt", {"type": "object"}, [])
 
     assert captured["options"].model == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_is_normalised_to_agent_execution_error():
+    """An error ResultMessage was already normalised; a TRANSPORT failure was
+    not. claude_agent_sdk raises its own hierarchy (CLINotFoundError /
+    CLIConnectionError / ProcessError / CLIJSONDecodeError, all under
+    ClaudeSDKError, which derives straight from Exception), and those escaped
+    this backend unchanged - so callers that key a fallback on
+    AgentExecutionError (the entire point of the AgentBackend interface) did
+    not get one. That is how a curation run whose four stages all passed
+    ended as INCONCLUSIVE.
+
+    Normalising here also keeps the SDK's exception types from leaking past
+    the AgentBackend boundary, which is why agents/curator.py must not import
+    them to catch them itself.
+
+    Mutation this catches: removing the `except ClaudeSDKError` wrapper
+    (observed: `claude_agent_sdk._errors.CLIConnectionError: cli gone`
+    propagates out of run() and pytest.raises(AgentExecutionError) fails)."""
+
+    async def _fake_query_transport_failure(prompt, options):
+        raise CLIConnectionError("cli gone")
+        yield  # pragma: no cover - makes this an async generator
+
+    backend = ClaudeSDKBackend()
+    with patch("analogcoder.agents.backends.claude_sdk.query", _fake_query_transport_failure):
+        with pytest.raises(AgentExecutionError, match="transport failure"):
+            await backend.run("system prompt", "user prompt", {"type": "object"}, [])

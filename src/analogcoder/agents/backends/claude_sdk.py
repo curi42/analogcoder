@@ -1,6 +1,13 @@
 import json
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, create_sdk_mcp_server, query, tool
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKError,
+    ResultMessage,
+    create_sdk_mcp_server,
+    query,
+    tool,
+)
 
 from analogcoder.agents.backend import AgentBackend, AgentExecutionError, ToolSpec
 
@@ -45,12 +52,26 @@ class ClaudeSDKBackend(AgentBackend):
             allowed_tools=allowed_tools,
         )
 
-        async for message in query(prompt=user_prompt, options=options):
-            if isinstance(message, ResultMessage):
-                if message.is_error or message.structured_output is None:
-                    raise AgentExecutionError(
-                        f"agent query failed: subtype={message.subtype} errors={message.errors}"
-                    )
-                return message.structured_output
+        # An error ResultMessage was already normalised to AgentExecutionError;
+        # a TRANSPORT failure was not. claude_agent_sdk raises its own hierarchy
+        # (CLINotFoundError / CLIConnectionError / ProcessError /
+        # CLIJSONDecodeError, all under ClaudeSDKError, which derives straight
+        # from Exception), and those escaped this backend unchanged - so callers
+        # that key a fallback on AgentExecutionError (the whole point of this
+        # interface) did not get one. Normalising here keeps the SDK's exception
+        # types from leaking past the AgentBackend boundary, which is also why
+        # agents/curator.py must not import them to catch them itself.
+        try:
+            async for message in query(prompt=user_prompt, options=options):
+                if isinstance(message, ResultMessage):
+                    if message.is_error or message.structured_output is None:
+                        raise AgentExecutionError(
+                            f"agent query failed: subtype={message.subtype} errors={message.errors}"
+                        )
+                    return message.structured_output
+        except ClaudeSDKError as exc:
+            raise AgentExecutionError(
+                f"claude-agent-sdk transport failure ({type(exc).__name__}): {exc}"
+            ) from exc
 
         raise AgentExecutionError("agent query stream ended without a ResultMessage")

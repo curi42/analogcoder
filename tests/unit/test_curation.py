@@ -2116,3 +2116,268 @@ async def test_the_admitted_candidate_wraps_the_authored_body_not_the_base_body(
     assert result.verdict == "PASS"
     assert result.candidate.subckt_body == "R9 a b 9k\n"
     assert result.candidate.subckt_body != "R5 a b 5k\n"
+
+
+# --- I1: the declared-port reference check applies to ALL THREE sources ------
+#
+# Before this, only source B checked it. Source A copied the `.subckt` header
+# verbatim and source C inherited the slot block's ports verbatim, and source
+# C's docstring justified the omission with a claim that was false: stage 1
+# "already judges port compatibility". It cannot - the ports handed to stage 1
+# ARE the block's own, so `set(topology.ports) <= set(block.ports)` is an
+# identity, `leftover_ports` is empty, and topology_match's floating-net check
+# never runs. The three tests below pin each source, and the fourth pins the
+# consequence that made this worth fixing.
+
+
+# A body whose components never name 'nbias' as a node, inside a block whose
+# header declares it. This is exactly the shape `--technique "remove the
+# cascode"` produces for ncas/pcas.
+DECK_WITH_AN_UNUSED_HEADER_PORT = """* t
+.option scale=1.0u
+.subckt BLOCK a b nbias
+R1 a b 1k
+.ends BLOCK
+Xu1 n1 n2 nb BLOCK
+.end
+"""
+
+
+def test_a_deck_extracted_candidate_with_an_unreferenced_header_port_is_rejected():
+    """Source A. The `.subckt` header declares three ports; the body names
+    only two. Copying the header verbatim would record ports=[a, b, nbias]
+    onto a library entry whose body cannot connect nbias to anything.
+
+    Mutation this catches: deleting the reject_unreferenced_ports call from
+    candidate_from_deck (observed: this test then reports
+    `ports == ['a', 'b', 'nbias']` instead of raising)."""
+    with pytest.raises(ValueError, match="nbias"):
+        candidate_from_deck(DECK_WITH_AN_UNUSED_HEADER_PORT, "BLOCK", "extracted_overstated")
+
+
+def test_an_authored_candidate_with_an_unreferenced_inherited_port_is_rejected():
+    """Source C. The ports are inherited from the slot block, not parsed from
+    the authored body, so nothing else in this factory can notice that the
+    technique removed the only device using one of them.
+
+    Mutation this catches: deleting the reject_unreferenced_ports call from
+    candidate_from_technique (observed: the candidate is then constructed
+    with provenance='authored' and ports=['a', 'b', 'nbias'])."""
+    with pytest.raises(ValueError, match="nbias"):
+        candidate_from_technique(
+            subckt_body="R1 a b 1k\n",
+            ports=["a", "b", "nbias"],
+            assumes_scale=1e-6,
+            topology_id="authored_overstated",
+        )
+
+
+def test_stage_1_cannot_catch_an_overstated_port_list_which_is_why_this_check_exists():
+    """The measured fact that makes source C's old docstring false, pinned
+    directly rather than asserted in prose: hand a candidate the block's own
+    full port list together with a body that uses only some of them, and
+    check_structure PASSES - because leftover_ports is empty, so
+    topology_match's floating-net rule never runs at all.
+
+    This test deliberately constructs the Candidate directly (bypassing the
+    factories, which now refuse it) - the point is what stage 1 does with
+    such an entry once one exists in the library, i.e. forever after a human
+    commits it.
+
+    Mutation this catches: none in the production path - it is a
+    characterisation test. It breaks if topology_match ever gains a rule that
+    would have caught this, at which point the factories' check could be
+    reconsidered rather than silently kept as dead weight."""
+    overstated = Candidate(
+        topology_id="overstated",
+        # Deliberately NOT the block's existing body - an identical one is
+        # rejected by compatible_swaps' own `identical_body` no-op rule, which
+        # would mask the point being made here.
+        subckt_body="R1 a b 1k\nR3 a b 3k\n",
+        ports=["a", "b", "nbias"],
+        assumes_scale=1e-6,
+        provenance="authored",
+    )
+    slot = _dummy_slot("BLOCK")
+    result = check_structure(overstated, slot, {"tb1": DECK_WITH_AN_UNUSED_HEADER_PORT})
+    assert result.status == "pass", result.detail
+
+    # ... whereas the honest port list - what the body actually uses - is the
+    # one the floating-net rule can see, and it rejects, because no other
+    # component in Xu1's scope references net 'nb'.
+    honest = Candidate(
+        topology_id="honest",
+        subckt_body="R1 a b 1k\nR3 a b 3k\n",
+        ports=["a", "b"],
+        assumes_scale=1e-6,
+        provenance="authored",
+    )
+    honest_result = check_structure(honest, slot, {"tb1": DECK_WITH_AN_UNUSED_HEADER_PORT})
+    assert honest_result.status == "fail"
+    assert honest_result.detail["reason"] == "ports"
+    assert "float" in honest_result.detail["detail"]
+
+
+@pytest.mark.asyncio
+async def test_an_authored_body_that_drops_a_port_is_retried_not_ended():
+    """The rejection is a judged fact about THIS attempt's body, so it must
+    return through the retry loop as feedback - the same treatment stage 1
+    and stage 2 rejections get - rather than escaping as a ValueError that
+    cli_curate's guard would convert into INCONCLUSIVE with the retry budget
+    untouched.
+
+    Mutation this catches: removing the `except ValueError` around
+    candidate_from_technique in author_and_verify_variant (observed:
+    `ValueError: declared port(s) ['nbias'] are not referenced ...`
+    propagates out of author_and_verify_variant and the test errors)."""
+    netlist_texts = {"tb1": DECK_WITH_AN_UNUSED_HEADER_PORT}
+    tb = SimpleNamespace(
+        name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[]
+    )
+    spec = SimpleNamespace(testbenches=[tb], all_criteria=[], canonical=tb)
+    slot = Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+
+    responses = [
+        {"subckt_body": "R1 a b 1k\n", "rationale": "dropped the bias device"},
+        {"subckt_body": "R1 a b 1k\nR2 nbias b 2k\n", "rationale": "kept nbias"},
+    ]
+    with patch("analogcoder.curation.author_variant", new=AsyncMock(side_effect=responses)) as mock_author:
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\nR2 nbias b 2k\n",
+            technique="remove the bias device",
+            ports=["a", "b", "nbias"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([{}, {}]),
+            backend=object(),
+        )
+
+    assert mock_author.call_count == 2
+    feedback = mock_author.call_args_list[1].kwargs["rejection_feedback"]
+    assert "nbias" in feedback
+    assert result.verdict == "PASS"
+    assert result.attempts == 2
+
+
+# --- I2: the exhausted-retries REJECT must carry the stages it reached ------
+
+
+@pytest.mark.asyncio
+async def test_exhausting_retries_still_records_the_last_reached_stage_results():
+    """VariantAuthorResult's own docstring promises structure/reproduce hold
+    the last reached attempt's StageResult. The exhausted-retries return
+    hardcoded both to None, so after 3 LLM calls, 3 structure checks and 3
+    simulated stage-2 runs the report's `## Stages` was empty and
+    curation.json's `"stages"` was `[]` - this repo's recurring "checked and
+    fine is indistinguishable from the check is gone" shape.
+
+    Here every attempt passes structure and fails stage 2 on a missing
+    measurement, so BOTH stages were genuinely reached and both must survive
+    into the REJECT.
+
+    Mutation this catches: restoring `structure=None, reproduce=None` on the
+    exhausted-retries return (observed: `assert result.structure is not None`
+    fails with `assert None is not None`)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _variant_slot(criteria)
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "R2 a b 2k\n", "rationale": "why I did it"}),
+    ):
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            # 3 attempts x (candidate deck, baseline deck) = 6 sims, none of
+            # which produce gain_db, so stage 2 fails on `missing` every time.
+            sim_backend=_SequencedBackend([{}] * 6),
+            backend=object(),
+        )
+
+    assert result.verdict == "REJECT"
+    assert result.attempts == MAX_VARIANT_AUTHOR_RETRIES
+    assert result.structure is not None and result.structure.status == "pass"
+    assert result.reproduce is not None and result.reproduce.status == "fail"
+    assert result.reproduce.detail["missing"] == ["gain"]
+    # ... and the rationale of the attempt that produced them is kept too,
+    # rather than discarded (I5's "record it rather than throw it away").
+    assert result.rationale == "why I did it"
+
+
+@pytest.mark.asyncio
+async def test_a_never_reached_stage_stays_none_on_the_exhausted_retries_reject():
+    """The other half of the same distinction, so the fix above cannot be
+    'always report something'. Every attempt is rejected at stage 1, so
+    stage 2 was never reached and must remain None - "this stage passed" and
+    "this stage was never looked at" stay different facts.
+
+    Mutation this catches: setting `reproduce=last_structure` or otherwise
+    fabricating a stage-2 result (observed by mutating the return to
+    `reproduce=last_structure`: `assert result.reproduce is None` fails)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "X1 a b MODELX\n", "rationale": "always bad"}),
+    ):
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([]),
+            backend=object(),
+        )
+
+    assert result.verdict == "REJECT"
+    assert result.structure is not None and result.structure.status == "fail"
+    assert result.reproduce is None
+
+
+# --- M8: source A must not record a scale it cannot see ---------------------
+
+
+def test_extracting_from_a_deck_whose_scale_may_live_in_an_include_is_refused():
+    """`.option scale` inside `pdk_corner.inc` is invisible to parse_netlist,
+    which never follows includes - so recording assumes_scale=1.0 for such a
+    deck is off by 1e6, the exact trap CLAUDE.md already documents for the
+    area gate. Source A is a new entry point to it, and the entry it would
+    write carries the wrong number into the library permanently.
+
+    Refusing is the minimum: the pipeline cannot know the real scale, and
+    guessing 1.0 is the failure mode.
+
+    Mutation this catches: dropping the declares_scale/declares_include guard
+    from candidate_from_deck (observed: no exception, and
+    `candidate.assumes_scale == 1.0`)."""
+    deck = '* t\n.include "pdk_corner.inc"\n.subckt BLOCK a b\nR1 a b 1k\n.ends BLOCK\n.end\n'
+    with pytest.raises(ValueError, match="scale"):
+        candidate_from_deck(deck, "BLOCK", "scale_unknown")
+
+
+def test_a_deck_with_no_includes_at_all_records_scale_1_as_a_fact():
+    """The other side of the same rule: with no includes there is nowhere
+    else for a scale to hide, so 1.0 is parsed fact rather than a default
+    standing in for an unknown. Without this, the guard above could be
+    'widened' into refusing every deck that omits .option scale.
+
+    Mutation this catches: broadening the guard to `if not declares_scale(...)`
+    alone (observed: this test raises ValueError instead of returning)."""
+    deck = "* t\n.subckt BLOCK a b\nR1 a b 1k\n.ends BLOCK\n.end\n"
+    candidate = candidate_from_deck(deck, "BLOCK", "no_includes")
+    assert candidate.assumes_scale == 1.0

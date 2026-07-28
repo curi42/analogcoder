@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from analogcoder.agents.backend import AgentExecutionError
-from analogcoder.agents.curator import render_description
+from analogcoder.agents.curator import DESCRIPTION_FALLBACK_ERRORS, render_description
 from analogcoder.schemas import CURATOR_SCHEMA
 
 
@@ -87,15 +87,81 @@ async def test_an_agent_failure_falls_back_to_a_template():
 
 
 @pytest.mark.asyncio
-async def test_a_bare_exception_other_than_agent_execution_error_is_not_swallowed():
-    """The fallback is deliberately narrow: only AgentExecutionError is a
-    documented 'the LLM did not work' case. A mutation that widens the
-    except clause to a bare Exception would hide unrelated bugs (e.g. a
-    TypeError from a caller passing the wrong facts shape) behind the same
-    silent template fallback."""
+async def test_a_caller_side_type_error_is_still_not_swallowed():
+    """The fallback is broad enough to cover every way a BACKEND can fail
+    (see DESCRIPTION_FALLBACK_ERRORS) and deliberately no broader. TypeError
+    is the shape of a CALLER handing render_description a wrong `facts`
+    structure - a bug in this pipeline, not "the LLM did not work" - and
+    hiding it behind a silent template fallback would make this repo's own
+    defect read as an LLM outage.
+
+    Mutation this catches: widening the except clause to a bare `Exception`
+    (observed: no TypeError is raised, the call returns
+    `('No measured facts were available for this candidate.', 'template')`,
+    and `pytest.raises(TypeError)` fails with DID NOT RAISE)."""
+    assert TypeError not in DESCRIPTION_FALLBACK_ERRORS
     with patch(
         "analogcoder.agents.curator.run_agent",
         new=AsyncMock(side_effect=TypeError("boom")),
     ):
         with pytest.raises(TypeError):
             await render_description({}, backend=object())
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        KeyError("choices"),
+        IndexError("list index out of range"),
+        ValueError("Expecting value: line 1 column 1 (char 0)"),
+        OSError("connection reset by peer"),
+    ],
+    ids=["KeyError", "IndexError", "ValueError", "OSError"],
+)
+@pytest.mark.asyncio
+async def test_a_backend_failure_that_is_not_agent_execution_error_still_falls_back(exc):
+    """I4. `render_description` used to catch AgentExecutionError alone, so
+    any other backend failure escaped and cli_curate's guard turned a run
+    whose FOUR stages all passed into INCONCLUSIVE - the LLM deciding the
+    verdict, which this design forbids outright.
+
+    These four are reachable, not hypothetical:
+      - openai_compatible.py did `response.json()["choices"][0]["message"]`
+        unguarded -> ValueError (json decode) / KeyError / IndexError;
+      - `os.environ[api_key_env]` with the token variable unset -> KeyError;
+      - a low-level socket failure httpx does not wrap -> OSError.
+    (Both backends now normalise their own errors to AgentExecutionError as
+    well - this fallback is the second line of defence, since a THIRD
+    backend can be added without that discipline.)
+
+    Mutation this catches: narrowing DESCRIPTION_FALLBACK_ERRORS back to
+    `(AgentExecutionError,)` (observed: each parametrised case fails with the
+    raw exception propagating out of render_description)."""
+    facts = {"topology_id": "t1", "block_path": "B", "addresses": ["gain"]}
+    with patch("analogcoder.agents.curator.run_agent", new=AsyncMock(side_effect=exc)):
+        text, source = await render_description(facts, backend=object())
+
+    assert source == "template"
+    assert "t1" in text and "gain" in text
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_records_why_it_fell_back(caplog):
+    """A silent fallback makes "the LLM answered" and "the LLM died and we
+    templated over it" indistinguishable in a run log - this repo's recurring
+    failure shape. `description_source` in the artifacts says WHICH path ran;
+    this log line says WHY.
+
+    Mutation this catches: deleting the logger.warning call from the except
+    block (observed: caplog.text is empty and both assertions fail)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="analogcoder.agents.curator"):
+        with patch(
+            "analogcoder.agents.curator.run_agent",
+            new=AsyncMock(side_effect=KeyError("choices")),
+        ):
+            await render_description({"topology_id": "t1"}, backend=object())
+
+    assert "KeyError" in caplog.text
+    assert "template" in caplog.text

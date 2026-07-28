@@ -52,7 +52,21 @@ class OpenAICompatibleBackend(AgentBackend):
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise AgentExecutionError(f"request to {self.base_url} failed: {exc}") from exc
-        return response.json()["choices"][0]["message"]
+        # A backend's contract is that a failure to produce structured output
+        # arrives as AgentExecutionError - callers key their fallbacks on that
+        # one type. This indexing chain used to be unguarded, so a server that
+        # answered 200 with a body that is not JSON, or is JSON without
+        # choices[0].message (an error envelope, a proxy's HTML, a truncated
+        # stream), raised a raw ValueError/KeyError/IndexError/TypeError
+        # straight through the abstraction. curation's description stage then
+        # turned a fully measured ADMIT into INCONCLUSIVE.
+        try:
+            return response.json()["choices"][0]["message"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise AgentExecutionError(
+                f"{self.base_url} returned a response without choices[0].message "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
 
     async def run(
         self, system_prompt: str, user_prompt: str, output_schema: dict, tools: list[ToolSpec]

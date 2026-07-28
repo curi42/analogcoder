@@ -9,6 +9,7 @@ import pytest
 from analogcoder.agents.backend import AgentBackend
 from analogcoder.cli_curate import (
     _parse_knob_names,
+    _stage_fail_reason,
     _validate_source_flags,
     build_arg_parser,
     estimate_curation_cost,
@@ -906,3 +907,63 @@ async def test_a_malformed_knobs_value_ends_as_inconclusive_not_a_crash(tmp_path
         path = out_dir / name
         assert path.exists()
         assert path.stat().st_size > 0
+
+
+# --- I3: a corners REJECT must report the branch that actually failed -------
+
+
+def test_a_corners_rejection_for_a_missing_measurement_names_the_missing_criteria():
+    """`verify_corners` has TWO fail branches - requirement 1 (some criterion
+    produced no measurement at some corner) and requirement 2 (worse at the
+    worst-case corner). `_stage_fail_reason` knew only the second, so a
+    requirement-1 rejection produced
+    `"...worse at worst-case corner on: None"`: it ASSERTS a worst-corner
+    regression that was never measured, names no criterion, and hides that
+    the missing value may have been the INCUMBENT's rather than the
+    candidate's. That string is the report's headline `**Reason:**` and
+    curation.json's `reason`. The `reproduce` branch one line above already
+    reads `missing` correctly, so this was an omission.
+
+    Mutation this catches: deleting the `if missing:` branch from
+    `_stage_fail_reason`'s corners case (observed: the reason becomes
+    `"stage 2.5 (corners) rejected: worse at worst-case corner on: None"`
+    and every assertion below fails)."""
+    stage = StageResult(
+        name="corners",
+        status="fail",
+        detail={
+            "missing": ["gain"],
+            "missing_candidate": [],
+            "missing_baseline": ["gain"],
+            "addresses_compared": 0,
+        },
+    )
+    reason = _stage_fail_reason("corners", stage)
+
+    assert "gain" in reason
+    assert "requirement 1" in reason
+    # It must NOT claim a worst-corner regression that was never measured.
+    assert "worse at worst-case corner" not in reason
+    # ... and it must not hide which SIDE was missing: here the incumbent's.
+    assert "incumbent side: ['gain']" in reason
+
+
+def test_a_corners_rejection_for_a_worst_corner_regression_still_reports_that():
+    """The other branch, so the fix above cannot collapse the two into one
+    message. Requirement 1 passed (no `missing` key at all, exactly as
+    verify_corners' pass-through detail is shaped), and requirement 2 found
+    the candidate worse.
+
+    Mutation this catches: making the corners case unconditionally report
+    requirement 1 (observed: `assert "worse at worst-case corner" in reason`
+    fails)."""
+    stage = StageResult(
+        name="corners",
+        status="fail",
+        detail={"worse": ["phase_margin"], "addresses_compared": 1},
+    )
+    reason = _stage_fail_reason("corners", stage)
+
+    assert "worse at worst-case corner" in reason
+    assert "phase_margin" in reason
+    assert "requirement 1" not in reason
