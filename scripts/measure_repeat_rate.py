@@ -41,7 +41,16 @@ def measure(history_path: Path) -> dict:
         elif step == "verify_pre" and not event["approved"]:
             failed.update(pending.get((event["outer_iter"], event["retry"]), []))
 
-        elif step == "verify_post" and event["recommendation"] == "rollback":
+        # 토폴로지 스왑의 verify_post는 retry가 없고 topology_swap=True를 단다.
+        # 그것을 last_approved(마지막 **파라미터** tuning_proposal)에 접으면
+        # 스왑 롤백이 무관한 파라미터 노브를 failed로 만든다 - 이 저장소가
+        # 반복해서 값을 치른 "조용히 틀린 수" 모양이다. 측정한 세 런에는
+        # 토폴로지 verify_post가 0건이라 공표된 수치는 바뀌지 않는다.
+        elif (
+            step == "verify_post"
+            and not event.get("topology_swap")
+            and event["recommendation"] == "rollback"
+        ):
             failed.update(pending.get(last_approved, []))
 
         elif step == "judge":

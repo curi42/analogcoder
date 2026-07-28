@@ -132,8 +132,10 @@ def test_the_tuner_prompt_presents_past_attempts_as_facts_not_as_a_restriction()
     실측이 있다(TRIMAMP.XRz.l 15->60은 위상 여유 81°->125°, 120에서 다시 무너짐)."""
     prompt = TUNER_SYSTEM_PROMPT.lower()
 
+    # 긍정 단언은 **문단이 존재한다**까지만 건다. 정확한 문장을 고정하면
+    # 측정 문서가 후보로 지목한 절제 실험이 "다른 불변식을 지키려고 쓴
+    # 테스트를 고쳐야만" 가능해진다. 실제 불변식은 아래 banned 목록이다.
     assert "past attempts this run" in prompt
-    assert "you may propose the same component" in prompt
     banned = (
         "do not propose",
         "never propose",
@@ -147,6 +149,20 @@ def test_the_tuner_prompt_presents_past_attempts_as_facts_not_as_a_restriction()
     )
     for phrase in banned:
         assert phrase not in prompt, f"히스토리가 제한으로 서술되었다: {phrase!r}"
+
+
+def test_the_tuner_prompt_says_lines_sharing_an_iteration_prefix_were_applied_together():
+    """어느 변형을 잡는가: 한 제안의 deltas/regressed를 그 제안의 **모든** 변경에
+    복사해 놓고(orchestrator.py의 루프), 렌더러가 변경당 한 줄을 찍는 구현 -
+    3-변경 제안이 "pm +18.4"를 세 줄에 똑같이 남긴다. 공동으로 측정된 사실이
+    노브별로 귀속된 주장으로 읽히는 모양이고, 이 저장소는 그 모양에 이미
+    두 번 값을 치렀다(F2의 agent-declared addresses, 무관용 Pareto).
+    유일한 묶음 신호가 "iter N.R" 접두사이므로, 프롬프트가 그것을 말해야 한다."""
+    prompt = TUNER_SYSTEM_PROMPT.lower()
+
+    assert "iter n.r" in prompt
+    assert "together" in prompt
+    assert "not of the individual line" in prompt
 
 
 @pytest.mark.asyncio
