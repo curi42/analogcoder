@@ -92,4 +92,4 @@ def test_the_renderer_keeps_the_most_recent_attempts_and_says_how_many_it_droppe
 
     assert "R0 " not in text
     assert f"R{ATTEMPT_RENDER_LIMIT + 4} " in text
-    assert "5" in text and "omitted" in text
+    assert "(5 earlier attempt(s) omitted" in text
