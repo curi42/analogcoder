@@ -57,7 +57,7 @@ Respond via the structured output schema."""
 async def propose_tuning(
     structure_view: str,
     judge_result: dict,
-    history: list[dict],
+    attempts_view: str,
     rejection_feedback: str | None,
     netlist_text: str,
     backend: AgentBackend,
@@ -66,7 +66,7 @@ async def propose_tuning(
         f"Current netlist:\n{netlist_text}\n"
         f"Circuit structure (derived deterministically): {structure_view}\n"
         f"Judge result: {judge_result}\n"
-        f"Past attempts this run: {history}\n"
+        f"{attempts_view}\n"
         f"Rejection feedback (if retrying): {rejection_feedback}"
     )
     return await run_agent(

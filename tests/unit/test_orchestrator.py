@@ -1711,3 +1711,77 @@ async def test_area_check_event_records_what_the_gate_could_see(tmp_path):
     assert area_events
     assert all(e["approved"] is True for e in area_events)
     assert all(e["states"] == {"xwrap1.wn": "blind"} for e in area_events)
+
+
+TWO_CRITERION_BEFORE = {
+    "overall_pass": False,
+    "criteria": [
+        {"name": "pm", "target": ">=60", "actual": 50.0, "pass": False, "margin": -10.0},
+        {"name": "ugbw", "target": ">=1e6", "actual": 2e6, "pass": True, "margin": 1e6},
+    ],
+}
+TWO_CRITERION_AFTER = {
+    "overall_pass": False,
+    "criteria": [
+        {"name": "pm", "target": ">=60", "actual": 58.0, "pass": False, "margin": -2.0},
+        {"name": "ugbw", "target": ">=1e6", "actual": 0.5e6, "pass": False, "margin": -0.5e6},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_attempt_carries_its_measured_deltas_to_the_next_proposal(tmp_path):
+    """어느 변형을 잡는가: 히스토리에 recommendation만 남기는 원래 구현.
+    "롤백됨"만으로는 무엇이 얼마나 움직였는지 알 수 없고, 그 숫자는
+    new_judge_result 안에 이미 있다. verify_post의 regressed_criteria를
+    일부러 비워 둔 것도 변형 탐지다 - 회귀가 거기서 온다면 이 테스트가 통과할
+    수 없다."""
+    seen = []
+    calls = {"n": 0}
+
+    async def judge(measurements, spec):
+        calls["n"] += 1
+        return TWO_CRITERION_BEFORE if calls["n"] == 1 else TWO_CRITERION_AFTER
+
+    async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
+        seen.append(attempts_view)
+        return FAKE_PROPOSAL
+
+    async def rollback_verify_post(prev_judge, new_judge, applied_changes):
+        return {
+            "improved": False,
+            "regressed_criteria": [],  # 비워 둔다 - 우리는 이것을 쓰지 않는다
+            "recommendation": "rollback",
+            "feedback": "regressed",
+        }
+
+    agents = make_agents(judge=judge, tune=tune, verify_post=rollback_verify_post)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert seen[0] == ""                  # 첫 제안에는 히스토리가 없다
+    assert "rolled_back" in seen[1]
+    assert "pm +8" in seen[1]             # 측정된 델타
+    assert "ugbw -1.5e+06" in seen[1]
+    assert "regressed [ugbw]" in seen[1]  # verify_post가 아니라 judge에서 나온 회귀
+
+
+@pytest.mark.asyncio
+async def test_the_attempt_log_event_is_written_even_before_any_attempt_exists(tmp_path):
+    """어느 변형을 잡는가: 항목이 있을 때만 로그를 남기는 구현.
+    "기록했고 0건"과 "기록 자체가 사라졌다"가 history.jsonl에서 구별되어야
+    한다 - 이 저장소에서 조용히 무력해진 게이트가 아홉 번 나왔고, 그 중 여섯
+    번은 실행 로그로 알아챌 수 없었다."""
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    logs = [e for e in events if e["step"] == "attempt_log"]
+
+    assert logs, "attempt_log가 하나도 없다"
+    assert logs[0]["total"] == 0
+    assert logs[0]["rendered"] == 0
+    assert logs[0]["dropped"] == 0

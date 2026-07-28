@@ -59,7 +59,7 @@ async def test_propose_tuning_includes_history_and_rejection_feedback_in_prompt(
         result = await propose_tuning(
             structure_view="circuit: inverting amplifier\n\nblocks:\n",
             judge_result={"overall_pass": False},
-            history=[{"outer_iter": 1, "recommendation": "rollback"}],
+            attempts_view="Past attempts this run:\n  iter 1.1  Rf value  10k -> 11k  rollback",
             rejection_feedback="last proposal changed a fixed component",
             netlist_text="Rin in vminus 1k\nRf vminus vout 10k\n.end\n",
             backend=fake_backend,

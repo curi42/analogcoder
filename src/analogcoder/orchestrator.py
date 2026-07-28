@@ -3,6 +3,7 @@ from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area_limits import evaluate_area_growth, index_baseline_components
+from analogcoder.attempt_log import ATTEMPT_RENDER_LIMIT, Attempt, deltas_between, regressed_between, render_attempts
 from analogcoder.control_block import measurement_nets
 from analogcoder.netlist import (
     apply_changes,
@@ -66,6 +67,13 @@ def _final_result(
 
 def _apply_to_all(netlist_texts: dict[str, str], changes: list[dict]) -> dict[str, str]:
     return {name: apply_changes(text, changes) for name, text in netlist_texts.items()}
+
+
+def _outcome_counts(attempts: list[Attempt]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for attempt in attempts:
+        counts[attempt.outcome] = counts.get(attempt.outcome, 0) + 1
+    return counts
 
 
 def _candidate_pairs(candidates: list[SwapCandidate]) -> list[tuple[str, str]]:
@@ -150,7 +158,7 @@ async def run_orchestration(
         # rest of the run. This is by-design, not a bug - do not "fix" it.
         baseline_components = index_baseline_components(initial_netlist_texts[canonical_name])
 
-        tuning_history: list[dict] = []
+        tuning_history: list[Attempt] = []
 
         # criterion 이름 -> measurement 이름 -> 그 measurement가 보는 넷 집합,
         # 두 단계로 실패 넷을 찾기 위한 매핑. spec의 criteria/control_block에서만
@@ -200,11 +208,7 @@ async def run_orchestration(
                 measurement = measurement_by_criterion.get(criterion["name"])
                 failing_nets |= nets_by_measurement.get(measurement, set())
 
-            touched_refdes = {
-                change["refdes"]
-                for entry in tuning_history
-                for change in entry["proposal"]["proposed_changes"]
-            }
+            touched_refdes = {attempt.refdes for attempt in tuning_history}
             focus = select_focus(
                 structure, paths, failing_nets, touched_refdes, netlist_texts[canonical_name]
             )
@@ -438,11 +442,27 @@ async def run_orchestration(
                         continue
 
             approved_proposal = None
+            approved_retry = 0
             rejection_feedback = None
             verify_pre_rejected_any = False
             for retry in range(1, MAX_TUNING_RETRIES + 1):
+                attempts_view = render_attempts(tuning_history)
+                rendered = len(tuning_history[-ATTEMPT_RENDER_LIMIT:])
+                # 무조건 남긴다. 항목이 0건인 iteration에도 남겨야
+                # "기록했고 0건"과 "기록이 사라졌다"가 구별된다.
+                state.log_event(
+                    "attempt_log",
+                    {
+                        "outer_iter": outer_iter,
+                        "retry": retry,
+                        "total": len(tuning_history),
+                        "by_outcome": _outcome_counts(tuning_history),
+                        "rendered": rendered,
+                        "dropped": len(tuning_history) - rendered,
+                    },
+                )
                 proposal = await agents.tune(
-                    structure_view, judge_result, tuning_history, rejection_feedback, netlist_view
+                    structure_view, judge_result, attempts_view, rejection_feedback, netlist_view
                 )
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
 
@@ -538,6 +558,7 @@ async def run_orchestration(
 
                 if review["approved"]:
                     approved_proposal = proposal
+                    approved_retry = retry
                     break
                 verify_pre_rejected_any = True
                 rejection_feedback = review["feedback"]
@@ -566,11 +587,23 @@ async def run_orchestration(
             )
             state.log_event("verify_post", {"outer_iter": outer_iter, **post_review})
 
-            tuning_history.append({
-                "outer_iter": outer_iter,
-                "proposal": approved_proposal,
-                "recommendation": post_review["recommendation"],
-            })
+            outcome = "rolled_back" if post_review["recommendation"] == "rollback" else "kept"
+            deltas = deltas_between(judge_result, new_judge_result)
+            regressed = regressed_between(judge_result, new_judge_result)
+            for change in approved_proposal["proposed_changes"]:
+                tuning_history.append(
+                    Attempt(
+                        outer_iter=outer_iter,
+                        retry=approved_retry,
+                        refdes=change["refdes"],
+                        param=change["param"],
+                        old_value=change["old_value"],
+                        new_value=change["new_value"],
+                        outcome=outcome,
+                        deltas=deltas,
+                        regressed=regressed,
+                    )
+                )
 
             if post_review["recommendation"] == "rollback":
                 state.rollback()
