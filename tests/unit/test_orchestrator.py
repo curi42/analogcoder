@@ -50,12 +50,109 @@ AREA_TEST_NETLIST = (
     "M6 vout outA vss vss NMOSG W=40u L=1u\n"
     ".end\n"
 )
+# M6 (ctype 'M', model NMOSG, unit-suffixed "40u") isn't a candidate for any
+# library topology: NMOSG is a model no library body instantiates
+# (compatible_swaps rejects every pair on "models"), and this fixture also
+# declares no `.option scale`, which the topologies require to be 1e-6 for
+# "scale" too. Both a real .option scale and a device the library's models
+# check can see are needed for a swap to ever trigger - but simply adding
+# `.option scale=1.0u` next to M6's own unit-suffixed "40u" would double the
+# deck's scale into M6's tiering (geometry_scale multiplies every component's
+# baseline value, not just bare-numeral sky130 primitives - see the
+# `.option scale` gotcha in CLAUDE.md), silently loosening its tier and
+# breaking the area-rejection this test needs. So the oversized device is
+# rewritten in the same X-prefixed, bare-geometry sky130 style the library
+# itself uses (Xm6, W=40 with no unit suffix) rather than kept as a generic
+# M-refdes device once scale is declared; Xp1/Xcc make AMP model-compatible
+# with both miller variants.
 AREA_TEST_NETLIST_WITH_SUBCKT = (
     "* test\n"
+    ".option scale=1.0u\n"
     ".subckt AMP vinp vinn vout vdd vss\n"
-    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    "Xm6 vout outA vss vss sky130_fd_pr__nfet_01v8 L=1 W=40\n"
+    "Xp1 vout vinp vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=8\n"
+    "Xcc vout 0 sky130_fd_pr__cap_mim_m3_1 w=6 l=6 mf=1\n"
     ".ends AMP\n"
     "Xamp1 vinp vinn vout vdd vss AMP\n"
+    ".end\n"
+)
+NINE_PORTS = "vinp vinn vout vdd vss nbias ncas pbias pcas"
+# A generic body that instantiates the same three sky130 model families the
+# folded-cascode topologies need (nfet/pfet/res_high_po), but with a
+# component sequence that matches neither library body - so compatible_swaps
+# never rejects it as identical_body. Ports match the folded-cascode
+# topologies' 9-port interface exactly; the two miller variants (5 ports)
+# are rejected on "ports" for this shape.
+GENERIC_9PORT_SWAPPABLE_BODY = (
+    "Xn1 vout nbias vss vss sky130_fd_pr__nfet_01v8 L=1 W=8\n"
+    "Xp1 vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=8\n"
+    "XRz vout ncas 0 sky130_fd_pr__res_high_po w=1 l=15\n"
+)
+MULTI_BLOCK_9PORT_NETLIST = (
+    "* two 9-port blocks - today impossible to swap at all (len(subckts) == 1)\n"
+    ".option scale=1.0u\n"
+    f".subckt BLOCK1 {NINE_PORTS}\n"
+    f"{GENERIC_9PORT_SWAPPABLE_BODY}"
+    ".ends BLOCK1\n"
+    f".subckt BLOCK2 {NINE_PORTS}\n"
+    f"{GENERIC_9PORT_SWAPPABLE_BODY}"
+    ".ends BLOCK2\n"
+    f"Xb1 {NINE_PORTS} BLOCK1\n"
+    "Xb2 vinp2 vinn2 vout2 vdd vss nbias ncas pbias pcas BLOCK2\n"
+    "Rf vminus vout 10k\n"
+    ".end\n"
+)
+# A single 5-port block whose body instantiates the three sky130 model
+# families both miller variants need, but isn't textually identical to
+# either body - so both miller_basic and miller_nulling_resistor are real
+# candidates (the two 9-port folded-cascode topologies are rejected on
+# "ports" for a 5-port block).
+GENERIC_5PORT_SWAPPABLE_BODY = (
+    "Xn1 vout vinn vss vss sky130_fd_pr__nfet_01v8 L=1 W=8\n"
+    "Xp1 vout vinp vdd vdd sky130_fd_pr__pfet_01v8 L=1 W=8\n"
+    "Xcc vout 0 sky130_fd_pr__cap_mim_m3_1 w=6 l=6 mf=1\n"
+)
+GENERIC_5PORT_SWAPPABLE_NETLIST = (
+    "* one 5-port block compatible with both miller variants\n"
+    ".option scale=1.0u\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    f"{GENERIC_5PORT_SWAPPABLE_BODY}"
+    ".ends AMP\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    "Rf vminus vout 10k\n"
+    ".end\n"
+)
+# Two 5-port blocks, both compatible with both miller variants - so an
+# omitted block_path naming only a topology_id (not a specific block) is
+# genuinely ambiguous between AMP1 and AMP2.
+TWO_BLOCK_5PORT_SWAPPABLE_NETLIST = (
+    "* two 5-port blocks, both compatible with both miller variants\n"
+    ".option scale=1.0u\n"
+    ".subckt AMP1 vinp vinn vout vdd vss\n"
+    f"{GENERIC_5PORT_SWAPPABLE_BODY}"
+    ".ends AMP1\n"
+    ".subckt AMP2 vinp vinn vout vdd vss\n"
+    f"{GENERIC_5PORT_SWAPPABLE_BODY}"
+    ".ends AMP2\n"
+    "Xamp1 vinp vinn vout vdd vss AMP1\n"
+    "Xamp2 vinp2 vinn2 vout2 vdd vss AMP2\n"
+    "Rf vminus vout 10k\n"
+    ".end\n"
+)
+# AMP is swappable; OTHER carries a resistor (Rx) that a normal
+# parameter-tuning proposal can independently tune and keep, unrelated to any
+# topology in the library.
+TARGET_PLUS_OTHER_NETLIST = (
+    "* AMP is swappable; OTHER carries a separately-tunable resistor\n"
+    ".option scale=1.0u\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    f"{GENERIC_5PORT_SWAPPABLE_BODY}"
+    ".ends AMP\n"
+    ".subckt OTHER a b\n"
+    "Rx a b 1k\n"
+    ".ends OTHER\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    "Xother1 n1 n2 OTHER\n"
     ".end\n"
 )
 
@@ -76,7 +173,7 @@ def make_agents(**overrides):
     async def default_verify_post(prev_judge, new_judge, applied_changes):
         return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "ok"}
 
-    async def default_propose_topology(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def default_propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
         return FAKE_TOPOLOGY_PROPOSAL
 
     defaults = dict(
@@ -219,32 +316,15 @@ async def test_agent_execution_error_mid_loop_reports_last_completed_iteration(t
 
 
 @pytest.mark.asyncio
-async def test_topology_swap_never_offered_without_exactly_one_subckt(tmp_path):
-    propose_topology_calls = {"count": 0}
-
-    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
-        propose_topology_calls["count"] += 1
-        return FAKE_TOPOLOGY_PROPOSAL
-
-    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
-        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
-
-    agents = make_agents(
-        judge=lambda m, s: _async(FAIL_JUDGE),
-        verify_post=verify_post_always_rollback,
-        propose_topology=propose_topology_spy,
-    )
-    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
-
-    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
-
-    assert result["status"] == "FAIL"
-    assert result["failure_reason"] == "max iterations reached"
-    assert propose_topology_calls["count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_path):
+async def test_a_multi_block_deck_can_now_swap(tmp_path):
+    """Today this is structurally impossible - the old gate was
+    len(subckts) == 1, and this deck has two. compatible_swaps replaces that
+    structural precondition with a per-(block, topology) applicability check,
+    so a two-block deck must still be able to swap after enough consecutive
+    rollbacks. Reverting to the old len(subckts) == 1 gate makes
+    propose_topology never get called on this fixture, so the run never
+    swaps and just exhausts max iterations instead of reaching PASS - that
+    is the mutation this test catches."""
     judge_calls = {"count": 0}
 
     async def judge_sequence(measurements, spec):
@@ -261,32 +341,326 @@ async def test_topology_swap_triggers_after_threshold_consecutive_rollbacks(tmp_
 
     propose_topology_calls = []
 
-    async def propose_topology(structure_view, judge_result, available_topologies, rejection_feedback):
-        propose_topology_calls.append([t.id for t in available_topologies])
-        return {"topology_id": available_topologies[0].id, "reasoning": "matches phase margin gap", "confidence": 90}
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        propose_topology_calls.append(candidates)
+        chosen = candidates[0]
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 90,
+        }
 
     agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": MULTI_BLOCK_9PORT_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "PASS"
-    assert result["iterations_used"] == 4
     assert len(propose_topology_calls) == 1
-    # 오케스트레이터는 아직 포트 적합성으로 후보를 거르지 않는다 (그 필터링은
-    # 이 서브프로젝트의 다른 태스크) - 시도하지 않은 라이브러리 항목 전체가 넘어온다.
-    assert set(propose_topology_calls[0]) == {
-        "miller_basic",
-        "miller_nulling_resistor",
-        "folded_cascode_nmos_in_cs",
-        "folded_cascode_pmos_in_cs",
-    }
-    assert len(state.netlist_versions["ac_loop_gain"]) == 2  # v0 initial + v1 after the kept topology swap
+    assert propose_topology_calls[0]  # a non-empty candidate list actually reached the agent
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    assert swap_events[0]["block_path"] in {"BLOCK1", "BLOCK2"}
+
+
+@pytest.mark.asyncio
+async def test_no_compatible_candidate_logs_topology_unavailable_and_stays_in_parameter_mode(tmp_path):
+    # SUBCKT_NETLIST's AMP body is plain generic resistors - it instantiates
+    # no model the library's topologies need, so compatible_swaps rejects
+    # every (block, topology) pair on "models" and offers zero candidates.
+    # Today's equivalent of "library exhausted": log it and keep tuning
+    # parameters rather than dead-ending the run.
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_spy(structure_view, judge_result, candidates, library, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        return FAKE_TOPOLOGY_PROPOSAL
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_spy,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    assert propose_topology_calls["count"] == 0
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    candidates_events = [e for e in events if e["step"] == "topology_candidates"]
+    unavailable_events = [e for e in events if e["step"] == "topology_unavailable"]
+    assert candidates_events
+    assert all(e["candidates"] == [] for e in candidates_events)
+    assert all(e["rejections"] for e in candidates_events)  # rejections recorded, not just silence
+    assert unavailable_events
+    assert len(candidates_events) == len(unavailable_events)
+
+
+@pytest.mark.asyncio
+async def test_topology_candidates_is_logged_even_when_a_swap_is_approved(tmp_path):
+    """Catches a mutation that makes topology_candidates conditional (e.g.
+    logging it only when there are zero candidates, or only inside a
+    rejection retry) - the event must be unconditional, so it must still
+    appear even when a candidate is offered AND resolved on the very first
+    try AND the swap is ultimately kept."""
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        chosen = candidates[0]
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    events = [json.loads(line) for line in open(state.history_path)]
+    candidates_events = [e for e in events if e["step"] == "topology_candidates"]
+    assert len(candidates_events) == 1
+    assert candidates_events[0]["candidates"]  # non-empty, and logged despite the approved swap
+
+
+@pytest.mark.asyncio
+async def test_an_omitted_block_path_resolves_when_only_one_block_is_a_candidate(tmp_path):
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology_without_block_path(structure_view, judge_result, candidates, library, rejection_feedback):
+        # Deliberately omits "block_path" - TOPOLOGY_SCHEMA allows it, and
+        # GENERIC_5PORT_SWAPPABLE_NETLIST has exactly one block (AMP), so
+        # "miller_nulling_resistor" identifies exactly one candidate.
+        return {"topology_id": "miller_nulling_resistor", "reasoning": "x", "confidence": 90}
+
+    agents = make_agents(
+        judge=judge_sequence, verify_post=verify_post_sequence,
+        propose_topology=propose_topology_without_block_path,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    assert swap_events[0]["block_path"] == "AMP"
+    assert swap_events[0]["topology_id"] == "miller_nulling_resistor"
+
+
+@pytest.mark.asyncio
+async def test_an_omitted_block_path_with_two_candidate_blocks_retries_with_feedback(tmp_path):
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    proposal_calls = []
+
+    async def propose_topology_ambiguous_then_specific(structure_view, judge_result, candidates, library, rejection_feedback):
+        proposal_calls.append(rejection_feedback)
+        if len(proposal_calls) == 1:
+            # TWO_BLOCK_5PORT_SWAPPABLE_NETLIST has AMP1 and AMP2, both
+            # compatible with miller_nulling_resistor - omitting block_path
+            # here is genuinely ambiguous.
+            return {"topology_id": "miller_nulling_resistor", "reasoning": "x", "confidence": 90}
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP2",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(
+        judge=judge_sequence, verify_post=verify_post_sequence,
+        propose_topology=propose_topology_ambiguous_then_specific,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": TWO_BLOCK_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert len(proposal_calls) == 2
+    assert proposal_calls[0] is None  # first attempt, no feedback yet
+    assert proposal_calls[1] is not None
+    assert "AMP1" in proposal_calls[1] and "AMP2" in proposal_calls[1]
+    assert result["status"] == "PASS"
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    assert swap_events[0]["block_path"] == "AMP2"
+
+
+@pytest.mark.asyncio
+async def test_a_swap_replaces_only_the_target_block_and_keeps_other_blocks_tuning(tmp_path):
+    """A kept parameter-tuning change to an unrelated block (OTHER.Rx) must
+    survive a later topology swap of a different block (AMP) - the swap
+    rewrites only the block it targets, never the whole deck. A mutation
+    that swaps the whole deck (e.g. re-parsing and replacing everything
+    rather than just the addressed block) would lose OTHER's kept 1k -> 2k
+    change - that is the mutation this test catches."""
+    tune_calls = {"count": 0}
+
+    async def tune_then_repeat(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        tune_calls["count"] += 1
+        if tune_calls["count"] == 1:
+            return {
+                "proposed_changes": [
+                    {"refdes": "Rx", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"}
+                ],
+                "overall_reasoning": "x", "confidence": 90,
+            }
+        # A safe shrink (never an area-tier violation, unlike a further
+        # growth from the already-at-tier-boundary 2k) so this reaches
+        # verify_post every time instead of being rejected earlier by the
+        # area gate - the point of these repeats is to accumulate rollbacks
+        # through verify_post, not through a different gate.
+        return {
+            "proposed_changes": [
+                {"refdes": "Rx", "param": "value", "old_value": "2k", "new_value": "1.9k", "reasoning": "x"}
+            ],
+            "overall_reasoning": "x", "confidence": 90,
+        }
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] == 1:
+            return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "ok"}
+        if verify_post_calls["count"] <= 4:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 10 else FAIL_JUDGE
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        # Pick miller_nulling_resistor specifically (not just "the first AMP
+        # candidate") so the final assert below can look for something (Rz)
+        # that only that topology's body introduces.
+        assert any(
+            c.block_path == "AMP" and c.topology_id == "miller_nulling_resistor" for c in candidates
+        )
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(
+        tune=tune_then_repeat, verify_post=verify_post_sequence,
+        judge=judge_sequence, propose_topology=propose_topology,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": TARGET_PLUS_OTHER_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    final_text = state.current_netlist_texts()["ac_loop_gain"]
+    assert "Rx a b 2k" in final_text  # OTHER's earlier kept tuning survives the AMP swap
+    # The swap itself must also have been kept (not rolled back) for this to
+    # actually exercise "swap + unrelated earlier tuning coexist" - Rz only
+    # exists in miller_nulling_resistor's body, never in AMP's original one.
+    assert "Rz" in final_text
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    assert swap_events[0]["block_path"] == "AMP"
+
+
+@pytest.mark.asyncio
+async def test_the_swap_event_records_which_refdes_the_area_gate_can_no_longer_bound(tmp_path):
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    unconstrained = set(swap_events[0]["unconstrained_refdes"])
+    # GENERIC_5PORT_SWAPPABLE_BODY's Xn1/Xcc happen to share a refdes with two
+    # of miller_nulling_resistor's own components, so those two keep a
+    # (now-stale) baseline entry; everything else the new topology
+    # introduces has never been indexed and is genuinely unconstrained.
+    assert "Xn1" not in unconstrained
+    assert "Xcc" not in unconstrained
+    assert {"Rz", "Xp3", "Xp4", "Xn2"} <= unconstrained
 
 
 @pytest.mark.asyncio
 async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
-    async def always_bad_topology(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def always_bad_topology(structure_view, judge_result, candidates, library, rejection_feedback):
         return {"topology_id": "not_a_real_topology", "reasoning": "x", "confidence": 50}
 
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
@@ -299,7 +673,7 @@ async def test_topology_swap_repeatedly_invalid_id_fails_run(tmp_path):
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "topology proposal repeatedly rejected"
@@ -310,18 +684,22 @@ async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollbac
     # A rollback of a swap resets consecutive_rollbacks to 0 (not to a
     # "swap already tried" state), so parameter tuning resumes and can drive
     # a second swap threshold later in the same run - and the second attempt
-    # must pick from the topologies not yet tried. This used to be entangled
-    # with an analyze-call-count assertion; that part no longer applies now
-    # that structure derivation isn't an LLM call, but the "can recur with a
-    # different topology" behavior itself still needs coverage.
+    # must pick from the (block, topology) pairs not yet tried. This used to
+    # be entangled with an analyze-call-count assertion; that part no longer
+    # applies now that structure derivation isn't an LLM call, but the "can
+    # recur with a different topology" behavior itself still needs coverage.
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
         return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
 
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_once(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_once(structure_view, judge_result, candidates, library, rejection_feedback):
         propose_topology_calls["count"] += 1
-        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+        chosen = candidates[0]
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 80,
+        }
 
     agents = make_agents(
         judge=lambda m, s: _async(FAIL_JUDGE),
@@ -330,7 +708,7 @@ async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollbac
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -407,7 +785,7 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
     async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return {
             "proposed_changes": [
-                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
+                {"refdes": "Xm6", "param": "W", "old_value": "40", "new_value": "100", "reasoning": "x"}
             ],
             "overall_reasoning": "x",
             "confidence": 90,
@@ -415,9 +793,10 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
 
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_spy(structure_view, judge_result, candidates, library, rejection_feedback):
         propose_topology_calls["count"] += 1
-        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+        chosen = candidates[0]
+        return {"topology_id": chosen.topology_id, "block_path": chosen.block_path, "reasoning": "x", "confidence": 80}
 
     agents = make_agents(
         judge=lambda m, s: _async(FAIL_JUDGE),
@@ -625,17 +1004,19 @@ async def test_an_inapplicable_param_is_rejected_before_verify_pre_is_called(tmp
         return {"proposed_changes": [{"refdes": "Rf", "param": "width",
                                       "old_value": "10k", "new_value": "15k"}]}
 
-    # SUBCKT_NETLIST (a single subckt) rather than BASE_NETLIST: this also
-    # exercises that a param_check rejection that repeats every retry - like
-    # the area gate's identical shape - still escalates into a topology-swap
-    # attempt after enough consecutive rollbacks, rather than only ever
-    # reaching "tuning proposal repeatedly rejected". propose_topology_spy
-    # mirrors test_area_rejection_eventually_triggers_topology_swap.
+    # GENERIC_5PORT_SWAPPABLE_NETLIST (a single, library-compatible subckt)
+    # rather than BASE_NETLIST: this also exercises that a param_check
+    # rejection that repeats every retry - like the area gate's identical
+    # shape - still escalates into a topology-swap attempt after enough
+    # consecutive rollbacks, rather than only ever reaching "tuning proposal
+    # repeatedly rejected". propose_topology_spy mirrors
+    # test_area_rejection_eventually_triggers_topology_swap.
     propose_topology_calls = {"count": 0}
 
-    async def propose_topology_spy(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_spy(structure_view, judge_result, candidates, library, rejection_feedback):
         propose_topology_calls["count"] += 1
-        return {"topology_id": available_topologies[0].id, "reasoning": "x", "confidence": 80}
+        chosen = candidates[0]
+        return {"topology_id": chosen.topology_id, "block_path": chosen.block_path, "reasoning": "x", "confidence": 80}
 
     agents = make_agents(
         tune=bad_tune,
@@ -645,7 +1026,7 @@ async def test_an_inapplicable_param_is_rejected_before_verify_pre_is_called(tmp
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+    await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert verify_pre_calls["count"] == 0
     events = [json.loads(line) for line in open(state.history_path)]

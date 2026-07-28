@@ -19,6 +19,7 @@ from analogcoder.state import RunState
 from analogcoder.structure import derive_structure
 from analogcoder.structure_view import focus_misses, render_netlist, render_structure, select_focus
 from analogcoder.topologies import TOPOLOGY_LIBRARY
+from analogcoder.topology_match import SwapCandidate, compatible_swaps
 
 MAX_OUTER_ITERATIONS = 10
 MAX_TUNING_RETRIES = 3
@@ -54,6 +55,48 @@ def _apply_to_all(netlist_texts: dict[str, str], changes: list[dict]) -> dict[st
     return {name: apply_changes(text, changes) for name, text in netlist_texts.items()}
 
 
+def _candidate_pairs(candidates: list[SwapCandidate]) -> list[tuple[str, str]]:
+    return sorted((c.block_path, c.topology_id) for c in candidates)
+
+
+def _resolve_swap_target(
+    proposal: dict, candidates: list[SwapCandidate]
+) -> tuple[SwapCandidate | None, str | None]:
+    """Resolve the tuner's (topology_id, optional block_path) response against
+    the candidate list the orchestrator actually offered it - never against
+    the full library, and never by guessing a block the deck may not even
+    have when there is more than one plausible one.
+
+    - block_path present: it must name an exact (block_path, topology_id)
+      pair already in `candidates`.
+    - block_path omitted: resolves only when exactly one candidate carries
+      that topology_id. Zero or more than one is ambiguous and must be
+      retried with feedback listing every candidate pair, not guessed at.
+    """
+    topology_id = proposal["topology_id"]
+    block_path = proposal.get("block_path") or None
+    pairs = _candidate_pairs(candidates)
+
+    if block_path is not None:
+        for candidate in candidates:
+            if candidate.block_path == block_path and candidate.topology_id == topology_id:
+                return candidate, None
+        return None, (
+            f"'{block_path}'/'{topology_id}' is not an available (block_path, topology_id) "
+            f"candidate. Choose one of: {pairs}"
+        )
+
+    matches = [c for c in candidates if c.topology_id == topology_id]
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, f"'{topology_id}' is not an available candidate topology. Choose one of: {pairs}"
+    return None, (
+        f"'{topology_id}' matches more than one candidate block "
+        f"({sorted(c.block_path for c in matches)}); specify block_path. Choose one of: {pairs}"
+    )
+
+
 async def run_orchestration(
     initial_netlist_texts: dict[str, str], spec, state: RunState, agents: OrchestratorAgents
 ) -> dict:
@@ -63,8 +106,13 @@ async def run_orchestration(
     judge_result: dict = {}
 
     try:
-        topology_swap_available = len(parse_netlist(initial_netlist_texts[canonical_name]).subckts) == 1
-        tried_topologies: set[str] = set()
+        # No structural precondition on the deck (no more len(subckts) == 1
+        # gate) - every iteration compatible_swaps() decides, from parsed
+        # facts (ports/models/scale/no-op), which (block, topology) pairs are
+        # actually safe to offer. A pair is a tuple, not a bare topology id,
+        # because the same topology can legitimately be tried again against a
+        # different block once the first attempt is tried-and-exhausted.
+        tried_topologies: set[tuple[str, str]] = set()
         consecutive_rollbacks = 0
         # Intentionally computed once from netlist_v0 and never refreshed after a
         # topology swap: components introduced by a swapped-in topology (e.g. a
@@ -141,76 +189,128 @@ async def run_orchestration(
                 },
             )
 
-            untried_topologies = (
-                [t for t in TOPOLOGY_LIBRARY.values() if t.id not in tried_topologies]
-                if topology_swap_available and consecutive_rollbacks >= TOPOLOGY_SWITCH_THRESHOLD
-                else []
-            )
-
-            if untried_topologies:
-                topology_id = None
-                rejection_feedback = None
-                for retry in range(1, MAX_TUNING_RETRIES + 1):
-                    proposal = await agents.propose_topology(
-                        structure_view, judge_result, untried_topologies, rejection_feedback
-                    )
-                    state.log_event("topology_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
-
-                    candidate = proposal["topology_id"]
-                    if candidate in TOPOLOGY_LIBRARY and candidate not in tried_topologies:
-                        topology_id = candidate
-                        break
-                    rejection_feedback = (
-                        f"'{candidate}' is not an available untried topology. "
-                        f"Choose one of: {[t.id for t in untried_topologies]}"
-                    )
-
-                if topology_id is None:
-                    return _final_result(
-                        "FAIL", state, outer_iter, judge_result,
-                        failure_reason="topology proposal repeatedly rejected",
-                    )
-
-                tried_topologies.add(topology_id)
-                topology = TOPOLOGY_LIBRARY[topology_id]
-                subckt_name = next(iter(parse_netlist(netlist_texts[canonical_name]).subckts))
-                # Replaces the whole subckt body with the library's fixed defaults, so any
-                # parameter-tuning changes made earlier in the run (before the rollback streak
-                # that triggered this swap) are silently discarded, not carried forward. This is
-                # intentional: the new topology's own defaults are what was verified to work.
-                new_netlist_texts = {
-                    name: apply_topology_swap(text, subckt_name, topology.subckt_body)
-                    for name, text in netlist_texts.items()
-                }
-                state.push_netlist_version(new_netlist_texts)
-
-                new_sim_result = await agents.simulate(new_netlist_texts, spec)
+            if consecutive_rollbacks >= TOPOLOGY_SWITCH_THRESHOLD:
+                candidates, rejections = compatible_swaps(netlist_texts, TOPOLOGY_LIBRARY, tried_topologies)
+                # Unconditional - approved, rejected, or never attempted. A
+                # gate that only logs on the interesting outcome is how this
+                # repo's other three area-gate silences went unnoticed for a
+                # whole run; this event exists so "0 candidates" and "we
+                # forgot to check" are never the same line of history.jsonl.
                 state.log_event(
-                    "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
+                    "topology_candidates",
+                    {
+                        "outer_iter": outer_iter,
+                        "candidates": [
+                            {"block_path": c.block_path, "topology_id": c.topology_id} for c in candidates
+                        ],
+                        "rejections": [
+                            {
+                                "block_path": r.block_path,
+                                "topology_id": r.topology_id,
+                                "reason": r.reason,
+                                "detail": r.detail,
+                            }
+                            for r in rejections
+                        ],
+                    },
                 )
 
-                new_judge_result = await agents.judge(new_sim_result["measurements"], spec)
-                state.log_event(
-                    "judge", {"outer_iter": outer_iter, "post_topology_swap": True, **new_judge_result}
-                )
+                if not candidates:
+                    # Today's "library exhausted" behavior, generalised: no
+                    # applicable (block, topology) pair exists (or all have
+                    # already been tried), so stay in parameter-tuning mode
+                    # this iteration rather than dead-ending the run.
+                    state.log_event("topology_unavailable", {"outer_iter": outer_iter})
+                else:
+                    resolved = None
+                    rejection_feedback = None
+                    for retry in range(1, MAX_TUNING_RETRIES + 1):
+                        proposal = await agents.propose_topology(
+                            structure_view, judge_result, candidates, TOPOLOGY_LIBRARY, rejection_feedback
+                        )
+                        state.log_event(
+                            "topology_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal}
+                        )
 
-                post_review = await agents.verify_post(
-                    judge_result, new_judge_result, [{"topology_id": topology_id}]
-                )
-                state.log_event("verify_post", {"outer_iter": outer_iter, "topology_swap": True, **post_review})
+                        resolved, feedback = _resolve_swap_target(proposal, candidates)
+                        if resolved is not None:
+                            break
+                        rejection_feedback = feedback
 
-                consecutive_rollbacks = 0
+                    if resolved is None:
+                        return _final_result(
+                            "FAIL", state, outer_iter, judge_result,
+                            failure_reason="topology proposal repeatedly rejected",
+                        )
 
-                if post_review["recommendation"] == "rollback":
-                    state.rollback()
+                    tried_topologies.add((resolved.block_path, resolved.topology_id))
+                    topology = TOPOLOGY_LIBRARY[resolved.topology_id]
+                    # Applied to every deck that defines the block, not just
+                    # canonical - compatible_swaps' missing_in_testbench rule
+                    # guarantees a genuine candidate is defined in all of
+                    # them, and push_netlist_version versions every testbench
+                    # atomically, so a partial swap across testbenches would
+                    # be an inconsistent state no rollback could describe.
+                    new_netlist_texts = {
+                        name: apply_topology_swap(text, resolved.block_path, topology.subckt_body)
+                        for name, text in netlist_texts.items()
+                    }
+
+                    swapped_block = parse_netlist(new_netlist_texts[canonical_name]).subckts[resolved.block_path]
+                    # Among the swapped-in block's own components, which
+                    # refdes have no entry in the run's frozen baseline
+                    # (netlist_v0) - those are the ones a later area-growth
+                    # check can no longer bound, because there is nothing to
+                    # compare their value against. A refdes that happens to
+                    # coincide with one already in the baseline keeps its
+                    # (now stale) entry; that staleness is the documented,
+                    # intentional cost of never refreshing the baseline.
+                    unconstrained_refdes = sorted(
+                        component.refdes
+                        for component in swapped_block.components
+                        if f"{resolved.block_path}.{component.refdes}" not in baseline_components
+                    )
+                    state.log_event(
+                        "topology_swap",
+                        {
+                            "outer_iter": outer_iter,
+                            "block_path": resolved.block_path,
+                            "topology_id": resolved.topology_id,
+                            "unconstrained_refdes": unconstrained_refdes,
+                        },
+                    )
+
+                    state.push_netlist_version(new_netlist_texts)
+
+                    new_sim_result = await agents.simulate(new_netlist_texts, spec)
+                    state.log_event(
+                        "simulation", {"outer_iter": outer_iter, "post_topology_swap": True, **new_sim_result}
+                    )
+
+                    new_judge_result = await agents.judge(new_sim_result["measurements"], spec)
+                    state.log_event(
+                        "judge", {"outer_iter": outer_iter, "post_topology_swap": True, **new_judge_result}
+                    )
+
+                    post_review = await agents.verify_post(
+                        judge_result, new_judge_result, [{"topology_id": resolved.topology_id}]
+                    )
+                    state.log_event(
+                        "verify_post", {"outer_iter": outer_iter, "topology_swap": True, **post_review}
+                    )
+
+                    consecutive_rollbacks = 0
+
+                    if post_review["recommendation"] == "rollback":
+                        state.rollback()
+                        judge_result = new_judge_result
+                        continue
+
+                    if new_judge_result["overall_pass"]:
+                        return _final_result("PASS", state, outer_iter, new_judge_result)
+
                     judge_result = new_judge_result
                     continue
-
-                if new_judge_result["overall_pass"]:
-                    return _final_result("PASS", state, outer_iter, new_judge_result)
-
-                judge_result = new_judge_result
-                continue
 
             approved_proposal = None
             rejection_feedback = None

@@ -207,9 +207,9 @@ async def _run(args) -> dict:
     async def verify_post_fn(prev_judge_result, new_judge_result, applied_changes):
         return await verify_post(prev_judge_result, new_judge_result, applied_changes, agent_backends["verifier"])
 
-    async def propose_topology_fn(structure_view, judge_result, available_topologies, rejection_feedback):
+    async def propose_topology_fn(structure_view, judge_result, candidates, library, rejection_feedback):
         return await propose_topology_swap(
-            structure_view, judge_result, available_topologies, rejection_feedback, agent_backends["tuner"]
+            structure_view, judge_result, candidates, library, rejection_feedback, agent_backends["tuner"]
         )
 
     async def propose_candidates_fn(structure_view, margins, objective, netlist_view):

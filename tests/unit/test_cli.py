@@ -20,6 +20,8 @@ from analogcoder.cli import (
 # cli.py가 만드는 status를 optimizer가 실제로 거절하는지까지 확인하지 않으면,
 # "합쳤다"는 사실만 남고 그것이 무엇을 막는지는 아무도 지키지 않는다.
 from analogcoder.optimizer import _run_simulation
+from analogcoder.topologies import TOPOLOGY_LIBRARY
+from analogcoder.topology_match import SwapCandidate
 
 SPEC_YAML = (
     "circuit_name: test\n"
@@ -197,6 +199,59 @@ async def test_run_wires_orchestration_and_returns_its_result(tmp_path):
     assert result["run_dir"] == str(tmp_path / "runs" / "r1")
     assert result["iterations_used"] == 1
     assert result["final_criteria"] == []
+
+
+@pytest.mark.asyncio
+async def test_propose_topology_fn_calls_propose_topology_swap_with_the_new_contract(tmp_path):
+    """propose_topology_fn is the one call site in this whole module no other
+    test exercises: test_orchestrator.py injects its own fake `propose_topology`
+    directly as `agents.propose_topology`, bypassing this wrapper entirely, and
+    the end-to-end test that would hit it for real is skip-gated. Before this
+    test, propose_topology_fn still called `propose_topology_swap` with the OLD
+    4-positional-argument shape
+    (structure_view, judge_result, available_topologies, rejection_feedback,
+    backend) - the function's real signature is now
+    (structure_view, judge_result, candidates, library, rejection_feedback,
+    backend), so a real run would TypeError the first time a topology swap
+    triggered, with the 729-test suite staying green throughout.
+
+    autospec=True binds the mock to propose_topology_swap's real signature, so
+    the old call shape fails here with a TypeError (missing `backend`) even
+    without the explicit position assertions below - those assertions pin the
+    *order*, so a future swap of two same-typed positional arguments (e.g.
+    candidates/library) is still caught.
+    """
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_YAML)
+    run_dir = str(tmp_path / "runs" / "r1")
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir])
+
+    captured: dict = {}
+    with patch(
+        "analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir), captured)
+    ):
+        await _run(args)
+
+    candidates = [SwapCandidate(block_path="AMP", topology_id="miller_basic")]
+    judge_result = {"overall_pass": False, "criteria": []}
+
+    with patch("analogcoder.cli.propose_topology_swap", autospec=True) as mock_swap:
+        mock_swap.return_value = {"topology_id": "miller_basic", "reasoning": "x", "confidence": 80}
+        result = await captured["agents"].propose_topology(
+            "structure view", judge_result, candidates, TOPOLOGY_LIBRARY, None
+        )
+
+    assert result == {"topology_id": "miller_basic", "reasoning": "x", "confidence": 80}
+    called_args = mock_swap.call_args.args
+    assert called_args[0] == "structure view"
+    assert called_args[1] == judge_result
+    assert called_args[2] == candidates
+    assert called_args[3] is TOPOLOGY_LIBRARY
+    assert called_args[4] is None
+    assert isinstance(called_args[5], ClaudeSDKBackend)
 
 
 @pytest.mark.asyncio
