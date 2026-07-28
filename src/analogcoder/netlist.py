@@ -314,6 +314,49 @@ def parse_netlist(text: str) -> ParsedNetlist:
     return ParsedNetlist(top_components=top_components, subckts=subckts)
 
 
+def _is_model_name(value: str | None) -> bool:
+    """위치 값이 모델/서브회로 이름인가 - `parse_spice_value`로 파싱되지
+    않으면 그렇다.
+
+    `structure.py`의 `_is_numeric_value`와 같은 규칙이지만 그것은 private라
+    모듈 경계를 넘어 재사용하지 않는다(요구사항의 명시적 지시) - 이 함수는
+    그와 별개로, 모델 이름 집합을 내야 하는 모든 호출부(`topology_match.py`의
+    호환성 판정, `curation`/`cli_curate`의 소스 C 프롬프트)가 같은 판정을
+    공유하도록 여기 둔다.
+
+    알려진 한계: 아직 풀리지 않은 파라미터 표현식(`{rv*2}`, `'rv*2'`)도
+    `parse_spice_value`에 실패하므로 모델 이름으로 오분류된다. 그런 문자열은
+    어떤 덱의 모델 집합에도 나타날 수 없으므로 실제로는 항상 허위 긍정으로
+    이어지지 않는다 - 추측하느니 침묵하는 편이 이 계층의 규칙이다."""
+    if value is None:
+        return False
+    try:
+        parse_spice_value(value)
+    except ValueError:
+        return True
+    return False
+
+
+def all_model_names(parsed: ParsedNetlist) -> set[str]:
+    """덱이 인스턴스화하는 모든 모델 이름 - 최상위 + 모든 서브회로 스코프.
+
+    이전에는 `topology_match._all_model_names`로 세 번째 중복될 뻔했다
+    (`topology_match`의 호환성 판정과, 큐레이션 소스 C가 "이 덱이 실제로
+    인스턴스화하는 모델 이름 집합"을 에이전트 프롬프트에 실어야 하는 것 -
+    둘 다 같은 사실을 원한다). 그래서 여기로 승격했다 - 파서가 이미 아는
+    `ParsedNetlist`에서 나오는 사실이라 이 모듈이 자연스러운 자리다.
+    `topology_match.py`는 이 함수를 그대로 가져다 쓰고, 동작은 바뀌지
+    않았다."""
+
+    def _model_names(components: list[Component]) -> set[str]:
+        return {c.value for c in components if _is_model_name(c.value)}
+
+    names = _model_names(parsed.top_components)
+    for subckt in parsed.subckts.values():
+        names |= _model_names(subckt.components)
+    return names
+
+
 def split_scoped_refdes(scoped: str) -> tuple[str | None, str]:
     """"OUTER.INNER.M1"을 ("OUTER.INNER", "M1")로, 맨 refdes "Xcc"를
     (None, "Xcc")로 나눈다. 스코프는 서브회로 정의의 전체 경로이며 임의

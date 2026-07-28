@@ -17,6 +17,7 @@ dev = [
 
 [project.scripts]
 analogcoder = "analogcoder.cli:main"
+analogcoder-curate = "analogcoder.cli_curate:main"
 
 [build-system]
 requires = ["hatchling"]

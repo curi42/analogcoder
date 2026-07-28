@@ -58,7 +58,7 @@ bandgap`의 `TRIMAMP` 본문과 컴포넌트 시퀀스가 완전히 같다. 이�
 
 from dataclasses import dataclass
 
-from analogcoder.netlist import Component, ParsedNetlist, Subckt, netlist_scale, parse_netlist, parse_spice_value
+from analogcoder.netlist import Component, ParsedNetlist, Subckt, all_model_names, netlist_scale, parse_netlist
 from analogcoder.topologies import Topology
 
 
@@ -109,42 +109,6 @@ def unavailable_reason(
     return ALL_PAIRS_REJECTED
 
 
-def _is_model_name(value: str | None) -> bool:
-    """위치 값이 모델/서브회로 이름인가 - 숫자로 파싱되지 않을 때 그렇다.
-
-    structure.py의 `_is_numeric_value`와 같은 규칙이지만 그것은 private라
-    모듈 경계를 넘어 재사용하지 않는다 (요구사항의 명시적 지시) - 이 모듈에
-    같은 것을 다시 둔다.
-
-    알려진 한계: 아직 풀리지 않은 파라미터 표현식(`{rv*2}`, `'rv*2'`)도
-    `parse_spice_value`에 실패하므로 모델 이름으로 오분류된다. 그런 문자열은
-    어떤 덱의 모델 집합에도 나타날 수 없으므로 실제로는 항상 허위
-    `models` 기각으로 이어진다. 여기서 표현식을 풀려고 하지 않는 이유는
-    토폴로지 본문에는 풀 대상이 되어 줄 인스턴스 컨텍스트가 아예 없기
-    때문이다 - 추측하느니 침묵하는 편이 이 계층의 규칙이다. 대신
-    `TOPOLOGY_LIBRARY`의 각 본문이 이런 값을 갖지 않도록
-    `test_topologies.py`의 큐레이션 불변식 테스트가 지켜준다."""
-    if value is None:
-        return False
-    try:
-        parse_spice_value(value)
-    except ValueError:
-        return True
-    return False
-
-
-def _model_names(components: list[Component]) -> set[str]:
-    return {c.value for c in components if _is_model_name(c.value)}
-
-
-def _all_model_names(parsed: ParsedNetlist) -> set[str]:
-    """덱이 인스턴스화하는 모든 모델 이름 - 최상위 + 모든 서브회로 스코프."""
-    names = _model_names(parsed.top_components)
-    for subckt in parsed.subckts.values():
-        names |= _model_names(subckt.components)
-    return names
-
-
 def _wrap_topology_body(topology: Topology) -> ParsedNetlist:
     """토폴로지 본문을 `.subckt TMP <ports>` ... `.ends TMP`로 감싸 파싱한다.
     본문 자체는 독립된 SPICE 조각(포트 헤더가 없는 컴포넌트 나열)이라 그대로는
@@ -155,7 +119,7 @@ def _wrap_topology_body(topology: Topology) -> ParsedNetlist:
 
 def _topology_model_names(topology: Topology) -> set[str]:
     """토폴로지 본문이 쓰는 모델 이름 집합."""
-    return _all_model_names(_wrap_topology_body(topology))
+    return all_model_names(_wrap_topology_body(topology))
 
 
 def _instances_of(parsed: ParsedNetlist, subckt_name: str) -> list[tuple[str | None, Component]]:
@@ -257,7 +221,7 @@ def compatible_swaps(
 ) -> tuple[list[SwapCandidate], list[SwapRejection]]:
     parsed_by_tb = {tb: parse_netlist(text) for tb, text in netlist_texts.items()}
     scale_by_tb = {tb: netlist_scale(text) for tb, text in netlist_texts.items()}
-    models_by_tb = {tb: _all_model_names(parsed) for tb, parsed in parsed_by_tb.items()}
+    models_by_tb = {tb: all_model_names(parsed) for tb, parsed in parsed_by_tb.items()}
     topology_models = {topology_id: _topology_model_names(topology) for topology_id, topology in library.items()}
 
     all_block_paths = sorted({path for parsed in parsed_by_tb.values() for path in parsed.subckts})
