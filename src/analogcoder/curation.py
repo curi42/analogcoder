@@ -27,9 +27,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from analogcoder.area_limits import index_baseline_components, is_count_param, tunable_range
 from analogcoder.judge_tools import evaluate_criteria
-from analogcoder.netlist import apply_topology_swap
+from analogcoder.netlist import apply_changes, apply_topology_swap
 from analogcoder.spec import TargetSpec, Testbench
+from analogcoder.structure import derive_structure
 from analogcoder.topologies import Topology
 from analogcoder.topology_match import SwapCandidate, compatible_swaps
 
@@ -286,3 +288,267 @@ def reproduce_characteristics(
         "simulation_count": simulations_attempted,
     }
     return StageResult(name="reproduce", status="pass", detail=detail), addresses
+
+
+def _at_least_as_good(operator: str, value: float, reference: float) -> bool:
+    """`_is_better`와 자매 함수이지만 다른 질문에 답한다: `_is_better`는
+    "엄격히 낫다"(동률은 아니다)이고, 이 함수는 "적어도 그만큼 낫다"(동률도
+    그렇다)이다. 3단의 파레토 지배 규칙이 한국어로 "후보 **이상**"이라고
+    적은 것이 정확히 이 관계다 - 동률이 지배로 세지 않으면, 노브 하나로
+    후보와 정확히 같은 값을 내는 기존 본문이 있어도 그 항목을 들여보내게
+    되는데, 그건 "값 튜닝으로 못 가는 곳에 간다"는 라이브러리의 존재
+    이유를 어긴다."""
+    if operator in _BETTER_WHEN_LARGER:
+        return value >= reference
+    if operator in _BETTER_WHEN_SMALLER:
+        return value <= reference
+    return False
+
+
+def _block_tunable_knobs(netlist_text: str, circuit_name: str, block_path: str) -> list[tuple[str, str]]:
+    """그 블록 스코프 **안에** 있는 (refdes, param) 쌍만, 정렬된 결정론적
+    순서로. `structure.derive_structure`의 tunable 인덱스는 넷리스트 전체를
+    돌려주므로, `TunableEntry.refdes`가 스코프-한정 경로라는 사실
+    (`structure.py`가 이미 확립함, 예: "BLOCK.R1")을 이용해 접두로 거른다.
+    정렬은 `max_knobs` 절삭과 스윕 순서 둘 다를 결정론적으로 만든다 - 그래야
+    "몇 번째 노브가 잘렸는가"를 테스트가 안정적으로 확인할 수 있다."""
+    structure = derive_structure(netlist_text, circuit_name)
+    prefix = f"{block_path}."
+    knobs = {
+        (entry.refdes, entry.param)
+        for entry in structure.tunable
+        if entry.refdes == block_path or entry.refdes.startswith(prefix)
+    }
+    return sorted(knobs)
+
+
+def _sweep_values(baseline: float, allowed_multiplier: float, points: int, is_count: bool) -> list[float]:
+    """`[baseline/M, baseline*M]`을 로그 등간격 `points`점으로 나눈 값들.
+
+    기준선 자체는 뺀다 - 2단이 이미 그 값을 쟀으므로 3단이 다시 시뮬레이션할
+    이유가 없다(브리프 규칙 2). `points`가 홀수면 로그 등간격의 가운뎃점이
+    기하평균 `sqrt((baseline/M)*(baseline*M)) == baseline`과 정확히 같아지므로,
+    끝점만이 아니라 매 값을 기준선과 비교해 걸러낸다.
+
+    개수 노브(`m`/`nf`)는 반올림 후 정수로 중복 제거한다 - 이 저장소는
+    비정수 `m` 제안을 이미 거부하는 규칙(`area_limits._integrality_violation`)을
+    갖고 있고, 스윕이 그 규칙이 거부할 값을 애초에 만들어 시뮬레이션을
+    낭비하지 않기 위해서다. 반올림이 두 로그 지점을 같은 정수로 뭉갤 수
+    있으므로 중복 제거가 필요하다 - "노브 하나에 N점"을 약속하지 않는다;
+    실제로 스윕한 값 목록을 그대로 `detail`에 담아 무엇을 봤는지 숨기지
+    않는다."""
+    low = baseline / allowed_multiplier
+    high = baseline * allowed_multiplier
+    if low <= 0 or high <= 0:
+        return []
+
+    log_low = math.log(low)
+    log_high = math.log(high)
+    step_count = max(points - 1, 1)
+    raw = [math.exp(log_low + (log_high - log_low) * i / step_count) for i in range(points)]
+    if is_count:
+        raw = [float(round(v)) for v in raw]
+
+    values: list[float] = []
+    seen: set = set()
+    for v in raw:
+        if is_count:
+            if v == round(baseline):
+                continue
+            key = v
+        else:
+            if math.isclose(v, baseline, rel_tol=1e-9):
+                continue
+            key = round(v, 12)
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(v)
+    return values
+
+
+def _simulate_point(
+    netlist_texts: dict[str, str], testbenches: list[Testbench], sim_backend, changes: list[dict]
+) -> tuple[dict, int, str | None]:
+    """`changes`(**하나의** 변경)를 기존 본문에 적용한 덱을 슬롯의 모든
+    테스트벤치에 대해 시뮬레이션한다. `_simulate_deck`(2단이 쓰는 것)과 갈라진
+    이유는 예외 처리 단위가 다르기 때문이다: 2단은 시뮬레이터 예외를 단계
+    전체의 inconclusive로 다루지만, 3단의 규칙(브리프 4)은 "시뮬 실패"를
+    "이 스윕 지점 하나"의 결측과 같은 것으로 다룬다 - 나머지 스윕은 계속
+    돈다. 그러려면 예외를 테스트벤치 루프 **안에서** 잡아야 하므로
+    `_simulate_deck`을 재사용할 수 없다(그쪽은 예외 도중의 시도 횟수를
+    돌려주지 않는다).
+
+    실패 시 그때까지 모인 부분 measurement는 버린다(빈 dict를 돌려준다) -
+    한 테스트벤치가 죽었는데 다른 테스트벤치의 값만으로 이 지점을 판정하면
+    "이 지점의 완전한 값"이라는 착각을 준다. 실패도 "시도했다"로 세므로
+    반환하는 count는 실패한 시도까지 포함한다."""
+    measurements: dict = {}
+    count = 0
+    for tb in testbenches:
+        text = apply_changes(netlist_texts[tb.name], changes)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            netlist_path = os.path.join(tmpdir, "sweep.cir")
+            with open(netlist_path, "w") as f:
+                f.write(text)
+            try:
+                result = sim_backend.run(netlist_path, {"control_block": tb.control_block})
+            except Exception as exc:  # noqa: BLE001 - 이 지점만 결측 처리, 단계 전체는 아니다
+                count += 1
+                return {}, count, str(exc)
+        measurements.update(result.measurements)
+        count += 1
+    return measurements, count, None
+
+
+def scoped_comparison(
+    candidate: Candidate,
+    slot: Slot,
+    netlist_texts: dict[str, str],
+    sim_backend,
+    candidate_measurements: dict,
+    max_knobs: int | None,
+    points: int,
+) -> StageResult:
+    """3단: 범위 밝힌 비교와 파레토 거부.
+
+    기존 본문은 **그대로 둔 채**, 그 블록의 tunable 인덱스에서 노브
+    **하나씩** 에어리어 게이트가 그 파라미터에 허용하는 배수 `M` 안에서
+    `[baseline/M, baseline*M]`을 `points`점 로그 등간격으로 스윕한다. 한
+    스윕 지점의 변경은 정확히 하나다 - 두 노브를 함께 움직이면 "이 노브
+    하나로 후보를 이긴다"는 주장이 실제로는 "이 두 노브의 조합으로 이긴다"는
+    다른 주장이 되어, 이 게이트의 정직성 근거가 깨진다.
+
+    거부 규칙은 파레토 지배다: 어떤 단일 스윕 지점이 **모든 기준에서**
+    후보 이상이면(`_at_least_as_good`, 동률 포함) `REJECT`(`status="fail"`).
+    후보가 단 하나의 기준에서라도 그 지점을 이기면 그 지점은 지배하지
+    못한다 - "모든 축에서 이겨야 입회"가 아니라 "하나의 축에서라도 후보가
+    앞서면 생존"이다.
+
+    값을 못 낸 지점(시뮬 예외, 또는 evaluate_criteria가 결측으로 잡는 값 -
+    키 부재든 리터럴 None이든)은 지배 후보에서 **제외**한다 - 결측을 무한히
+    좋다/나쁘다로 취급하지 않는다. 그런 지점이 다른 기준에서 잰 값은 기준별
+    "튜닝 최선값" 기록에는 여전히 반영한다(그 값 자체는 실제로 측정됐으므로).
+
+    `detail`은 통과/거부와 무관하게 항상 비교 범위를 담는다: 스윕한 노브
+    목록과 각각의 베이스라인/범위/점 수, 총 시뮬레이션 횟수, 기준별 튜닝
+    최선값과 그 지점, 그리고(거부라면) 지배한 지점. `max_knobs`로 좁혔다면
+    뺀 노브 이름이 `knobs_omitted`에, 에어리어 게이트가 이 파라미터에
+    범위를 지을 수 없었다면(베이스라인 해소 불가, 티어 없음) 그 이름과
+    사유가 `knobs_unresolved`에 남는다 - 이 저장소의 규칙대로, 노브를 뺐다면
+    조용히 빼지 않는다."""
+    testbenches = slot.spec.testbenches
+    criteria = slot.spec.all_criteria
+
+    canonical = slot.spec.canonical
+    canonical_text = netlist_texts[canonical.name]
+
+    all_knobs = _block_tunable_knobs(canonical_text, slot.spec.circuit_name, slot.block_path)
+
+    knobs = all_knobs
+    knobs_omitted: list[str] = []
+    if max_knobs is not None and len(all_knobs) > max_knobs:
+        knobs = all_knobs[:max_knobs]
+        knobs_omitted = [f"{refdes}.{param}" for refdes, param in all_knobs[max_knobs:]]
+
+    baseline_components = index_baseline_components(canonical_text)
+
+    candidate_eval = evaluate_criteria(candidate_measurements, criteria)
+    candidate_by_name = {r["name"]: r for r in candidate_eval["criteria"]}
+    # 후보 쪽 measurement 자체가 불완전하면(정상 경로에서는 2단이 이미 이를
+    # 막는다) 어느 지점도 "지배"로 판정하지 않는다 - 방어적 조치일 뿐, 이
+    # 저장소의 정상 파이프라인이 도달하는 경로는 아니다.
+    candidate_incomplete = any(math.isnan(r["actual"]) for r in candidate_by_name.values())
+
+    knobs_swept: list[dict] = []
+    knobs_unresolved: list[dict] = []
+    excluded_points: list[dict] = []
+    best_per_criterion: dict[str, dict] = {}
+    dominating_point: dict | None = None
+    simulation_count = 0
+
+    for refdes, param in knobs:
+        knob_name = f"{refdes}.{param}"
+        component = baseline_components.get(refdes)
+        if component is None:
+            knobs_unresolved.append(
+                {"knob": knob_name, "reason": "refdes not found in the canonical netlist's baseline index"}
+            )
+            continue
+
+        baseline_value, allowed = tunable_range(component, param)
+        if baseline_value is None:
+            knobs_unresolved.append({"knob": knob_name, "reason": "baseline value could not be resolved"})
+            continue
+        if allowed is None:
+            knobs_unresolved.append(
+                {"knob": knob_name, "reason": "the area gate has no size tier for this parameter"}
+            )
+            continue
+        if baseline_value <= 0:
+            knobs_unresolved.append(
+                {"knob": knob_name, "reason": f"baseline value {baseline_value!r} is not positive"}
+            )
+            continue
+
+        is_count = is_count_param(component, param)
+        values = _sweep_values(baseline_value, allowed, points, is_count)
+        knobs_swept.append(
+            {
+                "knob": knob_name,
+                "baseline": baseline_value,
+                "allowed_multiplier": allowed,
+                "range": [baseline_value / allowed, baseline_value * allowed],
+                "swept_values": list(values),
+            }
+        )
+
+        for value in values:
+            new_value = str(int(round(value))) if is_count else repr(value)
+            changes = [{"refdes": refdes, "param": param, "new_value": new_value}]
+            measurements, count, error = _simulate_point(netlist_texts, testbenches, sim_backend, changes)
+            simulation_count += count
+
+            if error is not None:
+                excluded_points.append(
+                    {"knob": knob_name, "swept_value": value, "reason": f"simulation failed: {error}"}
+                )
+                continue
+
+            point_eval = evaluate_criteria(measurements, criteria)
+            point_by_name = {r["name"]: r for r in point_eval["criteria"]}
+            missing = sorted(name for name, r in point_by_name.items() if math.isnan(r["actual"]))
+
+            for c in criteria:
+                actual = point_by_name[c.name]["actual"]
+                if math.isnan(actual):
+                    continue
+                current = best_per_criterion.get(c.name)
+                if current is None or _is_better(c.operator, actual, current["value"]):
+                    best_per_criterion[c.name] = {"value": actual, "knob": knob_name, "swept_value": value}
+
+            if missing:
+                excluded_points.append({"knob": knob_name, "swept_value": value, "reason": f"missing measurements: {missing}"})
+                continue
+
+            if dominating_point is None and not candidate_incomplete:
+                dominates = all(
+                    _at_least_as_good(c.operator, point_by_name[c.name]["actual"], candidate_by_name[c.name]["actual"])
+                    for c in criteria
+                )
+                if dominates:
+                    dominating_point = {"knob": knob_name, "swept_value": value, "measurements": dict(measurements)}
+
+    status = "fail" if dominating_point is not None else "pass"
+    detail = {
+        "topology_id": candidate.topology_id,
+        "block_path": slot.block_path,
+        "knobs_swept": knobs_swept,
+        "knobs_omitted": knobs_omitted,
+        "knobs_unresolved": knobs_unresolved,
+        "excluded_points": excluded_points,
+        "simulation_count": simulation_count,
+        "best_per_criterion": best_per_criterion,
+        "dominating_point": dominating_point,
+    }
+    return StageResult(name="comparison", status=status, detail=detail)

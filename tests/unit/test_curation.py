@@ -3,12 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from analogcoder.area_limits import index_baseline_components
 from analogcoder.curation import (
     Candidate,
     Slot,
     StageResult,
     check_structure,
     reproduce_characteristics,
+    scoped_comparison,
 )
 from analogcoder.simulators.base import RawSimResult
 from analogcoder.spec import Criterion
@@ -326,3 +328,290 @@ def test_reproduction_detail_is_populated_even_when_it_passes():
     assert result.detail["simulation_count"] == 2
     assert result.detail["missing"] == []
     assert "criteria" in result.detail and "gain" in result.detail["criteria"]
+
+
+# --- scoped_comparison --------------------------------------------------------
+
+# One tunable knob: R1's positional value (1k = 1000). Baseline 1000 falls in
+# RESISTOR_TIERS' second tier (1e3 <= baseline < 10e3, since the check is
+# strict "<"), so allowed_multiplier = 2.0 and the sweep range is [500, 2000].
+DECK_ONE_KNOB = """* t
+.option scale=1.0u
+.subckt BLOCK a b
+R1 a b 1k
+.ends BLOCK
+.end
+"""
+
+# Two tunable knobs, both plain resistor values, so test_only_one_knob_moves
+# can assert that any given simulated deck differs from baseline in exactly
+# one of them.
+DECK_TWO_KNOBS = """* t
+.option scale=1.0u
+.subckt BLOCK a b
+R1 a b 1k
+R2 a b 2k
+.ends BLOCK
+.end
+"""
+
+# A count-valued knob (m=4 on a bipolar). Not X-prefixed, so _tier_baseline_value
+# can't resolve a geometry tier for it (the positional value is a model name,
+# not a number) - but m is a count token, so _direct_target still assigns it
+# COUNT_ALLOWED_MULTIPLIER (2.0) regardless. Baseline m=4, range [2, 8].
+DECK_COUNT_KNOB = """* t
+.option scale=1.0u
+.subckt BLOCK a b c
+Q1 a b c QMOD m=4
+.ends BLOCK
+.end
+"""
+
+
+def _scoped_slot(criteria: list[Criterion], netlist_text: str, block_path: str = "BLOCK") -> Slot:
+    """Unlike _slot_with_criteria, scoped_comparison also reads
+    slot.spec.circuit_name (it derives the block's tunable index via
+    structure.derive_structure, which requires a circuit_name label) -
+    _slot_with_criteria's bare SimpleNamespace doesn't carry one."""
+    tb = SimpleNamespace(
+        name="tb1",
+        netlist_path="/dev/null",
+        analyses=["op"],
+        control_block=".control\nop\n.endc",
+        criteria=criteria,
+    )
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        all_criteria=criteria,
+        canonical=tb,
+        circuit_name="test",
+    )
+    return Slot(spec=spec, spec_dir=Path("."), block_path=block_path)
+
+
+class _ConstantBackend:
+    """Every simulated point reports the same fixed measurements, regardless
+    of which knob or value was swept - used where the test only cares about
+    the *scope* recorded (which knobs, how many points, omissions), not
+    about triggering or avoiding domination via realistic circuit values."""
+
+    def __init__(self, measurements: dict):
+        self._measurements = dict(measurements)
+
+    def run(self, netlist_path, testbench_config):
+        return RawSimResult(status="success", measurements=dict(self._measurements), raw_log="", warnings=[])
+
+
+class _ValueFunctionBackend:
+    """Reads the swept component's own resolved value directly off the deck
+    ngspice would actually see (via area_limits.index_baseline_components,
+    the same resolver the area gate itself uses - not a hand-rolled regex),
+    and reports measurements as a deterministic function of that value. This
+    lets a test construct an exact trade-off (e.g. "raising R1 improves gain
+    but worsens iq") without needing a real simulator."""
+
+    def __init__(self, refdes: str, param: str, functions: dict):
+        self._refdes = refdes
+        self._param = param
+        self._functions = functions
+
+    def run(self, netlist_path, testbench_config):
+        with open(netlist_path) as f:
+            text = f.read()
+        component = index_baseline_components(text)[self._refdes]
+        value = component.resolved_value if self._param == "value" else component.resolved_params[self._param]
+        measurements = {name: fn(value) for name, fn in self._functions.items()}
+        return RawSimResult(status="success", measurements=measurements, raw_log="", warnings=[])
+
+
+class _RecordingBackend:
+    """Records the full text of every deck it is asked to simulate, so a
+    test can inspect exactly what changed relative to the untouched
+    baseline. Reports a constant measurement - what happened structurally
+    to the deck is what these tests check, not the measured outcome."""
+
+    def __init__(self, measurements: dict):
+        self._measurements = dict(measurements)
+        self.calls: list[str] = []
+
+    def run(self, netlist_path, testbench_config):
+        with open(netlist_path) as f:
+            self.calls.append(f.read())
+        return RawSimResult(status="success", measurements=dict(self._measurements), raw_log="", warnings=[])
+
+
+def test_a_single_sweep_point_dominating_every_criterion_rejects():
+    """R1's value sweeps to 500 and 2000 (points=2, so neither lands on the
+    excluded baseline 1000). At R1=2000: gain_db=2000 (>=1500, beats
+    candidate) and iq_ua=1e6/2000=500 (<=700, beats candidate too) - a single
+    sweep point at least as good as the candidate on BOTH criteria, which
+    must reject (status='fail') and name that point as the dominating one."""
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+        Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=1e9),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ValueFunctionBackend(
+        refdes="BLOCK.R1",
+        param="value",
+        functions={"gain_db": lambda v: v, "iq_ua": lambda v: 1_000_000 / v},
+    )
+    candidate_measurements = {"gain_db": 1500.0, "iq_ua": 700.0}
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+    )
+
+    assert result.name == "comparison"
+    assert result.status == "fail"
+    assert result.detail["dominating_point"] is not None
+    assert result.detail["dominating_point"]["knob"] == "BLOCK.R1.value"
+    assert result.detail["dominating_point"]["swept_value"] == pytest.approx(2000.0)
+
+
+def test_a_candidate_winning_one_criterion_survives():
+    """파레토다. 모든 기준에서 이겨야 하는 것이 아니다.
+
+    Both gain_db and iq_ua rise together with R1 (a manufactured trade-off:
+    raising R1 helps the >= criterion but hurts the <= one). The candidate
+    sits exactly between the two swept points (500 and 2000) on both axes, so
+    at R1=2000 the candidate still wins on iq (1500 < 2000) and at R1=500 the
+    candidate still wins on gain (1500 > 500). No single point is at least as
+    good as the candidate on every criterion, so the candidate must survive -
+    a rule that instead required beating the candidate on every criterion to
+    be REJECTED (inverted admission direction) would still flip this to
+    'fail' by accident since it's the same predicate name; the real
+    distinguishing mutation is requiring ALL criteria to win for the
+    candidate to be admitted, rather than ANY one."""
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+        Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=1e9),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ValueFunctionBackend(
+        refdes="BLOCK.R1", param="value", functions={"gain_db": lambda v: v, "iq_ua": lambda v: v}
+    )
+    candidate_measurements = {"gain_db": 1500.0, "iq_ua": 1500.0}
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+
+
+def test_a_sweep_point_with_a_missing_measurement_cannot_dominate():
+    """Every sweep point reports a tiny iq_ua (1.0, trivially <= the
+    candidate's 1000 - already dominates on its own) but never reports
+    gain_db at all. This is deliberately the dangerous direction for a
+    missing-value bug: gain_db's operator is '>=', so a mutation that
+    defaults a missing actual to +inf (rather than excluding the point)
+    would make that criterion look satisfied too (+inf >= anything), and
+    combined with iq already dominating, the point would be wrongly
+    rejected. (Had iq_ua been the missing one instead, a '<=' criterion
+    defaulted to +inf would coincidentally still fail to dominate, hiding
+    the bug - the missing criterion's direction has to be the one an
+    infinity default favours.) The correct rule excludes any point missing
+    a measurement from domination entirely, so nothing here can ever
+    reject - the candidate must survive even though the one criterion that
+    IS measured looks overwhelmingly dominated."""
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+        Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=1e9),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"iq_ua": 1.0})  # gain_db never reported
+    candidate_measurements = {"gain_db": 100.0, "iq_ua": 1000.0}
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+
+
+def test_count_knobs_are_swept_at_integers_only():
+    """Q1's m=4 is a count, not a length - COUNT_ALLOWED_MULTIPLIER=2.0 gives
+    range [2, 8]. Every swept value must be a whole number, none may repeat,
+    and the baseline (4) itself must be excluded."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_COUNT_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_COUNT_KNOB}, backend, {"gain_db": 1.0}, max_knobs=None, points=5
+    )
+
+    swept = result.detail["knobs_swept"]
+    assert len(swept) == 1
+    assert swept[0]["knob"] == "BLOCK.Q1.m"
+    values = swept[0]["swept_values"]
+    assert values, "expected at least one swept value"
+    assert all(v == int(v) for v in values)
+    assert len(values) == len(set(values))
+    assert 4.0 not in values
+
+
+def test_the_scope_is_always_recorded_even_when_the_candidate_survives():
+    """Even when the candidate survives (nothing dominates it), detail must
+    still carry the full comparison scope - a mutation that only records
+    knobs_swept/simulation_count/best_per_criterion behind an "if rejected"
+    guard is caught here."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=100.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    # Constant, always worse than the candidate - nothing can ever dominate.
+    backend = _ConstantBackend({"gain_db": 10.0})
+    candidate_measurements = {"gain_db": 100.0}
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=3
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+    assert len(result.detail["knobs_swept"]) == 1
+    assert result.detail["knobs_swept"][0]["knob"] == "BLOCK.R1.value"
+    assert result.detail["knobs_swept"][0]["baseline"] == 1000.0
+    assert result.detail["simulation_count"] > 0
+    assert result.detail["best_per_criterion"]["gain"]["value"] == 10.0
+
+
+def test_omitted_knobs_are_named_when_max_knobs_truncates():
+    """Two tunable knobs exist (BLOCK.R1.value, BLOCK.R2.value); max_knobs=1
+    keeps only the first in sorted order and must name the other in
+    knobs_omitted rather than silently dropping it."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_TWO_KNOBS)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, max_knobs=1, points=2
+    )
+
+    assert len(result.detail["knobs_swept"]) == 1
+    assert result.detail["knobs_omitted"] == ["BLOCK.R2.value"]
+
+
+def test_only_one_knob_moves_per_sweep_point():
+    """스윕 지점마다 기준선과 다른 파라미터가 정확히 하나여야 한다.
+
+    Records every deck actually handed to the simulator and checks, against
+    the untouched baseline, that exactly one of the two tunable knobs
+    (BLOCK.R1.value, BLOCK.R2.value) differs - never zero, never both."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_TWO_KNOBS)
+    backend = _RecordingBackend({"gain_db": 1.0})
+    baseline = index_baseline_components(DECK_TWO_KNOBS)
+    baseline_values = {"BLOCK.R1": baseline["BLOCK.R1"].resolved_value, "BLOCK.R2": baseline["BLOCK.R2"].resolved_value}
+
+    scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, max_knobs=None, points=3
+    )
+
+    assert backend.calls, "expected at least one simulated deck"
+    for text in backend.calls:
+        components = index_baseline_components(text)
+        changed = [key for key, value in baseline_values.items() if components[key].resolved_value != value]
+        assert len(changed) == 1

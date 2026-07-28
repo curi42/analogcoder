@@ -322,6 +322,31 @@ def _direct_target(refdes: str, component: Component, param: str) -> _Target:
     return _Target(key=(refdes,), label=refdes, allowed=allowed, counts=True)
 
 
+def tunable_range(component: Component, param: str) -> tuple[float | None, float | None]:
+    """(그 파라미터의 현재값, 이 게이트가 그것에 허용하는 배수 `M`)을 그대로
+    노출한다. 큐레이션의 3단(범위 밝힌 비교)이 스윕 구간 `[baseline/M,
+    baseline*M]`을 지으려면 M이 필요한데, 이 파일의 공개 표면은 지금까지
+    "이 제안을 승인/거부하라"(`check_area_growth`/`evaluate_area_growth`) 뿐이고
+    "이 파라미터에 배수가 얼마나 허용되는가"를 직접 묻는 조회 함수가 없었다.
+
+    새 함수이지 새 규칙이 아니다: 판정 경로(`evaluate_area_growth`)가 소자를
+    직접 주소지정한 변경 하나에 대해 이미 쓰는 `_direct_target`을 그대로
+    호출할 뿐, 새 분기나 새 값을 만들지 않는다 - 그래서 기존 판정 경로의
+    동작은 한 글자도 바뀌지 않는다(호출하지 않으면 이 함수는 죽은 코드다).
+    `refdes`는 `_direct_target`의 반환값 중 `allowed`에 영향을 주지 않는
+    라벨/키 용도일 뿐이므로 `component.refdes`(스코프 없는 로컬 이름)를
+    그대로 넘긴다 - 호출자가 스코프-한정 이름을 쓰든 안 쓰든 결과는 같다.
+
+    베이스라인을 확정할 수 없거나(해소 불가), 이 토큰에 티어가 없으면
+    (`allowed`가 None) `(None, None)`을 돌려준다 - 에어리어 게이트 자신의
+    "판단 불가, 막지 않음" 폴백과 같은 결이다: 범위를 지어내지 않는다."""
+    baseline_value = _baseline_value_for(component, param)
+    if baseline_value is None:
+        return None, None
+    target = _direct_target(component.refdes, component, param)
+    return baseline_value, target.allowed
+
+
 def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
     """인스턴스 줄의 파라미터가 도달한 소자들에 대한 판정 재료.
 
