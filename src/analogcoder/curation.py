@@ -2,8 +2,20 @@
 
 `docs/superpowers/plans/2026-07-28-topology-curation.md`의 "공통 인터페이스"가
 정의하는 dataclass들과, 그 파이프라인의 1단(구조 검사)·2단(특성 재현)을 담는다.
-단계는 전부 **순수 함수**다 - LLM은 이 모듈 어디에도 없다(소스 C 저술과
-`description` 렌더링만 LLM을 쓰고, 그것은 다른 태스크가 별도 모듈에 둔다).
+1단·2단 자체는 **순수 함수**다 - `check_structure`/`reproduce_characteristics`
+어디에도 LLM 호출이 없다.
+
+**예외 하나: `author_and_verify_variant`(소스 C의 거부-재시도 루프)는 LLM을
+호출한다.** CLAUDE.md의 확립된 관례 - `agents/*.py`는 시스템 프롬프트·스키마만
+담고, 재시도/오케스트레이션은 게이트 옆의 결정론적 모듈에 둔다(파라미터 튜닝의
+`orchestrator.py`, 최적화의 `optimizer.py` vs `agents/optimizer.py`의
+순위-매기기 분리) - 를 따라 이 자리에 있다. LLM 호출 자체
+(`agents.variant_author.author_variant` - 시스템 프롬프트와 스키마)는 여전히
+`agents/` 아래에 있고, 이 함수는 그 결과를 이 모듈 자신의 게이트
+(`check_structure`/`reproduce_characteristics`)에 실제로 통과시키는 재시도
+루프이므로 게이트와 같은 자리가 맞다 - `description` 렌더링(다른 LLM 호출)만
+`agents/curator.py`에 남아 있고, 그것은 어떤 게이트도 재시도하지 않으므로
+이 예외에 해당하지 않는다.
 
 이 파일이 서 있는 전제: "시뮬레이션되고 선언한 수치를 재현한다"는 라이브러리
 입회의 **필요조건이지 충분조건이 아니다.** F1에서 텍스트북대로 옳은
@@ -27,6 +39,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from analogcoder.agents.backend import AgentBackend, AgentExecutionError
+from analogcoder.agents.variant_author import author_variant
 from analogcoder.area_limits import (
     index_baseline_components,
     is_count_param,
@@ -49,6 +63,11 @@ from analogcoder.topology_match import SwapCandidate, compatible_swaps
 
 _BETTER_WHEN_LARGER = (">=", ">")
 _BETTER_WHEN_SMALLER = ("<=", "<")
+
+# `author_and_verify_variant`(소스 C 거부-재시도 루프)의 재시도 상한.
+# `orchestrator.MAX_TUNING_RETRIES`와 같은 값(3)이지만, 다른 서브시스템의
+# 상수를 임포트해 결합을 만들지 않기 위해 이 모듈 자신의 상수로 복제한다.
+MAX_VARIANT_AUTHOR_RETRIES = 3
 
 
 @dataclass(frozen=True)
@@ -188,6 +207,33 @@ class CurationResult:
     addresses: list[str]
     description: str
     description_source: str  # "agent" | "template"
+
+
+@dataclass
+class VariantAuthorResult:
+    """`author_and_verify_variant`(소스 C의 거부-재시도 루프)의 결과.
+
+    `verdict`는 일부러 `CurationResult.verdict`와 같은 세 값을 문자열로 쓰지만
+    ("PASS" 대신 "ADMIT"이 아니다) 이것은 최종 파이프라인 판정이 **아니다** -
+    2.5단(코너, 저술본 전용)·3단(범위 밝힌 비교)이 아직 남아 있으므로,
+    이 단계가 "PASS"를 내도 최종 판정은 여전히 다른 태스크(CLI)가 그 두 단계를
+    마저 돌려야 정해진다. 그래서 성공 값은 `CurationResult`의 `"ADMIT"`과
+    구별해 `"PASS"`로 쓴다 - 이 결과를 최종 판정으로 오해하는 호출자가 생기지
+    않도록.
+
+    `structure`/`reproduce`는 실제로 도달한 마지막 시도의 `StageResult`다 -
+    도달하지 못한 단계(예: 구조 검사에서 매번 거부돼 2단에 한 번도 못 간 경우)
+    는 `None`으로 남아, "이 단계가 통과했다"와 "이 단계를 아예 못 봤다"가
+    같은 값으로 뭉개지지 않는다."""
+
+    verdict: str  # "PASS" | "REJECT" | "INCONCLUSIVE"
+    reason: str | None
+    attempts: int
+    candidate: Candidate | None
+    rationale: str | None
+    structure: StageResult | None
+    reproduce: StageResult | None
+    addresses: list[str]
 
 
 def _candidate_as_topology(candidate: Candidate) -> Topology:
@@ -399,6 +445,128 @@ def reproduce_characteristics(
         "simulation_count": simulations_attempted,
     }
     return StageResult(name="reproduce", status="pass", detail=detail), addresses
+
+
+def _stage_rejection_reason(stage_name: str, detail: dict) -> str:
+    """`StageResult.detail`에서 다음 시도로 그대로 돌려줄 사유 문자열을 뽑는다.
+    `check_structure`(1단)의 detail은 `reason`/`detail` 키를 쓰고
+    (`compatible_swaps`가 낸 그대로), `reproduce_characteristics`(2단)의 실패
+    detail은 `missing` 키를 쓴다 - 두 단계의 detail 모양이 다르므로 사유를
+    뽑는 규칙도 단계별로 다르다. 어느 쪽이든 여기서 새 문장을 짓지 않는다:
+    단계가 이미 낸 사실을 그대로 이어붙일 뿐이다(브리프 규칙 3의 "그대로")."""
+    if stage_name == "structure":
+        return f"stage 1 (structure) rejected: {detail.get('reason')}: {detail.get('detail')}"
+    return f"stage 2 (reproduce) rejected: missing measurements: {detail.get('missing')}"
+
+
+async def author_and_verify_variant(
+    base_body: str,
+    technique: str,
+    ports: list[str],
+    available_models: set[str],
+    scale: float,
+    topology_id: str,
+    slot: Slot,
+    netlist_texts: dict[str, str],
+    sim_backend,
+    backend: AgentBackend,
+) -> VariantAuthorResult:
+    """`agents.variant_author.author_variant`를 거부-재시도 루프로 감싸고,
+    통과한 본문을 1단(`check_structure`)·2단(`reproduce_characteristics`)에
+    실제로 통과시킨다. 2.5단(코너)·3단(범위 밝힌 비교)은 여기서 돌지 않는다 -
+    그 둘은 저술 자체를 재시도할 이유가 없는, 이미 통과한 후보에 대한 별도
+    판정이고(설계 문서 "2.5단"/"3단" 절), 이 함수가 그 후보를 다음 단계로
+    넘기는 자리다.
+
+    `VariantAuthorResult.verdict`는 `AgentExecutionError`가 즉시
+    `"INCONCLUSIVE"`로 끝난다(재시도하지 않는다) - 백엔드가 죽었다면 다시
+    불러도 대개 또 죽고, 남은 재시도 예산을 태우는 것은 "회로가 나쁘다"는
+    사실을 하나도 더 밝히지 못한다. 2단이 시뮬레이터 예외로 `inconclusive`를
+    낼 때도 같은 이유로 즉시 멈춘다 - 그것은 이 저술본이 나쁘다는 증거가
+    아니라 시뮬레이터가 답하지 못했다는 사실이고, 다시 저술을 시켜도
+    시뮬레이터가 죽는 이유는 바뀌지 않는다. 반대로 1단·2단이 각각 실패
+    (`status == "fail"`)로 저술본을 거부하면 그 사유를 그대로 다음 시도의
+    `rejection_feedback`으로 돌려주고, `MAX_VARIANT_AUTHOR_RETRIES`번까지
+    다시 시도한다 - 그 상한을 다 쓰고도 통과하는 본문을 못 만들면 `"REJECT"`
+    (재보지 못한 것이 아니라 재봤는데 실패했다), `reason`에 마지막 거부
+    사유를 담는다."""
+    rejection_feedback: str | None = None
+    last_reason: str | None = None
+
+    for attempt in range(1, MAX_VARIANT_AUTHOR_RETRIES + 1):
+        try:
+            authored = await author_variant(
+                base_body=base_body,
+                technique=technique,
+                ports=ports,
+                available_models=available_models,
+                scale=scale,
+                rejection_feedback=rejection_feedback,
+                backend=backend,
+            )
+        except AgentExecutionError as exc:
+            return VariantAuthorResult(
+                verdict="INCONCLUSIVE",
+                reason=str(exc),
+                attempts=attempt,
+                candidate=None,
+                rationale=None,
+                structure=None,
+                reproduce=None,
+                addresses=[],
+            )
+
+        candidate = candidate_from_technique(
+            subckt_body=authored["subckt_body"],
+            ports=ports,
+            assumes_scale=scale,
+            topology_id=topology_id,
+        )
+
+        structure_result = check_structure(candidate, slot, netlist_texts)
+        if structure_result.status != "pass":
+            rejection_feedback = _stage_rejection_reason("structure", structure_result.detail)
+            last_reason = rejection_feedback
+            continue
+
+        reproduce_result, addresses = reproduce_characteristics(candidate, slot, netlist_texts, sim_backend)
+        if reproduce_result.status == "inconclusive":
+            return VariantAuthorResult(
+                verdict="INCONCLUSIVE",
+                reason=reproduce_result.detail.get("error", "stage 2 (reproduce) was inconclusive"),
+                attempts=attempt,
+                candidate=None,
+                rationale=authored.get("rationale"),
+                structure=structure_result,
+                reproduce=reproduce_result,
+                addresses=[],
+            )
+        if reproduce_result.status != "pass":
+            rejection_feedback = _stage_rejection_reason("reproduce", reproduce_result.detail)
+            last_reason = rejection_feedback
+            continue
+
+        return VariantAuthorResult(
+            verdict="PASS",
+            reason=None,
+            attempts=attempt,
+            candidate=candidate,
+            rationale=authored.get("rationale"),
+            structure=structure_result,
+            reproduce=reproduce_result,
+            addresses=addresses,
+        )
+
+    return VariantAuthorResult(
+        verdict="REJECT",
+        reason=last_reason,
+        attempts=MAX_VARIANT_AUTHOR_RETRIES,
+        candidate=None,
+        rationale=None,
+        structure=None,
+        reproduce=None,
+        addresses=[],
+    )
 
 
 def verify_corners(

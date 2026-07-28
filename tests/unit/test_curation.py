@@ -1,16 +1,21 @@
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area_limits import index_baseline_components
 from analogcoder.curation import (
+    MAX_VARIANT_AUTHOR_RETRIES,
     Candidate,
     Slot,
     StageResult,
+    author_and_verify_variant,
     candidate_from_deck,
     candidate_from_file,
+    candidate_from_technique,
     check_structure,
     reproduce_characteristics,
     scoped_comparison,
@@ -1230,3 +1235,320 @@ def test_a_file_candidate_with_an_unreferenced_declared_port_is_rejected():
     body = "R1 a b 1k\nR2 b c 2k\n"
     with pytest.raises(ValueError):
         candidate_from_file(body, ports=["a", "c", "z"], assumes_scale=1e-6, topology_id="from_file")
+
+
+# --- candidate_from_technique (source C factory) -----------------------------
+
+
+def test_candidate_from_technique_wraps_the_given_body_as_authored():
+    """Direct, non-accidental pin for this factory's own field mapping. The
+    task-6 review found that author_and_verify_variant's use of it was
+    previously checked only by accident (a fixture's base_body happened to
+    equal the deck's actual block body, so a base_body/authored-body mixup
+    tripped identical_body rather than being caught directly) - this test
+    exercises the factory itself, with no other gate in the way."""
+    candidate = candidate_from_technique(
+        subckt_body="X1 a b MODELX\n", ports=["a", "b"], assumes_scale=2.5e-6, topology_id="cand_x"
+    )
+    assert candidate.subckt_body == "X1 a b MODELX\n"
+    assert candidate.ports == ["a", "b"]
+    assert candidate.assumes_scale == 2.5e-6
+    assert candidate.topology_id == "cand_x"
+    assert candidate.provenance == "authored"
+
+
+# --- author_and_verify_variant (source C reject-and-retry loop) -------------
+#
+# This function moved here from agents/variant_author.py after the task-6
+# review (I-2): it interleaves the LLM call (agents.variant_author.
+# author_variant) with this module's own gates (check_structure,
+# reproduce_characteristics), so it belongs beside them rather than in
+# agents/ - the same convention orchestrator.py and optimizer.py already
+# follow. `author_variant` itself is mocked at "analogcoder.curation.
+# author_variant" (the name this module imported it under), not
+# "analogcoder.agents.variant_author.run_agent" - one level higher than
+# before, so a test's rejection_feedback assertion reads the exact keyword
+# argument the retry loop passed, not a rendered prompt string.
+
+
+def _variant_slot(criteria: list[Criterion]) -> Slot:
+    return _slot_with_criteria(criteria)
+
+
+@pytest.mark.asyncio
+async def test_a_structure_rejection_is_fed_back_verbatim_and_retried():
+    """First authored body instantiates a model (MODELX) the deck never
+    provides - a 'models' rejection from check_structure/compatible_swaps.
+    The loop must feed that exact rejection (reason AND detail, not a
+    paraphrase) back as the next call's rejection_feedback, and must
+    actually make a second attempt rather than giving up after one
+    rejection. The expected reason is computed via the real check_structure
+    (same convention as this file's other verbatim-rejection test) so this
+    pins "carried over exactly", not a hardcoded string."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    bad_candidate = Candidate(
+        topology_id="cand_variant",
+        subckt_body="X1 a b MODELX\n",
+        ports=["a", "b"],
+        assumes_scale=1e-6,
+        provenance="authored",
+    )
+    expected = check_structure(bad_candidate, slot, netlist_texts)
+    assert expected.status == "fail"
+
+    responses = [
+        {"subckt_body": "X1 a b MODELX\n", "rationale": "first try"},
+        {"subckt_body": "R2 a b 2k\n", "rationale": "fixed, no foreign model"},
+    ]
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(side_effect=responses),
+    ) as mock_author:
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([{}, {}]),
+            backend=object(),
+        )
+
+    assert mock_author.call_count == 2
+    second_feedback = mock_author.call_args_list[1].kwargs["rejection_feedback"]
+    assert expected.detail["reason"] in second_feedback
+    assert expected.detail["detail"] in second_feedback
+    assert result.verdict == "PASS"
+    assert result.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_the_retry_limit_is_honoured():
+    """Every attempt is rejected at the structure stage (same MODELX shape as
+    above, every time). The loop must stop calling the backend at exactly
+    MAX_VARIANT_AUTHOR_RETRIES attempts - not fewer (giving up early would
+    silently shrink the retry budget) and not more (an unbounded loop)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "X1 a b MODELX\n", "rationale": "always bad"}),
+    ) as mock_author:
+        await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([]),
+            backend=object(),
+        )
+
+    assert mock_author.call_count == MAX_VARIANT_AUTHOR_RETRIES == 3
+
+
+@pytest.mark.asyncio
+async def test_exhausting_retries_is_a_rejection_not_inconclusive():
+    """Exhausting the retry budget without ever producing a body that passes
+    is a measured fact about the circuit (it tried and failed), not "never
+    tried" - so the verdict must be REJECT, never INCONCLUSIVE, and `reason`
+    must carry the LAST rejection (not None, not silently dropped)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "X1 a b MODELX\n", "rationale": "always bad"}),
+    ):
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([]),
+            backend=object(),
+        )
+
+    assert result.verdict == "REJECT"
+    assert result.verdict != "INCONCLUSIVE"
+    assert result.candidate is None
+    assert result.reason is not None
+    assert "models" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_an_agent_execution_error_is_inconclusive():
+    """The backend dying (or failing schema validation) says nothing about
+    whether the authored circuit is good - it never got a body to judge.
+    This must be INCONCLUSIVE, never REJECT, and must not be silently
+    retried (a dead backend will typically fail again, so retrying spends
+    budget without learning anything new)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(side_effect=AgentExecutionError("rate limited")),
+    ) as mock_author:
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([]),
+            backend=object(),
+        )
+
+    assert result.verdict == "INCONCLUSIVE"
+    assert result.verdict != "REJECT"
+    assert result.candidate is None
+    assert mock_author.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_reproduce_rejection_is_fed_back_verbatim_and_retried():
+    """I-1 (task-6 review): the two stage-2 branches had zero mutation
+    coverage. This covers the reproduce-fail retry branch: the first
+    authored body passes structure but its simulated deck never produces
+    the 'gain_db' measurement the slot's one criterion needs - a stage-2
+    ('fail', missing measurement) rejection, not a simulator exception. The
+    loop must feed that rejection's `missing` list back verbatim as the next
+    attempt's rejection_feedback, and must actually retry."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _variant_slot(criteria)
+
+    attempt1_candidate = Candidate(
+        topology_id="cand_variant", subckt_body="R2 a b 2k\n", ports=["a", "b"], assumes_scale=1e-6, provenance="authored"
+    )
+    expected, _ = reproduce_characteristics(
+        attempt1_candidate, slot, netlist_texts, _SequencedBackend([{}, {"gain_db": 50.0}])
+    )
+    assert expected.status == "fail"
+    assert expected.detail["missing"] == ["gain"]
+
+    responses = [
+        {"subckt_body": "R2 a b 2k\n", "rationale": "first try - missing measurement"},
+        {"subckt_body": "R3 a b 3k\n", "rationale": "fixed"},
+    ]
+    sim_backend = _SequencedBackend(
+        [
+            {},  # attempt 1 candidate sim: missing gain_db
+            {"gain_db": 50.0},  # attempt 1 baseline sim
+            {"gain_db": 42.0},  # attempt 2 candidate sim
+            {"gain_db": 50.0},  # attempt 2 baseline sim
+        ]
+    )
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(side_effect=responses),
+    ) as mock_author:
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=sim_backend,
+            backend=object(),
+        )
+
+    assert mock_author.call_count == 2
+    second_feedback = mock_author.call_args_list[1].kwargs["rejection_feedback"]
+    assert str(expected.detail["missing"]) in second_feedback
+    assert result.verdict == "PASS"
+    assert result.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_reproduce_stage_simulator_exception_is_inconclusive_not_a_rejection():
+    """I-1 (task-6 review): the reproduce-inconclusive branch had zero
+    mutation coverage - mutating its 'INCONCLUSIVE' to 'REJECT' left every
+    prior test passing. The simulator crashing during stage 2 says nothing
+    about whether the authored circuit is good (reproduce_characteristics
+    itself already distinguishes this from a genuine rejection - see
+    test_a_simulator_exception_is_inconclusive_not_a_rejection above); the
+    retry loop must preserve that distinction rather than collapsing a
+    simulator crash into REJECT, and must not retry (retrying will not fix a
+    crashing simulator)."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _variant_slot(criteria)
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "R2 a b 2k\n", "rationale": "..."}),
+    ) as mock_author:
+        result = await author_and_verify_variant(
+            base_body="R1 a b 1k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_ExplodingBackend(),
+            backend=object(),
+        )
+
+    assert result.verdict == "INCONCLUSIVE"
+    assert result.verdict != "REJECT"
+    assert result.candidate is None
+    assert mock_author.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_admitted_candidate_wraps_the_authored_body_not_the_base_body():
+    """Minor 3 (task-6 review): base_body is deliberately DIFFERENT from both
+    the deck's actual BLOCK content ('R1 a b 1k') and from the authored
+    response ('R9 a b 9k'), so identical_body cannot fire either way - the
+    only way this test can fail is a genuine mixup between base_body and the
+    authored subckt_body when author_and_verify_variant builds its
+    Candidate. This replaces an earlier accidental catch where a fixture's
+    base_body happened to equal the deck's own block body, so a base_body/
+    authored-body swap was only caught via identical_body, not directly."""
+    netlist_texts = {"tb1": DECK_TWO_PORT}
+    slot = _variant_slot([])
+
+    with patch(
+        "analogcoder.curation.author_variant",
+        new=AsyncMock(return_value={"subckt_body": "R9 a b 9k\n", "rationale": "..."}),
+    ):
+        result = await author_and_verify_variant(
+            base_body="R5 a b 5k\n",
+            technique="add series resistor",
+            ports=["a", "b"],
+            available_models=set(),
+            scale=1e-6,
+            topology_id="cand_variant",
+            slot=slot,
+            netlist_texts=netlist_texts,
+            sim_backend=_SequencedBackend([{}, {}]),
+            backend=object(),
+        )
+
+    assert result.verdict == "PASS"
+    assert result.candidate.subckt_body == "R9 a b 9k\n"
+    assert result.candidate.subckt_body != "R5 a b 5k\n"
