@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -64,11 +65,35 @@ logger = logging.getLogger(__name__)
 # 않는다.
 _SEC_PER_SIMULATION = 0.93
 
-# 3단의 기본값. "보수적으로 잡는다"는 브리프 규칙대로, 노브 상한과 점 수 둘 다
-# 작게 잡아 기본 실행이 예측 가능한 시간 안에 끝나게 한다 - 필요하면 CLI
-# 플래그로 넓힌다.
-DEFAULT_MAX_KNOBS = 8
-DEFAULT_POINTS = 3
+# 3단의 기본값.
+#
+# **`--max-knobs`의 기본값은 없다(절삭 없음).** 예전 기본값 8은 "보수적으로
+# 잡는다"는 규칙을 비용에만 적용하고 이 게이트의 존재 이유 - 정직한 비교 -
+# 에는 적용하지 않은 것이었다. 실측: 출하된 Ahuja 실행에서 지배 노브
+# `TRIMAMP.XRz.l`은 30개 노브를 알파벳 정렬했을 때 정확히 **9번째**(인덱스 8)
+# 라 `--max-knobs 8`에 잘려 나갔고, 같은 실행이 16회 시뮬 뒤 **ADMIT**으로
+# 끝났다. 잘린 이름이 `knobs_omitted`에 남으므로 조용하지는 않았지만,
+# **판정을 결정하는 노브에 닿을 수 없는 기본값**은 그 사실만으로 나쁜
+# 기본값이다 - 게다가 어느 노브가 결정적인지는 실행 전에 알 수 없으므로
+# "알면 `--knobs`로 좁혀라"는 답이 되지 못한다.
+#
+# 비용은 감당 가능하다: 큐레이션은 오프라인이고 후보당 한 번 돈다. 단일
+# 테스트벤치 슬롯에서 30노브 x 5점 = 150회 ≈ **2.5분**(측정된 0.93초/시뮬).
+# `--max-knobs`는 그대로 남아 있되 **옵트인 속도 상한**이 된다.
+DEFAULT_MAX_KNOBS = None
+
+# `--points`의 기본값이 3이면 실제로 도는 지점은 **양 끝 두 개뿐**이다:
+# 로그 등간격 홀수 격자의 가운뎃점은 기하평균 `sqrt((b/M)*(b*M)) == b`, 즉
+# 기준선 그 자체이고 `_sweep_values`가 그것을 뺀다(2단이 이미 쟀고, 3단은
+# 그 값을 무변경 지점으로 공짜로 갖는다). 그래서 `_sweep_values(10, 3, 3,
+# False) == [3.33, 30.0]`으로 `points=2`와 완전히 같았다 - 기본 실행이 범위의
+# **내부를 한 번도 보지 않았다**.
+#
+# 5로 올린다. 홀수를 유지하는 이유는 격자가 기준선을 중심으로 대칭이기
+# 때문이고(지수 -1, -1/2, 0, +1/2, +1), 가운뎃점이 빠지므로 실제 시뮬은
+# 노브당 4회다: `b/M`, `b/sqrt(M)`, `b*sqrt(M)`, `b*M` - 양 끝과 내부를 모두
+# 본다. Ahuja 증명이 실제로 쓴 값이기도 하다.
+DEFAULT_POINTS = 5
 
 
 # --- 인자 파싱 --------------------------------------------------------------
@@ -94,7 +119,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id", dest="topology_id", required=True, help="topology_id for the candidate")
     parser.add_argument("--out-dir", required=True, help="directory to write the three artifacts into")
 
-    parser.add_argument("--max-knobs", type=int, default=DEFAULT_MAX_KNOBS, help="stage 3: cap on how many of the block's own knobs are swept")
+    parser.add_argument(
+        "--max-knobs",
+        type=int,
+        default=DEFAULT_MAX_KNOBS,
+        help=(
+            "stage 3: OPT-IN speed cap on how many of the block's own knobs are swept "
+            "(alphabetical prefix). Off by default - by default every knob of the block "
+            "is swept, because a count-based cut is decided by alphabetical order and "
+            "the deciding knob is not knowable before the run"
+        ),
+    )
     parser.add_argument("--points", type=int, default=DEFAULT_POINTS, help="stage 3: how many log-spaced points per knob")
     parser.add_argument(
         "--knobs",
@@ -296,6 +331,9 @@ class _RunContext:
     candidate: Candidate | None = None
     addresses: list[str] = field(default_factory=list)
     stages: list[StageResult] = field(default_factory=list)
+    # 소스 C 에이전트가 낸 설명. 어떤 게이트도 읽지 않지만(그래서 스키마에서
+    # optional이다) 버리지도 않는다 - 산출물까지 실어 사람이 읽게 한다.
+    rationale: str | None = None
 
 
 def _stage_fail_reason(name: str, stage: StageResult) -> str:
@@ -372,6 +410,7 @@ def _finalize(ctx: _RunContext, verdict: str, reason: str, description: str = ""
         "verified_at": _verified_at(ctx.stages),
         "stages": list(ctx.stages),
         "addresses": list(ctx.addresses),
+        "rationale": ctx.rationale,
         "candidate": ctx.candidate,
         "description": description,
         "description_source": description_source,
@@ -385,14 +424,37 @@ def _comparison_scope_text(detail: dict) -> str:
     `knob_names_requested`가 있으면(명명된 좁히기, `max_knobs`와 나란한
     선택지 - `scoped_comparison`의 docstring 참고) 그 사실 자체를 앞에
     적는다 - "몇 개를 스윕했는가"만으로는 "이 실행이 특정 노브로 의도적으로
-    좁혀졌다"는 사실이 사라진다."""
+    좁혀졌다"는 사실이 사라진다.
+
+    **판정은 `is not None`이지 truthiness가 아니다.** `--knobs ""`는 `[]`로
+    파싱되고(그 구별은 `_parse_knob_names`의 docstring이 일부러 보존한다),
+    `if requested:`는 그 빈 리스트를 "요청 없음"과 똑같이 버려서 리포트가
+    "0 knob(s) swept (none)"만 말하고 좁히기가 요청됐다는 사실은 사라졌다.
+    `--max-knobs 0`/`--points 0`도 같은 모양이고 파서는 둘 다 받아들이므로,
+    셋 다 명시적으로 적는다."""
     knobs = detail.get("knobs_swept", [])
     knob_names = [k["knob"] for k in knobs]
+    narrowings: list[str] = []
+
     requested = detail.get("knob_names_requested")
-    prefix = f"scope narrowed to explicitly requested knob(s) {requested} - " if requested else ""
+    if requested is not None:
+        narrowings.append(f"--knobs restricted the sweep to {requested or 'NOTHING (an empty list was requested)'}")
+
+    max_knobs = detail.get("max_knobs_requested")
+    if max_knobs is not None:
+        narrowings.append(f"--max-knobs capped the sweep at {max_knobs} knob(s)")
+
+    prefix = f"scope narrowed: {'; '.join(narrowings)} - " if narrowings else ""
+    # `points`는 좁히기가 아니라 언제나 참인 범위 사실이므로 접두가 아니라
+    # 본문에 적는다 - 다만 0이면 어떤 노브도 실제로는 시뮬레이션되지 않으므로
+    # 그것은 명시적으로 말한다.
+    points = detail.get("points_requested")
+    points_text = f", {points} point(s) requested per knob" if points is not None else ""
+    if points == 0:
+        points_text += " (zero - no sweep point was simulated for any knob)"
     return (
-        f"{prefix}{len(knobs)} knob(s) swept ({', '.join(knob_names) if knob_names else 'none'}), "
-        f"{detail.get('simulation_count', 0)} simulation(s) total"
+        f"{prefix}{len(knobs)} knob(s) swept ({', '.join(knob_names) if knob_names else 'none'})"
+        f"{points_text}, {detail.get('simulation_count', 0)} simulation(s) total"
     )
 
 
@@ -401,12 +463,11 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
     knob_names = _parse_knob_names(getattr(args, "knobs", None))
 
     spec = load_spec(args.slot_spec)
-    spec_dir = Path(os.path.dirname(os.path.abspath(args.slot_spec)))
     netlist_texts: dict[str, str] = {}
     for tb in spec.testbenches:
         with open(tb.netlist_path) as f:
             netlist_texts[tb.name] = resolve_includes(f.read(), os.path.dirname(tb.netlist_path))
-    ctx.slot = Slot(spec=spec, spec_dir=spec_dir, block_path=args.slot_block)
+    ctx.slot = Slot(spec=spec, block_path=args.slot_block)
 
     # 브리프 규칙 5: 다중 테스트벤치 슬롯이면 시작 시 예상 시뮬 횟수/시간을
     # 로그로 낸다. 판정에는 아무 영향도 주지 않는다 - 순수한 기록이다.
@@ -433,6 +494,7 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
             sim_backend=sim_backend,
             backend=agent_backend,
         )
+        ctx.rationale = variant.rationale
         if variant.structure is not None:
             ctx.stages.append(variant.structure)
         if variant.reproduce is not None:
@@ -532,6 +594,38 @@ async def run_curation(args, sim_backend: SimulatorBackend | None = None, agent_
 # --- 산출물 -------------------------------------------------------------------
 
 
+# 비유한 float를 JSON으로 내보낼 때 쓰는 문자열 표지들. `json.dump`의 기본
+# 동작은 `NaN`/`Infinity`라는 **bare 토큰**을 쓰는 것인데, 그것은 RFC 8259가
+# 아니어서 엄격한 파서는 파일 전체를 거부한다(실측: `jq`와 JS `JSON.parse`
+# 둘 다 거부). 이 파일에는 실제로 NaN이 들어간다 - `per_criterion[...]
+# ["baseline"]`은 기존 본문이 후보가 낸 measurement를 못 낸 경우 `math.nan`
+# 이고, 그것은 정상 경로다.
+#
+# `null`로 바꾸지 않는다: 이 산출물에서 `null`은 이미 "그 필드가 없다"를
+# 뜻하고(예: `dominating_point: null`), NaN은 "쟀는데 값이 안 나왔다"는 다른
+# 사실이다. 둘을 같은 토큰으로 접으면 이 저장소가 반복해 온 실수를 산출물
+# 형식에서 다시 하는 것이다. 문자열 표지는 유효한 JSON이면서 그 구별을
+# 보존한다.
+_NON_FINITE_JSON = {"nan": "NaN", "inf": "Infinity", "-inf": "-Infinity"}
+
+
+def _json_safe(value):
+    """`json.dump(..., allow_nan=False)`가 던지는 대신, 비유한 float를 문자열
+    표지로 바꿔 **유효한** RFC 8259 JSON을 낸다. dict/list를 재귀적으로 훑고
+    그 밖의 값은 그대로 둔다."""
+    if isinstance(value, float):
+        if math.isnan(value):
+            return _NON_FINITE_JSON["nan"]
+        if math.isinf(value):
+            return _NON_FINITE_JSON["inf" if value > 0 else "-inf"]
+        return value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def write_curation_json(out_dir: str, result: dict) -> str:
     os.makedirs(out_dir, exist_ok=True)
     payload = {
@@ -543,12 +637,19 @@ def write_curation_json(out_dir: str, result: dict) -> str:
         "addresses": result["addresses"],
         "description": result["description"],
         "description_source": result["description_source"],
+        # 소스 C 에이전트가 낸 `rationale`. 판정에는 쓰이지 않지만(스키마에서
+        # optional로 내린 것도 그 때문이다) 있으면 사람이 읽을 값이므로
+        # 버리지 않고 여기 남긴다 - 그 전에는 `VariantAuthorResult` 필드
+        # 하나로 존재하다 그대로 사라졌다.
+        "rationale": result.get("rationale"),
         "candidate": asdict(result["candidate"]) if result["candidate"] is not None else None,
         "stages": [asdict(stage) for stage in result["stages"]],
     }
     path = os.path.join(out_dir, "curation.json")
     with open(path, "w") as f:
-        json.dump(payload, f, indent=2)
+        # allow_nan=False로 못 박아 두면, 나중에 누가 _json_safe를 우회하는
+        # 경로를 추가했을 때 조용히 비표준 JSON이 나가는 대신 여기서 터진다.
+        json.dump(_json_safe(payload), f, indent=2, allow_nan=False)
     return path
 
 
@@ -567,20 +668,55 @@ def write_topology_candidate_py(out_dir: str, result: dict) -> str:
             f"# Curation verdict: {result['verdict']}\n"
             f"# No candidate body was ever constructed - reason: {result['reason']}\n"
         )
-    else:
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    entry_lines = [
+        "CANDIDATE = Topology(",
+        f"    id={candidate.topology_id!r},",
+        f"    description={result['description']!r},",
+        f"    subckt_body={candidate.subckt_body!r},",
+        f"    addresses={result['addresses']!r},",
+        f"    ports={candidate.ports!r},",
+        f"    assumes_scale={candidate.assumes_scale!r},",
+        f"    provenance={candidate.provenance!r},",
+        f"    verified_at={result['verified_at']!r},",
+        ")",
+    ]
+
+    if result["verdict"] == "ADMIT":
         text = (
             "from analogcoder.topologies import Topology\n\n"
-            f"# Curation verdict: {result['verdict']} ({result['reason']})\n"
-            "CANDIDATE = Topology(\n"
-            f"    id={candidate.topology_id!r},\n"
-            f"    description={result['description']!r},\n"
-            f"    subckt_body={candidate.subckt_body!r},\n"
-            f"    addresses={result['addresses']!r},\n"
-            f"    ports={candidate.ports!r},\n"
-            f"    assumes_scale={candidate.assumes_scale!r},\n"
-            f"    provenance={candidate.provenance!r},\n"
-            f"    verified_at={result['verified_at']!r},\n"
-            ")\n"
+            f"# Curation verdict: ADMIT ({result['reason']})\n"
+            + "\n".join(entry_lines)
+            + "\n"
+        )
+    else:
+        # **입회하지 못한 스니펫은 실수로 붙여 넣을 수 없어야 한다.** 예전에는
+        # REJECT/INCONCLUSIVE도 문법적으로 멀쩡하고 import 가능한
+        # `Topology(...)`를 그대로 냈고, 그것이 입회본과 다르다는 표시는 2번째
+        # 줄의 `#` 주석 하나뿐이었다 - 라이브러리의 가치가 "사람이 측정 증거를
+        # 보고 커밋했다"인데, 그 사람이 주석 한 줄을 놓치면 거부된 본문이
+        # 라이브러리에 들어간다.
+        #
+        # 그래서 비-ADMIT은 항목 전체를 **주석 처리해** 낸다: 붙여 넣어도
+        # 아무 일도 일어나지 않고, 되살리려면 한 줄씩 주석을 벗겨야 하므로
+        # 실수로는 불가능하다. 사실 자체(무엇이 후보였는지, 왜 거부/미확정
+        # 됐는지)는 하나도 잃지 않는다 - 그것이 이 산출물의 존재 이유다.
+        text = (
+            f"# Curation verdict: {result['verdict']}\n"
+            f"# Reason: {result['reason']}\n"
+            "#\n"
+            "# THIS ENTRY WAS NOT ADMITTED. The snippet below is commented out on\n"
+            "# purpose so that pasting it into topologies.py does nothing. Only a\n"
+            "# curation run that ends in ADMIT emits pasteable code. If you believe\n"
+            "# this verdict is wrong, fix what it measured and re-run the gate -\n"
+            "# do not uncomment this.\n"
+            "#\n"
+            "# from analogcoder.topologies import Topology\n"
+            + "\n".join(f"# {line}" for line in entry_lines)
+            + "\n"
         )
 
     with open(path, "w") as f:
@@ -669,6 +805,10 @@ def write_curation_report_md(out_dir: str, result: dict) -> str:
         "## Addresses (measured improvement over the incumbent)",
         "",
         f"{result['addresses'] if result['addresses'] else 'none'}",
+        "",
+        "## Variant author rationale (source C only)",
+        "",
+        (result["rationale"] or "(none - this source does not produce one, or the agent omitted it)"),
         "",
         "## Description",
         "",

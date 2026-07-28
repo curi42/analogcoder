@@ -43,7 +43,7 @@ R1 a b 1k
 def _dummy_slot(block_path: str = "BLOCK") -> Slot:
     """A Slot whose `spec` field is never read by check_structure (it only
     consults slot.block_path), so a bare stand-in is enough there."""
-    return Slot(spec=SimpleNamespace(testbenches=[], all_criteria=[]), spec_dir=Path("."), block_path=block_path)
+    return Slot(spec=SimpleNamespace(testbenches=[], all_criteria=[]), block_path=block_path)
 
 
 def test_structure_failure_carries_the_swap_rejection_reason_verbatim():
@@ -193,7 +193,7 @@ def _slot_with_criteria(criteria: list[Criterion]) -> Slot:
         criteria=criteria,
     )
     spec = SimpleNamespace(testbenches=[tb], all_criteria=criteria, canonical=tb)
-    return Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+    return Slot(spec=spec, block_path="BLOCK")
 
 
 def _candidate(provenance: str = "authored") -> Candidate:
@@ -439,7 +439,7 @@ def _scoped_slot(criteria: list[Criterion], netlist_text: str, block_path: str =
         canonical=tb,
         circuit_name="test",
     )
-    return Slot(spec=spec, spec_dir=Path("."), block_path=block_path)
+    return Slot(spec=spec, block_path=block_path)
 
 
 class _ConstantBackend:
@@ -1052,7 +1052,7 @@ R1 a b 2k
         name="tb2", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[]
     )
     spec = SimpleNamespace(testbenches=[tb1, tb2], all_criteria=criteria, canonical=tb1, circuit_name="test")
-    slot = Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+    slot = Slot(spec=spec, block_path="BLOCK")
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
@@ -1448,7 +1448,7 @@ def _corner_slot(criteria: list[Criterion], netlist_text: str, pvt_corners: PVTC
         circuit_name="test",
         pvt_corners=pvt_corners,
     )
-    return Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+    return Slot(spec=spec, block_path="BLOCK")
 
 
 class _CornerBackend:
@@ -2235,7 +2235,7 @@ async def test_an_authored_body_that_drops_a_port_is_retried_not_ended():
         name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[]
     )
     spec = SimpleNamespace(testbenches=[tb], all_criteria=[], canonical=tb)
-    slot = Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+    slot = Slot(spec=spec, block_path="BLOCK")
 
     responses = [
         {"subckt_body": "R1 a b 1k\n", "rationale": "dropped the bias device"},
@@ -2381,3 +2381,52 @@ def test_a_deck_with_no_includes_at_all_records_scale_1_as_a_fact():
     deck = "* t\n.subckt BLOCK a b\nR1 a b 1k\n.ends BLOCK\n.end\n"
     candidate = candidate_from_deck(deck, "BLOCK", "no_includes")
     assert candidate.assumes_scale == 1.0
+
+
+# --- M2: stage 3 records what narrowing was REQUESTED, not just its effect ---
+
+
+def test_stage_3_detail_records_every_requested_narrowing_including_zero():
+    """`knobs_omitted` alone cannot distinguish "this block has no knobs" from
+    "you asked me to sweep zero of them": `--knobs ""` parses to `[]` (a
+    distinction _parse_knob_names deliberately preserves) and `--max-knobs 0`
+    / `--points 0` are both accepted by the parser. The requested values
+    themselves must therefore survive into the recorded scope.
+
+    Mutation this catches: deleting `max_knobs_requested`/`points_requested`
+    from scoped_comparison's detail dict (observed: KeyError on both
+    assertions below - verified by removing exactly those two lines)."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        _ConstantBackend({"gain_db": 1.0}),
+        candidate_measurements={"gain_db": 5.0},
+        incumbent_measurements={"gain_db": 1.0},
+        max_knobs=0,
+        points=0,
+        knob_names=[],
+    )
+
+    assert result.detail["max_knobs_requested"] == 0
+    assert result.detail["points_requested"] == 0
+    assert result.detail["knob_names_requested"] == []
+    # ... and with nothing requested, the same keys record that too (None is
+    # "no narrowing asked for", which is not 0).
+    unnarrowed = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        _ConstantBackend({"gain_db": 1.0}),
+        candidate_measurements={"gain_db": 5.0},
+        incumbent_measurements={"gain_db": 1.0},
+        max_knobs=None,
+        points=5,
+        knob_names=None,
+    )
+    assert unnarrowed.detail["max_knobs_requested"] is None
+    assert unnarrowed.detail["points_requested"] == 5
+    assert unnarrowed.detail["knob_names_requested"] is None

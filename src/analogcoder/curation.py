@@ -37,7 +37,6 @@ import math
 import os
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 from analogcoder.agents.backend import AgentBackend, AgentExecutionError
 from analogcoder.agents.variant_author import author_variant
@@ -293,10 +292,16 @@ def candidate_from_technique(subckt_body: str, ports: list[str], assumes_scale: 
 
 @dataclass(frozen=True)
 class Slot:
-    """후보가 겨루는 대상 - 어느 스펙의 어느 블록인지."""
+    """후보가 겨루는 대상 - 어느 스펙의 어느 블록인지.
+
+    `spec_dir`는 **없다.** 한때 있었고 `cli_curate`가 채웠지만 이 저장소의
+    어느 코드도 그것을 읽지 않았다: 넷리스트 경로는 `load_spec`이 이미
+    스펙 파일 기준으로 절대화하고(`spec.py`), include는 `resolve_includes`가
+    각 넷리스트 자신의 디렉터리 기준으로 절대화한다. 읽히지 않는 필드는
+    "이 정보가 필요하다"는 거짓 신호이고, 그것을 채우는 코드는 언젠가
+    그 값이 맞는지 아무도 확인하지 않은 채 진짜로 읽히기 시작한다."""
 
     spec: TargetSpec
-    spec_dir: Path
     block_path: str
 
 
@@ -1244,6 +1249,11 @@ def scoped_comparison(
                     "'could not judge' is a different fact from 'nothing dominated the "
                     "candidate', and reporting the latter would let the gate pass silently"
                 ),
+                "knob_names_requested": (
+                    [f"{refdes}.{param}" for refdes, param in knob_names] if knob_names is not None else None
+                ),
+                "max_knobs_requested": max_knobs,
+                "points_requested": points,
                 "knobs_swept": [],
                 "knobs_omitted": [],
                 "knobs_unresolved": [],
@@ -1458,7 +1468,16 @@ def scoped_comparison(
         "tolerance_note": tolerance_note,
         "sweep_bounds_note": sweep_bounds_note,
         "incumbent_point": incumbent_point,
+        # 세 가지 좁히기 요청을 **전부** 기록한다 - 무엇이 잘렸는지가 아니라
+        # 무엇이 요청됐는지를. `knobs_omitted`만으로는 부족하다: `--knobs ""`는
+        # `[]`로 파싱돼(그 구별은 `_parse_knob_names`가 일부러 보존한다) 모든
+        # 노브를 잘라내지만, 리포트는 "0 knob(s) swept (none)"만 말하고 좁히기가
+        # **요청됐다는 사실**은 사라졌다. `--max-knobs 0` / `--points 0`도 같은
+        # 모양이고 파서는 둘 다 받아들인다. 요청된 값이 그대로 남아야
+        # "아무것도 스윕할 것이 없었다"와 "0으로 좁혀 달라고 했다"가 구별된다.
         "knob_names_requested": knob_names_requested,
+        "max_knobs_requested": max_knobs,
+        "points_requested": points,
         "knobs_swept": knobs_swept,
         "knobs_omitted": knobs_omitted,
         "knobs_unresolved": knobs_unresolved,

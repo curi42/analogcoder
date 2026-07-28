@@ -56,7 +56,6 @@ it's included.
 import math
 import os
 import shutil
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -125,7 +124,7 @@ def _full_trimamp_slot() -> tuple[Slot, dict[str, str]]:
     criteria across all 4 amps. Used by the "genuine finding" test below."""
     spec = load_spec(SLOT_SPEC_PATH)
     netlist_texts = _load_netlist_texts(spec)
-    slot = Slot(spec=spec, spec_dir=Path(BENCH), block_path="TRIMAMP")
+    slot = Slot(spec=spec, block_path="TRIMAMP")
     return slot, netlist_texts
 
 
@@ -191,7 +190,7 @@ def _trimamp_own_loop_slot() -> tuple[Slot, dict[str, str]]:
         canonical=tb,
         circuit_name=spec.circuit_name,
     )
-    slot = Slot(spec=scoped_spec, spec_dir=Path(BENCH), block_path="TRIMAMP")
+    slot = Slot(spec=scoped_spec, block_path="TRIMAMP")
     return slot, netlist_texts
 
 
