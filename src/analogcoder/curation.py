@@ -35,6 +35,7 @@ from analogcoder.area_limits import (
 )
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import apply_changes, apply_topology_swap
+from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.spec import TargetSpec, Testbench
 from analogcoder.structure import derive_structure
 from analogcoder.topologies import Topology
@@ -293,6 +294,155 @@ def reproduce_characteristics(
         "simulation_count": simulations_attempted,
     }
     return StageResult(name="reproduce", status="pass", detail=detail), addresses
+
+
+def verify_corners(
+    candidate: Candidate,
+    slot: Slot,
+    netlist_texts: dict[str, str],
+    sim_backend,
+    addresses: list[str],
+) -> StageResult:
+    """2.5단: 저술본(`provenance == "authored"`)에만 붙는 코너 검증.
+
+    추출본은 이미 45코너 스윕을 통과한 덱에서 나오고, 파일 제출본은 제출자의
+    책임이다 - 이 단계가 실제로 시뮬레이션을 도는 대상은 **LLM이 지어낸** 본문
+    뿐이다. `provenance`가 그 밖의 값이면 스윕 없이 `skipped`를 돌려주되
+    `detail["why"]`에 사유를 적는다 - 건너뛴 것도 기록이라는 이 저장소의
+    규칙대로, "이 출처는 대상이 아니다"와 "게이트가 조용히 사라졌다"를
+    로그에서 구별할 수 있어야 한다.
+
+    슬롯의 스펙이 `pvt_corners`를 선언하지 않으면 `inconclusive`를 돌려준다 -
+    `fail`이 아니다. 코너를 잴 방법이 없다는 것은 "이 회로가 코너에서
+    나쁘다"는 사실이 아니라 "재 보지 못했다"는 사실이고, 이 둘을 접으면
+    F1이 반복한 실수를 여기서도 반복하는 것이다.
+
+    스윕은 정확히 둘 - 후보를 이 슬롯에 스왑한 덱 한 번, 기존 본문 그대로
+    한 번. `run_full_pvt_sweep`가 이미 코너 x 테스트벤치 전체를 도므로,
+    이 함수가 다시 코너마다 또는 노브마다 도는 일은 없다(3단의 "노브 하나씩
+    스윕"과는 다른 축이다 - 여기서 노브는 전혀 스윕하지 않는다).
+
+    요구는 둘이다:
+    1. 모든 코너에서 모든 기준(주소 지정된 것만이 아니라 스펙의 전체
+       기준)의 measurement가 나와야 한다. `run_full_pvt_sweep`은 어느
+       코너에서든 한 기준의 measurement가 빠지면 그 기준 전체를 결측으로
+       돌려주므로(withhold), 여기서는 그 결과의 `actual`이 NaN인지만 보면
+       된다 - 후보 쪽 스윕과 기존 본문 쪽 스윕 양쪽 다.
+    2. `addresses`에 오른 각 기준에서, 후보의 최악 코너 값이 기존 본문의
+       최악 코너 값보다 **엄격히** 나아야 한다(`_is_better` - 2단이 이미
+       쓰는 것과 같은 함수, 같은 "동률은 개선이 아니다" 규칙). 이것은
+       nominal 비교가 아니라 각 스윕이 이미 계산해 낸 최악값끼리의
+       비교다 - nominal에서는 이겨도 최악 코너에서 지면 `fail`이다.
+
+    이 단계는 3단(`scoped_comparison`)의 범위 밝힌 비교를 코너로 확장하지
+    **않는다** - 다른 토폴로지/노브 값을 코너에서 스윕하는 일은 없고, 오직
+    이 후보와 이 기존 본문 각각의 최악 코너 값만 비교한다. 그 한계를
+    `detail["scope_note"]`에 문자열로 적어, 결과를 읽는 사람이 "코너를 감안한
+    파레토 비교"로 오해하지 않게 한다.
+
+    시뮬레이터 예외는 2단과 같은 이유로 거부가 아니라 `inconclusive`다 - 이
+    저장소의 규칙대로 어떤 예외도 큐레이션을 트레이스백으로 끝내지 않는다."""
+    if candidate.provenance != "authored":
+        return StageResult(
+            name="corners",
+            status="skipped",
+            detail={
+                "why": (
+                    f"provenance is {candidate.provenance!r}, not 'authored' - corner "
+                    "verification applies only to authored bodies (an extracted body "
+                    "already comes from a deck that passed a full corner sweep; a file "
+                    "body is the submitter's responsibility, not this pipeline's)"
+                ),
+            },
+        )
+
+    if slot.spec.pvt_corners is None:
+        return StageResult(
+            name="corners",
+            status="inconclusive",
+            detail={
+                "why": (
+                    "the slot's spec declares no pvt_corners, so worst-case corner "
+                    "behaviour cannot be measured for this authored candidate - this is "
+                    "not evidence the candidate is bad, only that it was never tried"
+                ),
+            },
+        )
+
+    testbenches = slot.spec.testbenches
+    candidate_texts = {
+        tb.name: apply_topology_swap(netlist_texts[tb.name], slot.block_path, candidate.subckt_body)
+        for tb in testbenches
+    }
+
+    current_sweep = "candidate"
+    try:
+        candidate_sweep = run_full_pvt_sweep(candidate_texts, slot.spec, sim_backend)
+        current_sweep = "baseline"
+        baseline_sweep = run_full_pvt_sweep(netlist_texts, slot.spec, sim_backend)
+    except Exception as exc:  # noqa: BLE001 - 시뮬레이터 예외는 거부가 아니라 inconclusive
+        return StageResult(
+            name="corners",
+            status="inconclusive",
+            detail={"error": str(exc), "failed_during": current_sweep},
+        )
+
+    candidate_by_name = {r["name"]: r for r in candidate_sweep["criteria"]}
+    baseline_by_name = {r["name"]: r for r in baseline_sweep["criteria"]}
+
+    scope_note = (
+        "this stage compares only the candidate's and incumbent's own worst-corner "
+        "values over the full corner grid (two sweeps total) - it does NOT extend "
+        "stage 3's single-knob scoped comparison to corners; no other topology or "
+        "parameter value was swept at any corner here"
+    )
+
+    missing_candidate = sorted(name for name, r in candidate_by_name.items() if math.isnan(r["actual"]))
+    missing_baseline = sorted(name for name, r in baseline_by_name.items() if math.isnan(r["actual"]))
+    missing = sorted(set(missing_candidate) | set(missing_baseline))
+    if missing:
+        return StageResult(
+            name="corners",
+            status="fail",
+            detail={
+                "missing": missing,
+                "missing_candidate": missing_candidate,
+                "missing_baseline": missing_baseline,
+                "candidate_worst_case_corners": candidate_sweep["worst_case_corners"],
+                "baseline_worst_case_corners": baseline_sweep["worst_case_corners"],
+                "scope_note": scope_note,
+            },
+        )
+
+    criteria_by_name = {c.name: c for c in slot.spec.all_criteria}
+    per_address: dict = {}
+    worse: list[str] = []
+    for name in addresses:
+        criterion = criteria_by_name[name]
+        candidate_value = candidate_by_name[name]["actual"]
+        baseline_value = baseline_by_name[name]["actual"]
+        better = _is_better(criterion.operator, candidate_value, baseline_value)
+        per_address[name] = {
+            "operator": criterion.operator,
+            "candidate_worst": candidate_value,
+            "baseline_worst": baseline_value,
+            "candidate_worst_corner": candidate_sweep["worst_case_corners"].get(name),
+            "baseline_worst_corner": baseline_sweep["worst_case_corners"].get(name),
+            "better": better,
+        }
+        if not better:
+            worse.append(name)
+
+    status = "fail" if worse else "pass"
+    detail = {
+        "addresses": addresses,
+        "criteria": per_address,
+        "worse": worse,
+        "candidate_worst_case_corners": candidate_sweep["worst_case_corners"],
+        "baseline_worst_case_corners": baseline_sweep["worst_case_corners"],
+        "scope_note": scope_note,
+    }
+    return StageResult(name="corners", status=status, detail=detail)
 
 
 def _at_least_as_good(operator: str, value: float, reference: float) -> bool:

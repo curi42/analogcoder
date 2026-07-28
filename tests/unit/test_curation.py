@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,9 +12,10 @@ from analogcoder.curation import (
     check_structure,
     reproduce_characteristics,
     scoped_comparison,
+    verify_corners,
 )
 from analogcoder.simulators.base import RawSimResult
-from analogcoder.spec import Criterion
+from analogcoder.spec import Criterion, PVTCorners
 
 # --- fixtures shared across this file ---------------------------------------
 
@@ -185,13 +187,13 @@ def _slot_with_criteria(criteria: list[Criterion]) -> Slot:
     return Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
 
 
-def _candidate() -> Candidate:
+def _candidate(provenance: str = "authored") -> Candidate:
     return Candidate(
         topology_id="cand",
         subckt_body="R2 a b 2k\n",
         ports=["a", "b"],
         assumes_scale=1e-6,
-        provenance="authored",
+        provenance=provenance,
     )
 
 
@@ -892,3 +894,248 @@ def test_the_reported_range_matches_the_first_and_last_swept_values_exactly():
     knob = result.detail["knobs_swept"][0]
     assert knob["swept_values"][0] == knob["range"][0]
     assert knob["swept_values"][-1] == knob["range"][1]
+
+
+# --- verify_corners ------------------------------------------------------------
+
+# A swappable block with an explicit Vdd source, so a fake backend can read
+# the corner's rendered voltage straight off the deck text (pvt.render_corner_
+# netlist rewrites this line's DC value per corner) without needing a real
+# ngspice run or real PDK include files.
+DECK_CORNER = """* t
+.option scale=1.0u
+.subckt BLOCK a b vdd vss
+R1 a b 1k
+.ends BLOCK
+Xu1 n1 n2 vdd vss BLOCK
+Vdd vdd 0 DC 1.8
+.end
+"""
+
+
+def _corner_slot(criteria: list[Criterion], netlist_text: str, pvt_corners: PVTCorners | None) -> Slot:
+    tb = SimpleNamespace(
+        name="tb1",
+        netlist_path="/dev/null",
+        analyses=["op"],
+        control_block=".control\nop\n.endc",
+        criteria=criteria,
+    )
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        all_criteria=criteria,
+        canonical=tb,
+        circuit_name="test",
+        pvt_corners=pvt_corners,
+    )
+    return Slot(spec=spec, spec_dir=Path("."), block_path="BLOCK")
+
+
+class _CornerBackend:
+    """A fake corner-aware backend: reports measurements as an arbitrary
+    function of (is_candidate, voltage), read straight off the rendered deck
+    text - which body it is (candidate's swapped-in 'R2 a b' line vs the
+    baseline's original 'R1 a b') and which corner voltage
+    pvt.render_corner_netlist wrote into the Vdd line. Lets a test construct
+    an exact per-corner, per-deck trade-off without a real simulator."""
+
+    def __init__(self, measurement_fn):
+        self._measurement_fn = measurement_fn
+
+    def run(self, netlist_path, testbench_config):
+        with open(netlist_path) as f:
+            text = f.read()
+        is_candidate = "R2 a b" in text
+        voltage = float(re.search(r"Vdd\s+\S+\s+\S+\s+DC\s+(\S+)", text).group(1))
+        measurements = self._measurement_fn(is_candidate, voltage)
+        return RawSimResult(status="success", measurements=measurements, raw_log="", warnings=[])
+
+
+def test_an_extracted_candidate_skips_corners_and_records_why():
+    """provenance == 'extracted' must never trigger a corner sweep at all -
+    an exploding backend proves it, since any call to sim_backend.run would
+    raise. A mutation that removed the provenance gate (so every candidate
+    gets swept) would hit that raise and fail this test with a RuntimeError
+    instead of the expected StageResult."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate = _candidate(provenance="extracted")
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, _ExplodingBackend(), addresses=["gain"])
+
+    assert result.name == "corners"
+    assert result.status == "skipped"
+    assert "extracted" in result.detail["why"]
+
+
+def test_a_file_candidate_also_skips_corners():
+    """The asymmetry is 'authored only', not 'authored vs extracted' - a
+    file-provenance candidate must skip too. Without this, a mutation that
+    narrowed the gate to `provenance == "extracted"` (inverted, effectively
+    "not authored" only for one of the two non-authored sources) would slip
+    through the extracted test above but still wrongly sweep a file candidate."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate = _candidate(provenance="file")
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, _ExplodingBackend(), addresses=["gain"])
+
+    assert result.status == "skipped"
+    assert "file" in result.detail["why"]
+
+
+def test_an_authored_candidate_requires_corners():
+    """The mirror of the extracted test: an authored candidate on a spec that
+    DOES declare pvt_corners must actually run the corner sweep and produce a
+    real verdict, not 'skipped'. If the provenance gate were inverted (skip
+    authored, sweep everything else), this would wrongly come back
+    'skipped' instead of 'pass'."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    # Candidate strictly beats baseline at every corner voltage.
+    backend = _CornerBackend(lambda is_candidate, voltage: {"gain_db": 100.0 if is_candidate else 10.0})
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["gain"])
+
+    assert result.status == "pass"
+
+
+def test_an_authored_candidate_on_a_spec_without_corners_is_inconclusive_not_rejected():
+    """'이 회로가 나쁘다'와 '재보지 못했다'는 다른 사실이다. No pvt_corners
+    declared on the slot's spec means there is nothing to sweep - the result
+    must be 'inconclusive', never 'fail' (a mutation collapsing the two would
+    reject a candidate this stage never actually measured at any corner), and
+    never 'skipped' either (that status is reserved for the provenance gate -
+    an authored candidate on a corner-less spec WAS asked for a corner
+    verdict, it just couldn't get one)."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _corner_slot(criteria, DECK_CORNER, pvt_corners=None)
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, _ExplodingBackend(), addresses=["gain"])
+
+    assert result.status == "inconclusive"
+    assert result.status != "fail"
+    assert result.status != "skipped"
+
+
+def test_a_missing_measurement_at_any_corner_fails():
+    """The 'settle' criterion is NOT in addresses, and its measurement is
+    never reported at 1.62V, for either the candidate or the baseline deck.
+    The one addressed criterion ('gain') is won by the candidate at every
+    corner. If requirement 1 (every criterion's measurement must appear at
+    every corner) were dropped and only the addressed criteria were checked,
+    this would wrongly come back 'pass' - the missing-elsewhere criterion is
+    what must independently sink it."""
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+        Criterion(name="settle", measurement="settle_us", operator="<=", threshold=100.0),
+    ]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+
+    def measurement_fn(is_candidate, voltage):
+        measurements = {"gain_db": 100.0 if is_candidate else 10.0}
+        if voltage == 1.8:
+            measurements["settle_us"] = 10.0
+        return measurements
+
+    backend = _CornerBackend(measurement_fn)
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["gain"])
+
+    assert result.status == "fail"
+    assert "settle" in result.detail["missing"]
+
+
+def test_winning_at_nominal_but_losing_at_the_worst_corner_fails():
+    """At 1.8V (a stand-in for 'nominal') the candidate beats the baseline
+    (100 > 50) - a naive comparison using only that corner would call this a
+    win. But 'gain' is a '>=' criterion, so the worst case is the MINIMUM
+    across corners: candidate's worst is 10 (at 1.62V), baseline's worst is
+    50 (at 1.8V). 10 is not better than 50, so the correct, corner-aware
+    comparison must fail this candidate even though it wins at 1.8V."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate_gain = {1.8: 100.0, 1.62: 10.0}
+    baseline_gain = {1.8: 50.0, 1.62: 60.0}
+    backend = _CornerBackend(
+        lambda is_candidate, voltage: {"gain_db": (candidate_gain if is_candidate else baseline_gain)[voltage]}
+    )
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["gain"])
+
+    assert result.status == "fail"
+    assert "gain" in result.detail["worse"]
+    assert result.detail["criteria"]["gain"]["candidate_worst"] == pytest.approx(10.0)
+    assert result.detail["criteria"]["gain"]["baseline_worst"] == pytest.approx(50.0)
+
+
+def test_only_two_sweeps_are_run(monkeypatch):
+    """Regardless of how many corners/testbenches a real sweep would cover,
+    verify_corners must call run_full_pvt_sweep EXACTLY twice - once for the
+    candidate-swapped deck, once for the untouched baseline. A mutation that
+    swept per-knob at corners too (mirroring stage 3's scoped_comparison,
+    which the brief explicitly rules out) would call it more than twice."""
+    import analogcoder.curation as curation_module
+
+    calls: list[dict] = []
+
+    def fake_run_full_pvt_sweep(netlist_texts, spec, sim_backend):
+        calls.append(netlist_texts)
+        return {
+            "criteria": [{"name": "gain", "actual": 100.0, "pass": True, "target": ">=0.0", "margin": 100.0}],
+            "worst_case_corners": {"gain": {"process": "tt", "voltage": 1.8, "temperature": 27.0, "value": 100.0}},
+        }
+
+    monkeypatch.setattr(curation_module, "run_full_pvt_sweep", fake_run_full_pvt_sweep)
+
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate = _candidate()
+
+    result = curation_module.verify_corners(candidate, slot, {"tb1": DECK_CORNER}, object(), addresses=["gain"])
+
+    assert len(calls) == 2
+    assert result.status in ("pass", "fail")  # ran to completion without raising
+
+
+def test_a_simulator_exception_during_corner_verification_is_inconclusive_not_a_rejection():
+    """Matches the rest of this repo's rule for every stage that touches
+    sim_backend: a simulator exception is not evidence the candidate is bad,
+    so it must not surface as 'fail'."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, _ExplodingBackend(), addresses=["gain"])
+
+    assert result.status == "inconclusive"
+    assert result.status != "fail"
+
+
+def test_the_scope_limit_is_recorded_when_the_stage_actually_runs():
+    """Requirement 5: this stage must say in words that it does not extend
+    stage 3's comparison to corners, whenever it actually ran a comparison
+    (pass or fail) - not just when something goes wrong. A mutation that
+    dropped this note (or only added it on the fail path) is caught here."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    backend = _CornerBackend(lambda is_candidate, voltage: {"gain_db": 100.0 if is_candidate else 10.0})
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["gain"])
+
+    assert result.status == "pass"
+    assert "scope_note" in result.detail
+    assert "stage 3" in result.detail["scope_note"] or "3단" in result.detail["scope_note"]
