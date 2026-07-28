@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from analogcoder.agents.tuner import TOPOLOGY_TUNER_SYSTEM_PROMPT, propose_topology_swap, propose_tuning
+from analogcoder.agents.tuner import (
+    TOPOLOGY_TUNER_SYSTEM_PROMPT,
+    TUNER_SYSTEM_PROMPT,
+    propose_topology_swap,
+    propose_tuning,
+)
 from analogcoder.schemas import TOPOLOGY_SCHEMA
 from analogcoder.topologies import Topology
 from analogcoder.topology_match import SwapCandidate
@@ -106,6 +111,31 @@ def test_the_tuner_prompt_spells_the_two_schema_fields_apart():
     from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
 
     assert "refdes=" in TUNER_SYSTEM_PROMPT and "param=" in TUNER_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_the_rendered_attempt_log_reaches_the_user_prompt():
+    """어느 변형을 잡는가: attempts_view를 인자로 받아 놓고 프롬프트에 안 넣는
+    구현. 시그니처만 바뀌고 아무것도 전달되지 않으면 이 브랜치 전체가 무의미해진다."""
+    backend = FakeBackend({"proposed_changes": [], "overall_reasoning": "x", "confidence": 50})
+    rendered = "Past attempts this run:\n  iter 1.1  TRIMAMP.XRz l  15 -> 45  kept  pm +18.4"
+
+    await propose_tuning("structure", {"overall_pass": False}, rendered, None, "* deck", backend)
+
+    assert rendered in backend.calls[0]["user_prompt"]
+
+
+def test_the_tuner_prompt_presents_past_attempts_as_facts_not_as_a_restriction():
+    """어느 변형을 잡는가: "이미 시도한 노브를 다시 제안하지 마라"류의 문장을
+    프롬프트에 넣는 구현. 히스토리를 필터로 바꾸는 것은 초점을 필터로 바꿨다가
+    값을 치른 것과 같은 오류이고, 이 저장소에는 과거의 롤백이 지금은 옳은
+    실측이 있다(TRIMAMP.XRz.l 15->60은 위상 여유 81°->125°, 120에서 다시 무너짐)."""
+    prompt = TUNER_SYSTEM_PROMPT.lower()
+
+    assert "past attempts this run" in prompt
+    assert "you may propose the same component" in prompt
+    for banned in ("do not propose", "never propose", "must not repeat", "avoid proposing"):
+        assert banned not in prompt, f"히스토리가 제한으로 서술되었다: {banned!r}"
 
 
 @pytest.mark.asyncio

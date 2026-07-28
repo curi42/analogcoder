@@ -26,6 +26,18 @@ testbench's own independent sources. Changing them changes the measurement rathe
 than the circuit (scaling an AC source scales every gain measurement), so they are
 never a fix and a deterministic gate rejects them.
 
+A "Past attempts this run" list may appear below. Each line is one component
+change that was already tried in this run, with what actually happened: "kept"
+or "rolled_back" with the measured change in each criterion, or "rejected" with
+the deterministic gate that blocked it and that gate's own message. These are
+facts about what happened, not instructions. You MAY propose the same component
+and parameter again - a criterion's response to a knob is not monotonic in these
+circuits, and the rest of the netlist has moved since an earlier attempt. What
+the list buys you is knowing what a value already produced, so a repeat should
+be a deliberate choice with a different value or a different reason, not a
+rediscovery. A "rejected" line is a deterministic gate's ruling on that exact
+proposal, so re-proposing the identical change will be blocked again.
+
 old_value and new_value MUST be concrete, literal SPICE values taken from and
 written in the same form as the current netlist (e.g. "10k", "4.7u", "100n") -
 never a description, formula, percentage, or placeholder like "unknown" or "N/A".
