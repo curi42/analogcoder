@@ -797,8 +797,10 @@ that number was measured.
   feedback string goes into `detail` verbatim and usually names the refdes.
 - **`deltas`/`regressed` are measured once per proposal and stamped onto every
   change in it, so the render is a joint fact wearing a per-knob shape.** A
-  3-change proposal emits three lines each ending with the *same* `pm +18.4`,
-  and the only grouping signal is the shared `iter N.R` prefix.
+  3-change proposal renders as three lines each ending with the *same* delta,
+  shape-illustrated as `pm +18.4` (a format example from the schema test and
+  design doc, not a measured value), and the only grouping signal is the
+  shared `iter N.R` prefix.
   `after/two_stage-1` really did feed the tuner that: iterations 4, 5, 6r2 and
   8 were all 3-change proposals. This is the shape this repo has now paid for
   three times (F2's agent-declared `addresses`, the zero-tolerance Pareto
@@ -813,8 +815,11 @@ that number was measured.
   demonstrated.** Tasks 1-4 prove the record *reaches the prompt* (code and
   tests). Whether it changes behaviour was measured in task 5 and **the
   measurement failed to answer it**. Measured on
-  `benchmarks/two_stage_opamp/spec.yaml` at ~100 min per run (6161 s and
-  1348 s): repeat-proposal rate 0.000 before D1 vs 0.741 and 0.429 after, and
+  `benchmarks/two_stage_opamp/spec.yaml` (a full 10-iteration run of this spec
+  costs ~103 min — 6161 s; the 1348 s run only looks cheaper because it died
+  at iteration 3 on an agent execution error, `iterations_used: 2`, not
+  because it paid for a full budget): repeat-proposal rate 0.000 before D1 vs
+  0.741 and 0.429 after, and
   0.000 vs 0.429–0.636 with iterations matched. **Those comparisons are
   confounded and the "it went up" reading is withdrawn.** The metric counts a
   change as a repeat only when that `(refdes, param)` already ended in a
