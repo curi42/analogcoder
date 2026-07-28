@@ -201,17 +201,53 @@ def _block_knob_count(netlist_text: str, circuit_name: str, block_path: str) -> 
     )
 
 
-def estimate_curation_cost(spec: TargetSpec, netlist_texts: dict[str, str], block_path: str, max_knobs: int | None, points: int) -> dict:
+def estimate_curation_cost(
+    spec: TargetSpec,
+    netlist_texts: dict[str, str],
+    block_path: str,
+    max_knobs: int | None,
+    points: int,
+    knob_names: list[tuple[str, str]] | None = None,
+) -> dict:
     """다중 테스트벤치 슬롯의 예상 시뮬 횟수/시간. 2단(재현)은 후보/기존 각
     한 번씩 x 테스트벤치 수, 3단(비교)은 스윕 노브 수 x points x 테스트벤치
     수(설계 문서 "비용" 절의 곱셈 그대로). 2.5단(코너)은 저술본에만 붙고 이
     시점에는 소스가 무엇이 될지 이미 알려져 있지만(호출부가 안다), 이 함수는
     소스에 무관하게 같은 추정을 내도록 코너 비용을 아예 포함하지 않는다 -
     코너 스윕 자체의 비용은 설계 문서에 이미 별도로 측정돼 있고("18초/90초"),
-    이 로그가 노리는 위험은 오직 3단의 테스트벤치 곱셈이다."""
+    이 로그가 노리는 위험은 오직 3단의 테스트벤치 곱셈이다.
+
+    `knob_names`(명명된 좁히기, `scoped_comparison`과 같은 뜻)가 주어지면
+    `swept_knob_count`(스윕될 노브 수, 비용 곱셈에 실제로 쓰이는 값)의
+    상한을 이 블록의 전체 노브 개수가 아니라 **요청된 이름과 전체 노브
+    인덱스의 교집합 크기**로 잡는다 - `scoped_comparison` 자신이 적용하는
+    것과 같은 교집합 규칙이다. `knob_count`(이 블록에 존재하는 전체 노브
+    수)는 그대로 둔다 - `knob_names`는 "무엇을 볼지"를 좁힐 뿐 "무엇이
+    있는지"를 바꾸지 않으므로, 둘을 같이 덮어쓰면 "전체 30개 중 1개로
+    좁혔다"는 사실 자체가 로그에서 사라진다. 이 함수는 로그 전용 추정치이지
+    게이트가 아니므로, 요청된 이름이 실제로 이 블록에 없어
+    `knobs_unresolved`로 빠지는 경우까지 추정에 반영할 필요는 없다 - 그
+    경우 실제 스윕은 이 추정보다 더 적게 돌 뿐이고, 이 로그가 막으려는 것은
+    과소 추정이 아니라 과대 추정이다. `knob_names`가 없으면(기본값 `None`)
+    이전과 동일하게 `max_knobs`만으로 추정한다 - 이 인자를 생략한 모든 기존
+    호출은 동작이 그대로다."""
     canonical_text = netlist_texts[spec.canonical.name]
     knob_count = _block_knob_count(canonical_text, spec.circuit_name, block_path)
-    swept_knob_count = knob_count if max_knobs is None else min(knob_count, max_knobs)
+    swept_upper_bound = knob_count
+    if knob_names is not None:
+        # Deliberately re-derives the block's own knob set here rather than
+        # importing curation._block_tunable_knobs - same reasoning as
+        # _block_knob_count above (this log and the stage 3 gate derive the
+        # same fact independently, for different reasons).
+        structure = derive_structure(canonical_text, spec.circuit_name)
+        prefix = f"{block_path}."
+        all_knobs = {
+            (entry.refdes, entry.param)
+            for entry in structure.tunable
+            if entry.refdes == block_path or entry.refdes.startswith(prefix)
+        }
+        swept_upper_bound = len(all_knobs & set(knob_names))
+    swept_knob_count = swept_upper_bound if max_knobs is None else min(swept_upper_bound, max_knobs)
     testbench_count = len(spec.testbenches)
     stage2_simulations = 2 * testbench_count
     stage3_simulations = swept_knob_count * points * testbench_count
@@ -228,8 +264,15 @@ def estimate_curation_cost(spec: TargetSpec, netlist_texts: dict[str, str], bloc
     }
 
 
-def _log_expected_cost(spec: TargetSpec, netlist_texts: dict[str, str], block_path: str, max_knobs: int | None, points: int) -> None:
-    cost = estimate_curation_cost(spec, netlist_texts, block_path, max_knobs, points)
+def _log_expected_cost(
+    spec: TargetSpec,
+    netlist_texts: dict[str, str],
+    block_path: str,
+    max_knobs: int | None,
+    points: int,
+    knob_names: list[tuple[str, str]] | None = None,
+) -> None:
+    cost = estimate_curation_cost(spec, netlist_texts, block_path, max_knobs, points, knob_names)
     logger.info(
         "multi-testbench slot (%d testbenches): expected ~%d simulations (~%.1fs) for stages 2+3 alone - %s",
         cost["testbench_count"],
@@ -344,7 +387,7 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
     # 브리프 규칙 5: 다중 테스트벤치 슬롯이면 시작 시 예상 시뮬 횟수/시간을
     # 로그로 낸다. 판정에는 아무 영향도 주지 않는다 - 순수한 기록이다.
     if len(spec.testbenches) > 1:
-        _log_expected_cost(spec, netlist_texts, ctx.slot.block_path, args.max_knobs, args.points)
+        _log_expected_cost(spec, netlist_texts, ctx.slot.block_path, args.max_knobs, args.points, knob_names)
 
     if ctx.source == "technique":
         base_text = netlist_texts[spec.canonical.name]

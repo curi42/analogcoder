@@ -8,7 +8,9 @@ import pytest
 
 from analogcoder.agents.backend import AgentBackend
 from analogcoder.cli_curate import (
+    _parse_knob_names,
     _validate_source_flags,
+    build_arg_parser,
     estimate_curation_cost,
     run_curation,
     write_curation_artifacts,
@@ -515,6 +517,43 @@ def test_estimate_curation_cost_scales_with_testbench_count():
     assert cost_2["stage2_simulations"] == 2 * cost_1["stage2_simulations"]
 
 
+def test_estimate_curation_cost_narrows_swept_count_by_knob_names_but_keeps_the_total():
+    """Minor follow-up from Task 8 review: knob_names must shrink
+    swept_knob_count (and therefore stage3_simulations) to the intersection
+    with the block's real knob index - otherwise a narrowed real run's
+    startup log overestimates by the full knob-count ratio. knob_count
+    itself (the block's TOTAL knob count) must stay unchanged - it answers
+    "how many knobs does this block have", a different question from
+    "how many will actually be swept", and overwriting it would hide the
+    very fact that a narrowing happened. Catches a mutation that ignores
+    knob_names entirely (swept_knob_count stays at the full count) as well
+    as one that overwrites knob_count with the narrowed value too."""
+
+    class _FakeCanonical:
+        name = "tb1"
+
+    class _FakeSpec:
+        circuit_name = "test"
+        canonical = _FakeCanonical()
+        testbenches = [None]
+
+    full = estimate_curation_cost(_FakeSpec(), {"tb1": SLOT_DECK_TWO_KNOBS}, "BLOCK", max_knobs=None, points=3)
+    assert full["knob_count"] == 2
+    assert full["swept_knob_count"] == 2
+
+    narrowed = estimate_curation_cost(
+        _FakeSpec(),
+        {"tb1": SLOT_DECK_TWO_KNOBS},
+        "BLOCK",
+        max_knobs=None,
+        points=3,
+        knob_names=[("BLOCK.R1", "value")],
+    )
+    assert narrowed["knob_count"] == 2  # unchanged - the block still HAS 2 knobs
+    assert narrowed["swept_knob_count"] == 1  # only 1 is actually going to be swept
+    assert narrowed["stage3_simulations"] == 1 * 3 * 1  # swept_knob_count * points * testbench_count
+
+
 @pytest.mark.asyncio
 async def test_expected_cost_is_logged_only_for_multi_testbench_slots(tmp_path, caplog):
     """Brief rule 5: a multi-testbench slot must log its expected simulation
@@ -579,3 +618,168 @@ async def test_expected_cost_is_not_logged_for_a_single_testbench_slot(tmp_path,
         await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
 
     assert not any("multi-testbench slot" in rec.message for rec in caplog.records)
+
+
+# --- --knobs CLI surface (post-review addition - Task 8 follow-up) ---------
+#
+# Review finding: the underlying curation.scoped_comparison(knob_names=...)
+# API was mutation-tested (tests/unit/test_curation.py), but the CLI wiring
+# around it (--knobs -> _parse_knob_names -> _curate -> scoped_comparison ->
+# _comparison_scope_text -> curation_report.md) had zero coverage. Gutting
+# _parse_knob_names to always return [] and gutting _comparison_scope_text's
+# prefix logic both passed all 15 pre-existing tests unchanged - exactly the
+# "untested wiring silently doing nothing" failure shape this repo keeps
+# hitting. The tests below close that gap: parsing in isolation, the error
+# path, and end-to-end wiring through to the report a human actually reads.
+
+
+def test_parse_knob_names_splits_a_scope_qualified_refdes_on_the_last_dot():
+    """The realistic case (this is exactly what Task 8's own real-ngspice
+    test passes as a Python value, and what --knobs TRIMAMP.XRz.l would
+    parse from the command line): a refdes that is ITSELF a dotted scope
+    path (TRIMAMP.XRz), followed by the param (l). A mutation that splits
+    on the FIRST dot instead of the last would instead produce
+    ("TRIMAMP", "XRz.l") - wrong on every scoped refdes, which is the
+    normal case for any block nested under a circuit_name, not an edge
+    case."""
+    assert _parse_knob_names("TRIMAMP.XRz.l") == [("TRIMAMP.XRz", "l")]
+
+
+def test_parse_knob_names_splits_multiple_comma_separated_entries():
+    assert _parse_knob_names("TRIMAMP.XRz.l,BLOCK.R1.value") == [
+        ("TRIMAMP.XRz", "l"),
+        ("BLOCK.R1", "value"),
+    ]
+
+
+def test_parse_knob_names_returns_none_when_the_flag_is_omitted():
+    """None (flag omitted) must stay None, not become an empty list - the
+    two mean different things downstream (scoped_comparison's own
+    docstring: None = no named narrowing was requested at all; [] = a
+    narrowing to zero knobs was explicitly requested). This is exactly the
+    mutation the review reported: gutting _parse_knob_names to always
+    return [] passed every pre-existing test because none of them checked
+    this return value directly."""
+    assert _parse_knob_names(None) is None
+
+
+def test_parse_knob_names_rejects_an_entry_with_no_dot():
+    """The error path (brief follow-up, bullet 2): a bare refdes with no
+    '.param' suffix (a typo, or a user who forgot the parameter) must raise
+    a ValueError naming the bad token - not silently produce a garbage
+    tuple or swallow the entry."""
+    with pytest.raises(ValueError, match=r"refdes\.param"):
+        _parse_knob_names("XRz")
+
+
+def test_build_arg_parser_recognizes_the_knobs_flag():
+    """argparse-level check that --knobs is actually wired into the parser
+    (not just into _parse_knob_names, which every test above calls
+    directly) and defaults to None when omitted - the real CLI entry
+    point's own contract, distinct from the function-level tests above."""
+    parser = build_arg_parser()
+    common = [
+        "--slot-spec", "spec.yaml",
+        "--slot-block", "BLOCK",
+        "--id", "cand",
+        "--out-dir", "out",
+        "--from-deck", "deck.cir",
+        "--from-block", "BLOCK",
+    ]
+
+    args = parser.parse_args(common + ["--knobs", "TRIMAMP.XRz.l"])
+    assert args.knobs == "TRIMAMP.XRz.l"
+
+    args_default = parser.parse_args(common)
+    assert args_default.knobs is None
+
+
+SLOT_DECK_TWO_KNOBS = """* slot
+.option scale=1.0u
+.subckt BLOCK a b
+R1 a b 1k
+R2 a b 2k
+.ends BLOCK
+.end
+"""
+
+
+def _write_slot_two_knobs(tmp_path: Path, spec_text: str) -> Path:
+    (tmp_path / "slot.cir").write_text(SLOT_DECK_TWO_KNOBS)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(spec_text)
+    return spec_path
+
+
+@pytest.mark.asyncio
+async def test_the_knobs_flag_narrows_stage_3_to_the_named_knob_and_the_report_records_it(tmp_path):
+    """End-to-end proof that --knobs actually reaches
+    curation.scoped_comparison's knob_names parameter, not just that
+    _parse_knob_names parses correctly in isolation (the two tests above).
+    BLOCK has two knobs here (R1, R2); --knobs "BLOCK.R1.value" must leave
+    R2 unswept (named in knobs_omitted, not silently dropped) and the
+    narrowing itself must be legible in curation_report.md's
+    comparison-scope line - the report a human actually reads, not just an
+    internal StageResult.detail. This is precisely the wiring the review
+    found untested: gutting _parse_knob_names to return [] regardless of
+    input, or gutting _comparison_scope_text's prefix logic, both passed
+    every pre-existing test unchanged."""
+    spec_path = _write_slot_two_knobs(tmp_path, SPEC_NO_CORNERS)
+    out_dir = tmp_path / "out"
+    deck_path = tmp_path / "source_deck.cir"
+    deck_path.write_text(SOURCE_DECK)
+    args = _args(
+        tmp_path,
+        spec_path,
+        out_dir,
+        from_deck=str(deck_path),
+        from_block="BLOCK",
+        knobs="BLOCK.R1.value",
+    )
+
+    result = await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
+
+    comparison_stages = [s for s in result["stages"] if s.name == "comparison"]
+    assert len(comparison_stages) == 1
+    detail = comparison_stages[0].detail
+    assert detail["knob_names_requested"] == ["BLOCK.R1.value"]
+    assert [k["knob"] for k in detail["knobs_swept"]] == ["BLOCK.R1.value"]
+    assert "BLOCK.R2.value" in detail["knobs_omitted"]
+
+    write_curation_artifacts(str(out_dir), result)
+    report = (out_dir / "curation_report.md").read_text()
+    assert "scope narrowed to explicitly requested knob(s)" in report
+    assert "BLOCK.R1.value" in report
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_knobs_value_ends_as_inconclusive_not_a_crash(tmp_path):
+    """A --knobs entry missing the 'refdes.param' dot must not crash the
+    pipeline. _parse_knob_names raises ValueError for it; run_curation's
+    own guard (the same try/except that already catches apply_changes'
+    ambiguous-refdes ValueError, per CLAUDE.md) must turn that into a
+    well-formed INCONCLUSIVE result carrying the parse error, with all
+    three artifacts still written - not an uncaught traceback."""
+    spec_path = _write_slot(tmp_path, SPEC_NO_CORNERS)
+    out_dir = tmp_path / "out"
+    deck_path = tmp_path / "source_deck.cir"
+    deck_path.write_text(SOURCE_DECK)
+    args = _args(
+        tmp_path,
+        spec_path,
+        out_dir,
+        from_deck=str(deck_path),
+        from_block="BLOCK",
+        knobs="not_a_valid_entry",
+    )
+
+    result = await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
+
+    assert result["verdict"] == "INCONCLUSIVE"
+    assert "not_a_valid_entry" in result["reason"]
+
+    write_curation_artifacts(str(out_dir), result)
+    for name in ("curation_report.md", "topology_candidate.py", "curation.json"):
+        path = out_dir / name
+        assert path.exists()
+        assert path.stat().st_size > 0
