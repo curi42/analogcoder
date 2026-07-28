@@ -134,3 +134,20 @@ TOPOLOGY_SCHEMA = {
     },
     "required": ["topology_id", "reasoning", "confidence"],
 }
+
+# 큐레이션 파이프라인의 유일한 LLM 호출(agents/curator.py)이 쓰는 스키마.
+# 필드가 정확히 하나다 - `addresses`(어느 기준을 개선했는가)는 게이트가 실제
+# 시뮬레이션에서 측정하는 값이지 에이전트가 선언할 값이 아니므로, 여기 없는
+# 것이 사고가 아니라 규칙이다. `additionalProperties: False`가 이를
+# 강제한다: 에이전트가 스키마에 없는 `addresses` 같은 필드를 끼워 넣어도
+# 스키마 검증에서 걸러지므로("description"만 있어야 함), 잘못된 산출물이
+# 조용히 통과해 튜너 프롬프트에 검증되지 않은 주장을 흘리는 일이 없다 -
+# 그런 응답은 `AgentExecutionError`가 되어 결정론적 템플릿으로 폴백한다.
+CURATOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+    },
+    "required": ["description"],
+    "additionalProperties": False,
+}

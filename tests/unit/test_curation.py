@@ -9,6 +9,8 @@ from analogcoder.curation import (
     Candidate,
     Slot,
     StageResult,
+    candidate_from_deck,
+    candidate_from_file,
     check_structure,
     reproduce_characteristics,
     scoped_comparison,
@@ -1170,3 +1172,61 @@ def test_the_scope_limit_is_recorded_when_the_stage_actually_runs():
     assert result.status == "pass"
     assert "scope_note" in result.detail
     assert "stage 3" in result.detail["scope_note"] or "3단" in result.detail["scope_note"]
+
+
+# --- candidate_from_deck / candidate_from_file (Task 5, sources A/B) --------
+
+
+def test_extracting_from_a_deck_reproduces_the_shipped_library_entry():
+    """benchmarks/bandgap/netlist_loops.cir 의 BUF_P 를 추출하면
+    TOPOLOGY_LIBRARY['folded_cascode_pmos_in_cs'] 와 본문·포트·스케일이 같다.
+
+    F1이 이 항목을 손으로 옮겨 적어 라이브러리에 넣었다는 사실은 이미
+    알려져 있다 - 이 테스트는 "손으로 옮겨 적은 것이 우연히 맞았다"가
+    아니라 "F1의 항목이 이 파이프라인으로 실제로 재생산 가능하다"를
+    증명한다. 손으로 적은 상수로 추출을 대체하는 변형은, 그 상수가 이
+    라이브러리 항목과 글자 하나 다르지 않은 한 걸리지 않지만, 파싱 경로
+    자체가 깨지는 어떤 변형(공백 처리, 스코프 판정, 스케일 판독)도 여기서
+    걸린다."""
+    from pathlib import Path
+
+    from analogcoder.topologies import TOPOLOGY_LIBRARY
+
+    deck_text = Path("benchmarks/bandgap/netlist_loops.cir").read_text()
+    shipped = TOPOLOGY_LIBRARY["folded_cascode_pmos_in_cs"]
+
+    candidate = candidate_from_deck(deck_text, "BUF_P", "extracted_buf_p")
+
+    assert candidate.subckt_body == shipped.subckt_body
+    assert candidate.ports == shipped.ports
+    assert candidate.assumes_scale == shipped.assumes_scale
+    assert candidate.provenance == "extracted"
+    assert candidate.topology_id == "extracted_buf_p"
+
+
+def test_candidate_from_deck_raises_when_the_block_path_does_not_exist():
+    deck_text = "* t\n.option scale=1.0u\n.subckt BLOCK a b\nR1 a b 1k\n.ends BLOCK\n.end\n"
+    with pytest.raises(ValueError):
+        candidate_from_deck(deck_text, "NOPE", "whatever")
+
+
+def test_a_file_candidate_with_every_declared_port_referenced_is_accepted():
+    body = "R1 a b 1k\nR2 b c 2k\n"
+    candidate = candidate_from_file(body, ports=["a", "c"], assumes_scale=1e-6, topology_id="from_file")
+    assert candidate.subckt_body == body
+    assert candidate.ports == ["a", "c"]
+    assert candidate.assumes_scale == 1e-6
+    assert candidate.provenance == "file"
+
+
+def test_a_file_candidate_with_an_unreferenced_declared_port_is_rejected():
+    """Declares port 'z', which no component in the body ever names as a
+    node. The converse (a node the body needs but the caller never declared
+    as a port) is deliberately NOT checked here - F1 established that
+    direction is not structurally decidable (an undeclared-but-needed port
+    is indistinguishable from a legitimate internal node), so it is left to
+    the gate's simulation stage (an undeclared port becomes a floating node
+    and characteristic reproduction fails there)."""
+    body = "R1 a b 1k\nR2 b c 2k\n"
+    with pytest.raises(ValueError):
+        candidate_from_file(body, ports=["a", "c", "z"], assumes_scale=1e-6, topology_id="from_file")

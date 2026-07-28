@@ -34,7 +34,13 @@ from analogcoder.area_limits import (
     tunable_range,
 )
 from analogcoder.judge_tools import evaluate_criteria
-from analogcoder.netlist import apply_changes, apply_topology_swap
+from analogcoder.netlist import (
+    apply_changes,
+    apply_topology_swap,
+    extract_subckt_body,
+    netlist_scale,
+    parse_netlist,
+)
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.spec import TargetSpec, Testbench
 from analogcoder.structure import derive_structure
@@ -56,6 +62,85 @@ class Candidate:
     ports: list[str]
     assumes_scale: float
     provenance: str  # "extracted" | "file" | "authored"
+
+
+def candidate_from_deck(deck_text: str, block_path: str, topology_id: str) -> Candidate:
+    """소스 A: 이미 존재하는(그리고 보통 이미 검증된) 덱에서 블록 하나를
+    후보로 뽑는다. 본문·`ports`·`assumes_scale` **셋 다 파싱에서** 나온다 -
+    선언되거나 손으로 옮겨 적는 값이 하나도 없다:
+
+    - 본문은 `netlist.extract_subckt_body`가 자르는 원문 그대로의 물리 줄
+      슬라이스다. `Component` 객체들을 다시 문자열로 조립하지 않는 이유는
+      `apply_topology_swap`이 이미 찾는 것과 같은 구간을 그대로 잘라내야만
+      공백·토큰 순서가 원문과 바이트 단위로 같다는 것이 보장되기 때문이다 -
+      재조립은 "파싱으로 얻는다"는 규칙을 지키는 척하면서 실제로는 손으로
+      옮겨 적은 것과 같은 위험(오탈자, 순서 변경)을 진다.
+    - `ports`는 `.subckt` 헤더 줄이 선언한 순서 그대로다
+      (`ParsedNetlist.subckts[block_path].ports`).
+    - `assumes_scale`은 이 덱의 `.option scale=`(선언이 없으면 1.0)이다 -
+      이 값이 없으면 나중 단계가 W/L을 미터로 잘못 읽는, 면적 게이트가 이미
+      한 번 겪은 실수를 후보 하나가 그대로 물려받는다.
+
+    `block_path`가 이 덱에 없으면(스코프까지 포함해 정확히 일치해야 한다 -
+    `apply_topology_swap`과 같은 규칙) `ValueError`를 낸다 - 추측하지
+    않는다."""
+    parsed = parse_netlist(deck_text)
+    if block_path not in parsed.subckts:
+        raise ValueError(f"subckt {block_path!r} not found in the deck")
+    body = extract_subckt_body(deck_text, block_path)
+    return Candidate(
+        topology_id=topology_id,
+        subckt_body=body,
+        ports=list(parsed.subckts[block_path].ports),
+        assumes_scale=netlist_scale(deck_text),
+        provenance="extracted",
+    )
+
+
+def _ports_referenced_in_body(body: str, ports: list[str]) -> set[str]:
+    """`ports`를 헤더로 씌워 본문을 파싱하고, 그 스코프에서 실제로 참조되는
+    넷 이름 집합을 돌려준다 - `topology_match._wrap_topology_body`와 같은
+    요령이다(본문 자체는 포트 헤더가 없는 독립 SPICE 조각이라 그대로는
+    파싱 대상이 아니다). 본문에 중첩된 `.subckt`가 있어도 그 정의 **내부**
+    소자의 노드는 보지 않는다 - 후보 본문의 포트가 참조됐는지는 그 포트가
+    이 스코프(TMP)에서 어떤 소자의 노드로 등장하는지의 질문이지, 중첩 정의
+    내부에서 같은 이름의 로컬 포트가 쓰였는지의 질문이 아니다."""
+    wrapped = f".subckt TMP {' '.join(ports)}\n{body}\n.ends TMP\n"
+    parsed = parse_netlist(wrapped)
+    referenced: set[str] = set()
+    for component in parsed.subckts["TMP"].components:
+        referenced.update(component.nodes)
+    return referenced
+
+
+def candidate_from_file(body: str, ports: list[str], assumes_scale: float, topology_id: str) -> Candidate:
+    """소스 B: 어딘가의 완성된 SPICE 조각을 그대로 받아 후보로 삼는다.
+    `ports`는(소스 A와 달리) 파싱이 아니라 제출자의 **선언**이므로, 구조적으로
+    판정 가능한 한 방향만 검증한다: 선언된 모든 포트가 본문에서 실제로
+    참조되는가. 역방향(본문이 필요로 하는데 선언에 없는 포트)은 F1에서 이미
+    확정된 사실대로 구조적으로 판정 불가능하다 - 선언에 없는 포트는 내부
+    노드와 구별할 방법이 없고, 그런 넷은 스왑 후 뜬 넷이 되어 `reproduce_
+    characteristics`의 시뮬레이션이 특성 재현 실패로 잡아낸다(추측 대신
+    다음 단계에 맡긴다).
+
+    참조되지 않는 선언 포트가 하나라도 있으면 `ValueError`를 낸다 - 그
+    포트는 이 후보를 어떤 블록에 스왑해도 결코 연결될 수 없는 인터페이스를
+    약속하는 것이므로, 시뮬레이션까지 가서야 발견하게 두지 않는다."""
+    referenced = _ports_referenced_in_body(body, ports)
+    unreferenced = [p for p in ports if p not in referenced]
+    if unreferenced:
+        raise ValueError(
+            f"declared port(s) {unreferenced} are not referenced anywhere in the body - "
+            "a port that is declared but never used cannot possibly connect to anything "
+            "once this candidate is swapped into a block"
+        )
+    return Candidate(
+        topology_id=topology_id,
+        subckt_body=body,
+        ports=list(ports),
+        assumes_scale=assumes_scale,
+        provenance="file",
+    )
 
 
 @dataclass(frozen=True)

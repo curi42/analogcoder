@@ -4,6 +4,7 @@ from analogcoder.netlist import (
     apply_changes,
     apply_topology_swap,
     check_refdes_resolution,
+    extract_subckt_body,
     parse_netlist,
     parse_spice_value,
 )
@@ -81,6 +82,42 @@ def test_apply_topology_swap_replaces_interior_preserving_header_and_footer():
     assert "R3 vinp mid 5k" in updated
     assert "R4 mid vout 6k" in updated
     assert "Xamp1 a b c d e AMP" in updated  # lines outside the block are untouched
+
+
+def test_extract_subckt_body_returns_the_interior_verbatim():
+    netlist = (
+        "* test netlist\n"
+        ".subckt AMP vinp vinn vout vdd vss\n"
+        "R1 vinp mid 1k\n"
+        "R2 mid vout 2k\n"
+        ".ends AMP\n"
+        "Xamp1 a b c d e AMP\n"
+        ".end\n"
+    )
+    body = extract_subckt_body(netlist, "AMP")
+    assert body == "R1 vinp mid 1k\nR2 mid vout 2k\n"
+
+
+def test_extract_subckt_body_round_trips_with_apply_topology_swap():
+    # extract then re-insert the SAME body must reproduce the original deck
+    # exactly - this is what makes extraction "parsing", not reconstruction.
+    netlist = (
+        "* test netlist\n"
+        ".subckt AMP vinp vinn vout vdd vss\n"
+        "R1 vinp mid 1k\n"
+        "R2 mid vout 2k\n"
+        ".ends AMP\n"
+        "Xamp1 a b c d e AMP\n"
+        ".end\n"
+    )
+    body = extract_subckt_body(netlist, "AMP")
+    assert apply_topology_swap(netlist, "AMP", body) == netlist
+
+
+def test_extract_subckt_body_raises_when_subckt_not_found():
+    netlist = "* test\nR1 a b 1k\n.end\n"
+    with pytest.raises(ValueError):
+        extract_subckt_body(netlist, "AMP")
 
 
 def test_apply_topology_swap_raises_when_subckt_not_found():

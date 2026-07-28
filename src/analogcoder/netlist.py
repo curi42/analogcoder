@@ -674,22 +674,20 @@ def apply_changes(text: str, changes: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def apply_topology_swap(text: str, block_path: str, new_body: str) -> str:
-    """Replace the body of the `.subckt`/`.macro` addressed by `block_path`.
+def _locate_subckt_span(lines: list[str], block_path: str) -> tuple[int, int]:
+    """`block_path`가 가리키는 `.subckt`/`.macro` 헤더 줄과 닫는 줄의 물리 줄
+    인덱스 `(start, end)`. `apply_topology_swap`과 `extract_subckt_body`가
+    같은 스캔 하나를 공유한다 - 두 함수가 "이 경로가 어디서 시작하고 끝나는가"를
+    각자 다시 구현하면 언젠가 어긋난다.
 
-    `block_path` is a dotted scope path matching the model `ParsedNetlist.subckts`
-    already uses elsewhere in this module (e.g. `"OUTER.INNER"`), or a bare name
-    (`"AMP"`), which resolves only to a **top-level** definition of that name —
-    never to a same-named definition nested inside another `.subckt`. A path
-    that names an intermediate scope that doesn't exist (`"INNER.DEEPER"` when
-    there is no `.subckt DEEPER` inside `INNER`) is rejected rather than
-    resolved by guessing which definition was meant.
+    `block_path`는 `ParsedNetlist.subckts`가 쓰는 것과 같은 점으로 이은
+    스코프 경로(`"OUTER.INNER"`)이거나 맨 이름(`"AMP"`)이고, 맨 이름은
+    **최상위** 정의에만 걸린다 - 다른 `.subckt` 안에 중첩된 같은 이름 정의는
+    걸리지 않는다. 중간 스코프가 존재하지 않는 경로(`"INNER.DEEPER"`인데
+    `INNER` 안에 `.subckt DEEPER`가 없음)는 추측 없이 거부된다.
 
-    When the same dotted path appears more than once (a malformed deck — that
-    is `parse_netlist`'s problem, not this function's), the first exact match
-    in document order wins.
-    """
-    lines = text.splitlines()
+    같은 점 경로가 두 번 나오면(형식이 잘못된 덱 - `parse_netlist`의 문제이지
+    이 함수의 문제가 아니다) 문서 순서상 첫 정확한 일치가 이긴다."""
     start = end = None
     depth = 0
     scope_stack: list[str] = []
@@ -720,8 +718,45 @@ def apply_topology_swap(text: str, block_path: str, new_body: str) -> str:
                 break
     if start is None or end is None:
         raise ValueError(f"subckt {block_path!r} not found or not closed")
+    return start, end
+
+
+def apply_topology_swap(text: str, block_path: str, new_body: str) -> str:
+    """Replace the body of the `.subckt`/`.macro` addressed by `block_path`.
+
+    `block_path` is a dotted scope path matching the model `ParsedNetlist.subckts`
+    already uses elsewhere in this module (e.g. `"OUTER.INNER"`), or a bare name
+    (`"AMP"`), which resolves only to a **top-level** definition of that name —
+    never to a same-named definition nested inside another `.subckt`. A path
+    that names an intermediate scope that doesn't exist (`"INNER.DEEPER"` when
+    there is no `.subckt DEEPER` inside `INNER`) is rejected rather than
+    resolved by guessing which definition was meant.
+
+    When the same dotted path appears more than once (a malformed deck — that
+    is `parse_netlist`'s problem, not this function's), the first exact match
+    in document order wins.
+    """
+    lines = text.splitlines()
+    start, end = _locate_subckt_span(lines, block_path)
     new_lines = lines[: start + 1] + new_body.splitlines() + lines[end:]
     return "\n".join(new_lines) + "\n"
+
+
+def extract_subckt_body(text: str, block_path: str) -> str:
+    """`block_path`가 가리키는 `.subckt`/`.macro` 본문의 원문 그대로(줄바꿈,
+    공백 포함)를 돌려준다 - 파싱해서 다시 조립한 텍스트가 아니라 헤더 줄
+    바로 다음부터 닫는 줄 바로 앞까지의 **물리 줄 슬라이스**다.
+
+    `curation.candidate_from_deck`이 이 함수를 쓰는 이유가 곧 이 함수가
+    존재하는 이유다: 그 경로는 "본문은 파싱으로만 얻는다"는 규칙을 지켜야
+    하므로, `Component` 객체들을 다시 문자열로 직렬화하면(예: 공백 폭이나
+    토큰 순서가 원문과 달라짐) 손으로 옮겨 적은 것과 같은 위험을 진다. 이
+    함수는 `apply_topology_swap`이 새 본문을 갈아 끼우기 위해 이미 찾는
+    바로 그 구간을 그대로 잘라내므로, 라이브러리에 실린 본문과 바이트
+    단위로 같은 텍스트를 낸다."""
+    lines = text.splitlines()
+    start, end = _locate_subckt_span(lines, block_path)
+    return "\n".join(lines[start + 1 : end]) + "\n"
 
 
 _SPICE_VALUE_RE = re.compile(r"^(-?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)([a-zA-Z]*)$")
