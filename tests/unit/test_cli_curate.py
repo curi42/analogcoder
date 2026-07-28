@@ -15,6 +15,7 @@ from analogcoder.cli_curate import (
     run_curation,
     write_curation_artifacts,
 )
+from analogcoder.curation import StageResult
 from analogcoder.simulators.base import RawSimResult
 from analogcoder.spec import load_spec
 
@@ -100,6 +101,32 @@ class _ConstantSimBackend:
     def run(self, netlist_path, testbench_config):
         self.call_count += 1
         return RawSimResult(status="success", measurements=dict(self._measurements), raw_log="", warnings=[])
+
+
+class _BodyAwareSimBackend:
+    """Reports one value for any deck still carrying the slot's own BLOCK body
+    (`R1 a b 1k`) and another for a deck whose body has been swapped out - so
+    a test can make the candidate genuinely better than the incumbent.
+
+    Needed because stage 3 now enters the incumbent's own measured point
+    (`scoped_comparison`'s `incumbent_measurements`) as a dominance candidate:
+    against a CONSTANT backend the incumbent ties the candidate on every
+    criterion and therefore dominates it, so a constant backend can no longer
+    produce an ADMIT at all. That is the fix working rather than a fixture
+    accident - a candidate measuring exactly like the incumbent reaches
+    nowhere that doing nothing does not already reach."""
+
+    def __init__(self, incumbent: dict, candidate: dict):
+        self._incumbent = dict(incumbent)
+        self._candidate = dict(candidate)
+        self.call_count = 0
+
+    def run(self, netlist_path, testbench_config):
+        with open(netlist_path) as f:
+            text = f.read()
+        self.call_count += 1
+        measurements = self._incumbent if "R1 a b 1k" in text else self._candidate
+        return RawSimResult(status="success", measurements=dict(measurements), raw_log="", warnings=[])
 
 
 class _FakeAgentBackend(AgentBackend):
@@ -251,11 +278,11 @@ async def test_an_admitted_candidate_also_writes_all_three_artifacts(tmp_path):
     deck_path.write_text(SOURCE_DECK)
     args = _args(tmp_path, spec_path, out_dir, from_deck=str(deck_path), from_block="BLOCK", max_knobs=0)
 
-    sim_backend = _ConstantSimBackend({"r1v": 500.0})
+    sim_backend = _BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 900.0})
     agent_backend = _FakeAgentBackend()
 
     result = await run_curation(args, sim_backend=sim_backend, agent_backend=agent_backend)
-    assert result["verdict"] == "ADMIT"
+    assert result["verdict"] == "ADMIT", result["reason"]
 
     write_curation_artifacts(str(out_dir), result)
     for name in ("curation_report.md", "topology_candidate.py", "curation.json"):
@@ -301,6 +328,94 @@ async def test_the_report_records_the_comparison_scope(tmp_path):
     assert "none - candidate survives" not in report  # a point really did dominate here
 
 
+@pytest.mark.asyncio
+async def test_a_stage_3_inconclusive_never_becomes_an_admit(tmp_path):
+    """I6's rule at the pipeline level: "I could not judge this" and "nothing
+    dominated the candidate" are different facts, so a stage 3 that comes back
+    `inconclusive` must end the run as INCONCLUSIVE - not fall through to
+    stage 5 and ADMIT the candidate on a comparison that never happened.
+
+    Driven by monkeypatching scoped_comparison to return the inconclusive
+    StageResult its own unjudgeable-operator path produces, because every
+    operator the shipped spec language allows is judgeable today (that is the
+    point of the '==' fix) - the branch has to be reachable in the CLI even
+    when curation.py currently only produces it for an operator no spec
+    declares yet.
+
+    Mutation this catches: deleting _curate's `status == "inconclusive"`
+    branch after stage 3 - the run then ADMITs."""
+    spec_path = _write_slot(tmp_path, SPEC_NO_CORNERS)
+    out_dir = tmp_path / "out"
+    deck_path = tmp_path / "source_deck.cir"
+    deck_path.write_text(SOURCE_DECK)
+    args = _args(tmp_path, spec_path, out_dir, from_deck=str(deck_path), from_block="BLOCK", max_knobs=0)
+
+    inconclusive = StageResult(
+        name="comparison",
+        status="inconclusive",
+        detail={"why": "cannot judge operator '!='", "unjudgeable_operators": [{"criterion": "x", "operator": "!="}]},
+    )
+    with patch("analogcoder.cli_curate.scoped_comparison", return_value=inconclusive):
+        result = await run_curation(
+            args,
+            sim_backend=_BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 900.0}),
+            agent_backend=_FakeAgentBackend(),
+        )
+
+    assert result["verdict"] == "INCONCLUSIVE"
+    assert result["verdict"] != "ADMIT"
+    assert "cannot judge operator" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_worse_than_the_incumbent_is_rejected_by_the_incumbent_itself(tmp_path):
+    """C1 + I7 end to end, on the exact shape the reviewer measured: an
+    authored candidate WORSE than the incumbent on every criterion. Stage 2
+    therefore measures no improvement (`addresses: []`), stage 2.5's
+    requirement 2 iterates that empty list and compares zero criteria, and the
+    old stage 3 - with the incumbent's own point absent from the dominance
+    scan and `max_knobs=0` leaving no swept point either - had literally
+    nothing to reject with. Measured verdict then: ADMIT, verified_at=corners.
+
+    Now the incumbent's own point is the dominance candidate, so this must
+    REJECT, naming the incumbent (not a knob). `max_knobs=0` is load-bearing:
+    it removes every swept point, so ONLY the incumbent point can produce
+    this rejection.
+
+    The corners stage must still record that requirement 2 compared nothing,
+    and that fact must reach curation_report.md - it is the difference
+    between "verified at corners" and "requirement 1 held at corners".
+
+    Mutation this catches: dropping the incumbent from the dominance scan
+    (verdict returns to ADMIT), or dropping addresses_compared /
+    _verified_at_caveat (the report stops disclosing what was not compared)."""
+    spec_path = _write_slot(tmp_path, SPEC_WITH_ONE_CORNER)
+    out_dir = tmp_path / "out"
+    args = _args(tmp_path, spec_path, out_dir, technique="add a nulling resistor", max_knobs=0)
+
+    # The incumbent measures 500, the swapped-in authored body measures 200 -
+    # worse on the slot's only criterion (r1_value, '>=').
+    sim_backend = _BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 200.0})
+
+    result = await run_curation(args, sim_backend=sim_backend, agent_backend=_FakeAgentBackend())
+
+    assert result["addresses"] == []
+    corners = next(s for s in result["stages"] if s.name == "corners")
+    assert corners.status == "pass"
+    assert corners.detail["addresses_compared"] == 0
+    assert "NOTHING" in corners.detail["requirement_2_note"]
+
+    assert result["verdict"] == "REJECT", result["reason"]
+    comparison = next(s for s in result["stages"] if s.name == "comparison")
+    assert comparison.detail["knobs_swept"] == []  # no swept point could have done it
+    assert comparison.detail["dominating_point"]["point"] == "incumbent"
+
+    write_curation_artifacts(str(out_dir), result)
+    report = (out_dir / "curation_report.md").read_text()
+    assert "Requirement 2 (worst-corner comparison):" in report
+    assert "compared **zero** criteria" in report
+
+
 # --- test_the_candidate_snippet_carries_the_provenance_actually_verified ----
 
 
@@ -312,7 +427,7 @@ async def test_the_candidate_snippet_carries_the_provenance_actually_verified(tm
     an authored candidate whose corner stage genuinely passed must snippet
     as "corners". Catches a mutation that hardcodes verified_at to one
     constant regardless of which stages actually ran/passed."""
-    sim_backend = _ConstantSimBackend({"r1v": 500.0})
+    sim_backend = _BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 900.0})
 
     # --- extracted candidate: no pvt_corners in the slot -> corners is
     # unconditionally "skipped" for this provenance -> verified_at="nominal".
@@ -371,8 +486,12 @@ async def test_the_report_does_not_assert_the_source_was_corner_verified(tmp_pat
     deck_path.write_text(SOURCE_DECK)
     args = _args(tmp_path, spec_path, out_dir, from_deck=str(deck_path), from_block="BLOCK", max_knobs=0)
 
-    result = await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
-    assert result["verdict"] == "ADMIT"
+    result = await run_curation(
+        args,
+        sim_backend=_BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 900.0}),
+        agent_backend=_FakeAgentBackend(),
+    )
+    assert result["verdict"] == "ADMIT", result["reason"]
     assert result["verified_at"] == "nominal"
 
     write_curation_artifacts(str(out_dir), result)
@@ -404,8 +523,12 @@ async def test_the_library_module_is_not_modified(tmp_path):
     deck_path.write_text(SOURCE_DECK)
     args = _args(tmp_path, spec_path, out_dir, from_deck=str(deck_path), from_block="BLOCK", max_knobs=0)
 
-    result = await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
-    assert result["verdict"] == "ADMIT"
+    result = await run_curation(
+        args,
+        sim_backend=_BodyAwareSimBackend(incumbent={"r1v": 500.0}, candidate={"r1v": 900.0}),
+        agent_backend=_FakeAgentBackend(),
+    )
+    assert result["verdict"] == "ADMIT", result["reason"]
     write_curation_artifacts(str(out_dir), result)
 
     after = TOPOLOGIES_PATH.read_bytes()

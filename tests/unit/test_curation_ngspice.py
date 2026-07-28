@@ -62,6 +62,7 @@ from types import SimpleNamespace
 import pytest
 
 from analogcoder.curation import (
+    COMPARISON_REL_TOLERANCE,
     Slot,
     candidate_from_deck,
     candidate_from_file,
@@ -242,6 +243,7 @@ def test_indirect_compensation_is_rejected_because_a_single_knob_change_dominate
     reproduce_result, _addresses = reproduce_characteristics(candidate, slot, netlist_texts, sim_backend)
     assert reproduce_result.status == "pass", reproduce_result.detail
     candidate_measurements = reproduce_result.detail["candidate_measurements"]
+    incumbent_measurements = reproduce_result.detail["baseline_measurements"]
 
     # Sanity check against the design doc's own hand measurement for this
     # EXACT body (Cc=20 at node `ns`, tabulated there as 89.4 deg / trim
@@ -256,6 +258,7 @@ def test_indirect_compensation_is_rejected_because_a_single_knob_change_dominate
         netlist_texts,
         sim_backend,
         candidate_measurements,
+        incumbent_measurements,
         max_knobs=None,
         points=5,
         knob_names=[("TRIMAMP.XRz", "l")],
@@ -302,38 +305,37 @@ def test_indirect_compensation_is_rejected_because_a_single_knob_change_dominate
     assert dominating["measurements"]["trim_ugbw_hz"] > candidate_measurements["trim_ugbw_hz"]
 
 
-def test_the_full_multi_loop_criteria_set_blocks_domination_by_near_ties_far_smaller_than_the_real_tradeoff():
-    """A genuine measured finding (brief: "실제 값이 다르면 단언이 아니라
-    사실을 보고할 것"), not a design choice papered over by the test above.
+def test_the_full_multi_loop_criteria_set_rejects_because_near_ties_no_longer_block_domination():
+    """The shipped slot, judged on the SHIPPED criteria - the end-to-end
+    proof this sub-project exists for, with no hand-built criteria set.
 
-    spec_curate_slot.yaml's slot, used UNMODIFIED (all 8 criteria across
-    core/trim/buf1/buf0), does NOT let any point in TRIMAMP.XRz.l's [5, 45]
-    sweep register as dominating - even though the same real trade-off
-    measured above (trim_pm_deg swinging 63->131 deg against the
-    candidate's 89.4) is still fully present in this run's own data
-    (best_per_criterion below). The blockers are two criteria essentially
-    decoupled from TRIMAMP's own compensation network:
+    This test previously pinned the OPPOSITE fact, and that inversion is the
+    point. With a literal, zero-tolerance Pareto '>=', spec_curate_slot.yaml's
+    8 criteria across four amps sharing bias rails let NO point in
+    TRIMAMP.XRz.l's [5, 45] sweep dominate the Ahuja candidate - so this
+    sub-project's own proof case ended in ADMIT with `dominating: None`.
+    Two criteria physically decoupled from TRIMAMP's compensation network sat
+    a few thousandths of a unit on the wrong side of the comparison at every
+    swept point (measured, and re-measured by this test's own assertions
+    below):
 
-    - core_phase_margin (BGR_CORE's own loop, a different amp, coupled to
-      TRIMAMP only through shared bias rails): measured at 66.077-66.082
-      deg across the WHOLE XRz.l sweep, vs the candidate's 66.0835 - always
-      a few THOUSANDTHS of a degree short, a bias-rail loading effect an
-      order of magnitude below anything a real design would care about.
-    - trim_loop_gain: measured at a constant 87.5449 dB across the WHOLE
-      XRz.l sweep (this resistor barely touches gain, only phase) vs the
-      candidate's 87.545 dB - short by 0.0001 dB, a genuine but physically
-      meaningless difference between the two topologies' DC loading, not a
-      function of XRz.l at all.
+    - core_phase_margin (BGR_CORE's own loop, coupled to TRIMAMP only through
+      shared bias rails): 66.0791 deg at the dominating point vs the
+      candidate's 66.0835 - short by 0.0044 deg, i.e. 6.7e-5 relative.
+    - trim_loop_gain: 87.5449 dB vs the candidate's 87.5450 - short by
+      0.0001 dB, i.e. 1.1e-6 relative. This resistor barely touches DC gain.
 
-    Neither gap moves with XRz.l, so no point anywhere in the allowed range
-    could ever close it - this is not a resolution problem stage 3's sweep
-    could fix by trying more points. It is evidence that a literal,
-    zero-tolerance Pareto '>=' over a criteria set spanning multiple
-    physically-coupled blocks can make a real, substantial dominating knob
-    (trim_phase_margin) invisible, defeated by sub-hundredth-unit
-    differences on criteria that have nothing to do with the knob being
-    tuned. Reported here plainly, not smoothed over by widening the range
-    or by silently dropping this test."""
+    Both gaps are orders of magnitude below the real trade-off in the same
+    run (trim_pm_deg 89.4213 -> 99.9033 at the dominating point, +10.5 deg =
+    0.117 relative), and neither moves with XRz.l, so no number of extra
+    sweep points could ever have closed them. curation.COMPARISON_REL_TOLERANCE
+    (1e-3, ~24x above the largest measured noise and ~100x below the real
+    improvement) makes both a tie, and the gate then reaches the verdict F1
+    reached by hand.
+
+    Mutation this catches: setting COMPARISON_REL_TOLERANCE to 0 (or dropping
+    the tolerance from _at_least_as_good) restores `status == "pass"` /
+    `dominating_point is None` - verified by doing exactly that."""
     slot, netlist_texts = _full_trimamp_slot()
     sim_backend = NgspiceBackend(timeout=120)
 
@@ -344,9 +346,17 @@ def test_the_full_multi_loop_criteria_set_blocks_domination_by_near_ties_far_sma
         topology_id="ahuja_indirect_comp_test_full_criteria",
     )
 
-    reproduce_result, _addresses = reproduce_characteristics(candidate, slot, netlist_texts, sim_backend)
+    reproduce_result, addresses = reproduce_characteristics(candidate, slot, netlist_texts, sim_backend)
     assert reproduce_result.status == "pass", reproduce_result.detail
     candidate_measurements = reproduce_result.detail["candidate_measurements"]
+    incumbent_measurements = reproduce_result.detail["baseline_measurements"]
+
+    # The same tolerance in the other direction: with a zero-tolerance
+    # comparison this run's `addresses` also carried core_phase_margin
+    # (+0.0028 deg) and trim_loop_gain (+0.0001 dB) - unverified claims that
+    # agents/tuner.py renders straight into the swap-selection prompt. Only
+    # the one real improvement may survive.
+    assert addresses == ["trim_phase_margin"], addresses
 
     comparison_result = scoped_comparison(
         candidate,
@@ -354,27 +364,35 @@ def test_the_full_multi_loop_criteria_set_blocks_domination_by_near_ties_far_sma
         netlist_texts,
         sim_backend,
         candidate_measurements,
+        incumbent_measurements,
         max_knobs=None,
         points=5,
         knob_names=[("TRIMAMP.XRz", "l")],
     )
 
     detail = comparison_result.detail
-    print("\nfull-criteria best_per_criterion:", detail["best_per_criterion"])
+    dominating = detail["dominating_point"]
+    print("\nfull-criteria dominating point:", dominating)
     print("full-criteria candidate_measurements:", candidate_measurements)
 
-    assert comparison_result.status == "pass"
-    assert detail["dominating_point"] is None
+    assert comparison_result.status == "fail"
+    assert dominating is not None
+    assert dominating["point"] == "swept"
+    assert dominating["knob"] == "TRIMAMP.XRz.l"
 
-    best = detail["best_per_criterion"]
-    # The real trade-off is still fully present in this run's own data -
-    # this is not "the effect disappeared with more criteria", it is "the
-    # effect is present but two near-ties block the verdict".
-    assert best["trim_phase_margin"]["value"] > candidate_measurements["trim_pm_deg"] + 30
-    # The two blockers, quantified: both within a hundredth of the
-    # candidate's own value, nowhere close to a real trade-off margin.
-    assert abs(best["core_phase_margin"]["value"] - candidate_measurements["core_pm_deg"]) < 0.01
-    assert abs(best["trim_loop_gain"]["value"] - candidate_measurements["trim_gain_db"]) < 0.001
+    # The two former blockers really are within the tolerance (they are
+    # near-ties, not wins for the incumbent) - so this rejection rests on a
+    # tie plus one real improvement, not on the noise having flipped sign.
+    for measurement in ("core_pm_deg", "trim_gain_db"):
+        gap = candidate_measurements[measurement] - dominating["measurements"][measurement]
+        relative = abs(gap) / abs(candidate_measurements[measurement])
+        assert 0 < relative < COMPARISON_REL_TOLERANCE, (measurement, gap, relative)
+
+    # ... and the axis that actually decides it is a real design difference,
+    # two orders of magnitude larger.
+    real_gap = dominating["measurements"]["trim_pm_deg"] - candidate_measurements["trim_pm_deg"]
+    assert real_gap > 10.0
+    assert real_gap / candidate_measurements["trim_pm_deg"] > 100 * COMPARISON_REL_TOLERANCE
 
 
 def test_extracting_buf_p_reproduces_the_shipped_library_entry_under_real_simulation(tmp_path):

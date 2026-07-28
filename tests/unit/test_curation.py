@@ -8,6 +8,8 @@ import pytest
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area_limits import index_baseline_components
 from analogcoder.curation import (
+    COMPARISON_REL_TOLERANCE,
+    INCUMBENT_POINT_LABEL,
     MAX_VARIANT_AUTHOR_RETRIES,
     Candidate,
     Slot,
@@ -508,12 +510,24 @@ def test_a_single_sweep_point_dominating_every_criterion_rejects():
         functions={"gain_db": lambda v: v, "iq_ua": lambda v: 1_000_000 / v},
     )
     candidate_measurements = {"gain_db": 1500.0, "iq_ua": 700.0}
+    # The incumbent as shipped (R1 = 1000, its own baseline) is now a
+    # dominance candidate too - here it loses on gain (1000 < 1500), so the
+    # rejection below is genuinely the SWEPT point's doing.
+    incumbent_measurements = {"gain_db": 1000.0, "iq_ua": 1000.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=2,
     )
 
     assert result.name == "comparison"
+    assert result.detail["dominating_point"]["point"] == "swept"
     assert result.status == "fail"
     assert result.detail["dominating_point"] is not None
     assert result.detail["dominating_point"]["knob"] == "BLOCK.R1.value"
@@ -543,9 +557,19 @@ def test_a_candidate_winning_one_criterion_survives():
         refdes="BLOCK.R1", param="value", functions={"gain_db": lambda v: v, "iq_ua": lambda v: v}
     )
     candidate_measurements = {"gain_db": 1500.0, "iq_ua": 1500.0}
+    # The incumbent (R1 = 1000 -> gain 1000, iq 1000) beats the candidate on
+    # iq but loses on gain, so it does not dominate either.
+    incumbent_measurements = {"gain_db": 1000.0, "iq_ua": 1000.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=2,
     )
 
     assert result.status == "pass"
@@ -574,9 +598,19 @@ def test_a_sweep_point_with_a_missing_measurement_cannot_dominate():
     slot = _scoped_slot(criteria, DECK_ONE_KNOB)
     backend = _ConstantBackend({"iq_ua": 1.0})  # gain_db never reported
     candidate_measurements = {"gain_db": 100.0, "iq_ua": 1000.0}
+    # The incumbent's own stage-2 run is missing gain_db for the same reason,
+    # so the incumbent point is excluded from domination on the same rule.
+    incumbent_measurements = {"iq_ua": 1.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=2,
     )
 
     assert result.status == "pass"
@@ -600,7 +634,7 @@ def test_count_knobs_are_swept_at_integers_only():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_COUNT_KNOB}, backend, {"gain_db": 1.0}, max_knobs=None, points=9
+        _candidate(), slot, {"tb1": DECK_COUNT_KNOB}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=9
     )
 
     swept = result.detail["knobs_swept"]
@@ -623,7 +657,7 @@ def test_count_knobs_never_sweep_below_one():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_COUNT_KNOB_AT_ONE}, backend, {"gain_db": 1.0}, max_knobs=None, points=5
+        _candidate(), slot, {"tb1": DECK_COUNT_KNOB_AT_ONE}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=5
     )
 
     swept = result.detail["knobs_swept"]
@@ -643,9 +677,17 @@ def test_the_scope_is_always_recorded_even_when_the_candidate_survives():
     # Constant, always worse than the candidate - nothing can ever dominate.
     backend = _ConstantBackend({"gain_db": 10.0})
     candidate_measurements = {"gain_db": 100.0}
+    incumbent_measurements = {"gain_db": 10.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=3
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=3,
     )
 
     assert result.status == "pass"
@@ -666,7 +708,7 @@ def test_omitted_knobs_are_named_when_max_knobs_truncates():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, max_knobs=1, points=2
+        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=1, points=2
     )
 
     assert len(result.detail["knobs_swept"]) == 1
@@ -684,7 +726,7 @@ def test_knob_names_default_none_means_no_named_narrowing_was_requested():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, {"gain_db": 1.0}, max_knobs=None, points=2
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=2
     )
 
     assert result.detail["knob_names_requested"] is None
@@ -708,6 +750,7 @@ def test_knob_names_restricts_the_sweep_and_records_the_rest_as_omitted():
         slot,
         {"tb1": DECK_TWO_KNOBS},
         backend,
+        {"gain_db": 1.0},
         {"gain_db": 1.0},
         max_knobs=None,
         points=2,
@@ -735,6 +778,7 @@ def test_a_requested_knob_name_absent_from_the_tunable_index_is_recorded_unresol
         slot,
         {"tb1": DECK_ONE_KNOB},
         backend,
+        {"gain_db": 1.0},
         {"gain_db": 1.0},
         max_knobs=None,
         points=2,
@@ -766,6 +810,7 @@ def test_knob_names_selection_is_applied_before_max_knobs_caps():
         {"tb1": DECK_THREE_KNOBS},
         backend,
         {"gain_db": 1.0},
+        {"gain_db": 1.0},
         max_knobs=1,
         points=2,
         knob_names=[("BLOCK.R2", "value"), ("BLOCK.R3", "value")],
@@ -789,7 +834,7 @@ def test_only_one_knob_moves_per_sweep_point():
     baseline_values = {"BLOCK.R1": baseline["BLOCK.R1"].resolved_value, "BLOCK.R2": baseline["BLOCK.R2"].resolved_value}
 
     scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, max_knobs=None, points=3
+        _candidate(), slot, {"tb1": DECK_TWO_KNOBS}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=3
     )
 
     assert backend.calls, "expected at least one simulated deck"
@@ -803,21 +848,37 @@ def test_a_tie_between_a_sweep_point_and_the_candidate_counts_as_domination():
     """브리프 규칙 3: 후보 '이상'이면 거부 - 동률도 포함한다. `points=1` gives
     a single swept value (R1's baseline/M = 500, since with only one point
     the log-spaced interpolation degenerates to the low endpoint), chosen to
-    equal the candidate's own gain_db exactly - a tie, not a strict win. If
+    equal the candidate's own iq_ua exactly - a tie, not a strict win. If
     domination required strictly beating the candidate (_is_better instead
     of _at_least_as_good), this single point would never dominate and the
-    candidate would wrongly survive."""
-    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    candidate would wrongly survive.
+
+    The criterion is '<=' (lower is better) precisely so the INCUMBENT point
+    - R1 at its own baseline 1000, now a dominance candidate in its own right
+    - cannot be the one that rejects: 1000 is worse than the candidate's 500
+    under '<=', so the rejection below can only come from the swept point at
+    500. Under '>=' the incumbent would dominate first and this test would no
+    longer be about the tie rule at all."""
+    criteria = [Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=1e9)]
     slot = _scoped_slot(criteria, DECK_ONE_KNOB)
-    backend = _ValueFunctionBackend(refdes="BLOCK.R1", param="value", functions={"gain_db": lambda v: v})
-    candidate_measurements = {"gain_db": 500.0}
+    backend = _ValueFunctionBackend(refdes="BLOCK.R1", param="value", functions={"iq_ua": lambda v: v})
+    candidate_measurements = {"iq_ua": 500.0}
+    incumbent_measurements = {"iq_ua": 1000.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=1
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=1,
     )
 
     assert result.detail["knobs_swept"][0]["swept_values"] == [pytest.approx(500.0)]
     assert result.status == "fail"
+    assert result.detail["dominating_point"]["point"] == "swept"
     assert result.detail["dominating_point"]["swept_value"] == pytest.approx(500.0)
 
 
@@ -834,7 +895,7 @@ def test_knobs_from_other_blocks_are_not_swept():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_TWO_BLOCKS}, backend, {"gain_db": 1.0}, max_knobs=None, points=2
+        _candidate(), slot, {"tb1": DECK_TWO_BLOCKS}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=2
     )
 
     swept_knobs = {entry["knob"] for entry in result.detail["knobs_swept"]}
@@ -863,9 +924,17 @@ def test_a_missing_measurement_on_a_lower_bound_criterion_cannot_dominate():
     slot = _scoped_slot(criteria, DECK_ONE_KNOB)
     backend = _ConstantBackend({"gain_db": 999_999.0})  # iq_ua never reported
     candidate_measurements = {"gain_db": 100.0, "iq_ua": 1000.0}
+    incumbent_measurements = {"gain_db": 999_999.0}
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, candidate_measurements, max_knobs=None, points=2
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        incumbent_measurements,
+        max_knobs=None,
+        points=2,
     )
 
     assert result.status == "pass"
@@ -895,7 +964,7 @@ M1 a b c d NMOSG W=wn
     slot = _scoped_slot(criteria, deck)
     backend = _ConstantBackend({"gain_db": 1.0})
 
-    result = scoped_comparison(_candidate(), slot, {"tb1": deck}, backend, {"gain_db": 1.0}, max_knobs=None, points=3)
+    result = scoped_comparison(_candidate(), slot, {"tb1": deck}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=3)
 
     assert result.detail["knobs_swept"] == []
     assert len(result.detail["knobs_unresolved"]) == 1
@@ -923,7 +992,7 @@ M1 a b c d NMOSG nf=2
     slot = _scoped_slot(criteria, deck)
     backend = _ConstantBackend({"gain_db": 1.0})
 
-    result = scoped_comparison(_candidate(), slot, {"tb1": deck}, backend, {"gain_db": 1.0}, max_knobs=None, points=3)
+    result = scoped_comparison(_candidate(), slot, {"tb1": deck}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=3)
 
     assert result.detail["knobs_swept"] == []
     entry = result.detail["knobs_unresolved"][0]
@@ -945,7 +1014,7 @@ def test_excluded_points_are_named_with_a_reason():
     slot = _scoped_slot(criteria, DECK_ONE_KNOB)
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, _AlwaysFailsBackend(), {"gain_db": 1.0}, max_knobs=None, points=2
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, _AlwaysFailsBackend(), {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=2
     )
 
     assert result.detail["excluded_points"], "expected at least one excluded point"
@@ -992,6 +1061,7 @@ R1 a b 2k
         {"tb1": canonical_text, "tb2": ambiguous_text},
         backend,
         {"gain_db": 1.0},
+        {"gain_db": 1.0},
         max_knobs=None,
         points=2,
     )
@@ -1013,12 +1083,337 @@ def test_the_reported_range_matches_the_first_and_last_swept_values_exactly():
     backend = _ConstantBackend({"gain_db": 1.0})
 
     result = scoped_comparison(
-        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, {"gain_db": 1.0}, max_knobs=None, points=3
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, {"gain_db": 1.0}, {"gain_db": 1.0}, max_knobs=None, points=3
     )
 
     knob = result.detail["knobs_swept"][0]
     assert knob["swept_values"][0] == knob["range"][0]
     assert knob["swept_values"][-1] == knob["range"][1]
+
+
+def test_the_incumbent_as_shipped_is_itself_a_dominance_candidate():
+    """C1, measured: a candidate strictly WORSE than doing nothing used to be
+    ADMITted. `_sweep_values` drops the baseline point (stage 2 already
+    measured it), but stage 2's measurement of that point was never handed to
+    this stage, so the zero-tuning point - the cheapest tuning that exists,
+    trivially inside any area allowance - was the one point the gate refused
+    to consider. The reviewer's real run:
+
+        gain (>=): candidate 5.0, incumbent 10.0, better=False
+        knob swept [500, 2000] -> 1.5 at both points
+        VERDICT: ADMIT   addresses: []
+
+    Reproduced exactly here (constant backend at 1.5, so neither swept point
+    can dominate). The incumbent at 10.0 does dominate, so this must reject -
+    and name the incumbent, not a swept knob.
+
+    Mutation this catches: dropping the incumbent from the dominance scan
+    (i.e. the pre-fix behaviour) makes this 'pass'."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.5})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"gain_db": 5.0},
+        {"gain_db": 10.0},
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "fail"
+    dominating = result.detail["dominating_point"]
+    assert dominating is not None
+    # Distinguishable from a swept point, per C1's requirement.
+    assert dominating["point"] == "incumbent"
+    assert dominating["knob"] is None
+    assert dominating["swept_value"] is None
+    assert dominating["label"] == INCUMBENT_POINT_LABEL
+    assert dominating["measurements"] == {"gain_db": 10.0}
+
+
+def test_the_incumbent_point_is_recorded_in_the_scope_and_costs_no_simulation():
+    """The incumbent point must appear in the recorded scope like any other
+    point (C1: "It must appear in the recorded scope"), including when it does
+    NOT dominate - otherwise a reader cannot tell "the zero-tuning point was
+    considered and lost" from "it was never considered". It must also be
+    marked as not simulated here: its numbers come from stage 2's own baseline
+    run, and counting it in simulation_count would overstate what this stage
+    cost. One knob, points=2 -> exactly 2 swept simulations and no more.
+
+    Mutation this catches: re-simulating the unchanged deck (simulation_count
+    becomes 3), or recording the incumbent as just another swept entry
+    (knobs_swept grows to 2 / incumbent_point missing)."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"gain_db": 100.0},  # candidate beats everything - nothing dominates
+        {"gain_db": 2.0},
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+    incumbent = result.detail["incumbent_point"]
+    assert incumbent["point"] == "incumbent"
+    assert incumbent["label"] == INCUMBENT_POINT_LABEL
+    assert incumbent["measurements"] == {"gain_db": 2.0}
+    assert incumbent["simulated_here"] is False
+    assert result.detail["simulation_count"] == 2
+    assert len(result.detail["knobs_swept"]) == 1
+
+
+def test_a_difference_inside_the_relative_tolerance_does_not_block_domination():
+    """C2, measured on the shipped slot: with a zero-tolerance Pareto rule two
+    criteria decoupled from the swept knob blocked domination at every point -
+    core_phase_margin short by 0.0011 deg on 66 (1.7e-5 relative) and
+    trim_loop_gain short by 0.0001 dB on 87.5 - while the real trade-off on
+    the same run was +8.3 deg on 81 (0.102 relative). This test reproduces
+    that exact shape at exact numbers: the swept point is a hair BELOW the
+    candidate on `pm` (4.2e-5 relative, the largest noise the reviewer
+    measured) and far above it on `trim_pm`.
+
+    Mutation this catches: COMPARISON_REL_TOLERANCE = 0, dropping the band
+    from _at_least_as_good, or making the band ABSOLUTE (`band = tolerance`,
+    i.e. 0.001 of a degree here) instead of relative - each makes this 'pass',
+    restoring the bug where solver noise rescues a candidate."""
+    criteria = [
+        Criterion(name="pm", measurement="core_pm_deg", operator=">=", threshold=0.0),
+        Criterion(name="trim_pm", measurement="trim_pm_deg", operator=">=", threshold=0.0),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"core_pm_deg": 66.08070, "trim_pm_deg": 99.90330})
+    candidate_measurements = {"core_pm_deg": 66.08350, "trim_pm_deg": 89.42130}
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        {"core_pm_deg": 66.08070, "trim_pm_deg": 81.13820},  # incumbent loses on trim_pm
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.detail["tolerance"] == COMPARISON_REL_TOLERANCE
+    assert result.status == "fail"
+    assert result.detail["dominating_point"]["point"] == "swept"
+
+
+def test_a_difference_larger_than_the_relative_tolerance_still_blocks_domination():
+    """The other side of the same band: the tolerance must not swallow a real
+    difference. Same shape as the test above, but the swept point is short by
+    2% on `pm` (20x the tolerance) instead of 4.2e-5 - a real regression on
+    that axis, so the candidate survives.
+
+    Mutation this catches: a tolerance widened to (say) 0.1 - it would call
+    this 2% regression a tie and wrongly reject a candidate that genuinely
+    beats every swept point on one axis."""
+    criteria = [
+        Criterion(name="pm", measurement="core_pm_deg", operator=">=", threshold=0.0),
+        Criterion(name="trim_pm", measurement="trim_pm_deg", operator=">=", threshold=0.0),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"core_pm_deg": 64.76, "trim_pm_deg": 99.90330})
+    candidate_measurements = {"core_pm_deg": 66.08350, "trim_pm_deg": 89.42130}
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        candidate_measurements,
+        {"core_pm_deg": 64.76, "trim_pm_deg": 81.13820},
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+
+
+def test_a_criterion_with_an_equality_operator_can_still_be_dominated():
+    """I6: '==' is legal in this repo's spec language (judge_tools._OPERATORS).
+    `_is_better` returning False for it is correct - there is no improvement
+    direction - but `_at_least_as_good` returning False fails OPEN: no point
+    can then ever be "at least as good" on that criterion, so no point can
+    ever dominate, every candidate passes stage 3 for free, and nothing in
+    knobs_unresolved/excluded_points/any field says so. Here the swept point
+    matches the candidate exactly on the '==' criterion and beats it on the
+    other, so it must dominate.
+
+    Mutation this catches: `return False` for '==' in _at_least_as_good makes
+    this 'pass' - a stage structurally unable to reject."""
+    criteria = [
+        Criterion(name="ref", measurement="vref_v", operator="==", threshold=1.2),
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"vref_v": 1.2, "gain_db": 99.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"vref_v": 1.2, "gain_db": 50.0},
+        {"vref_v": 1.2, "gain_db": 1.0},  # incumbent loses on gain
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "fail"
+    assert result.detail["dominating_point"]["point"] == "swept"
+
+
+def test_an_equality_criterion_outside_the_tolerance_is_not_at_least_as_good():
+    """The mirror of the test above: '==' means "at least as good WHEN EQUAL
+    within the tolerance", not "always true". The swept point misses the
+    candidate's vref by 5% (50x the tolerance), so it must not dominate even
+    though it wins on gain.
+
+    Mutation this catches: `return True` for '==' in _at_least_as_good (the
+    lazy fix for I6), which would let any point dominate on that axis."""
+    criteria = [
+        Criterion(name="ref", measurement="vref_v", operator="==", threshold=1.2),
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"vref_v": 1.26, "gain_db": 99.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"vref_v": 1.2, "gain_db": 50.0},
+        {"vref_v": 1.2, "gain_db": 1.0},
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "pass"
+    assert result.detail["dominating_point"] is None
+
+
+def test_an_operator_the_rule_cannot_judge_is_inconclusive_and_names_it():
+    """I6: "I could not judge this" and "nothing dominated" are different
+    facts. An operator this stage's comparison rule cannot handle must end
+    the stage as `inconclusive` with the operator NAMED - never as a silent
+    pass. It must also cost nothing: the check runs before any simulation, so
+    an exploding backend proves no point was ever simulated.
+
+    Mutation this catches: falling back to `status='pass'` (or letting
+    _at_least_as_good return False) - the exploding backend also catches a
+    version that checks the operators only after sweeping."""
+
+    class _AlwaysFailsBackend:
+        def run(self, netlist_path, testbench_config):
+            raise AssertionError("no simulation may run when the operators cannot be judged")
+
+    criteria = [
+        Criterion(name="weird", measurement="gain_db", operator="!=", threshold=0.0),
+        Criterion(name="ok", measurement="iq_ua", operator="<=", threshold=1e9),
+    ]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        _AlwaysFailsBackend(),
+        {"gain_db": 1.0, "iq_ua": 1.0},
+        {"gain_db": 1.0, "iq_ua": 1.0},
+        max_knobs=None,
+        points=2,
+    )
+
+    assert result.status == "inconclusive"
+    assert result.status != "pass"
+    assert result.detail["unjudgeable_operators"] == [{"criterion": "weird", "operator": "!="}]
+    assert "!=" in result.detail["why"]
+    assert "weird" in result.detail["why"]
+    assert result.detail["simulation_count"] == 0
+    assert result.detail["dominating_point"] is None
+
+
+def test_the_recorded_scope_says_the_low_sweep_bound_is_self_imposed():
+    """I8: the sweep runs [baseline/M, baseline*M], but only the HIGH end is
+    the area gate's bound - evaluate_area_growth short-circuits on
+    `ratio <= 1.0`, so the gate does not restrict shrinking at all. The
+    docstring used to call the whole range "the multiplier the area gate
+    allows", which overstates the comparison: a tuner may legally shrink
+    below baseline/M, and this stage did not look there. The recorded scope
+    must say so, since the omission biases this stage toward ADMIT.
+
+    Mutation this catches: dropping the note, or restoring a note that claims
+    both ends are the gate's."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"gain_db": 1.0},
+        {"gain_db": 1.0},
+        max_knobs=None,
+        points=2,
+    )
+
+    note = result.detail["sweep_bounds_note"]
+    assert "self-imposed" in note.lower()
+    assert "shrink" in note.lower()
+    assert "does not restrict shrinking" in note
+
+
+def test_a_near_tie_is_not_measured_as_an_improvement():
+    """C2's other direction, in the stage that produces `addresses`: with a
+    zero-tolerance comparison the reviewer's real run reported
+
+        core_phase_margin: cand 66.08350 base 66.08070  better=True (+0.0028)
+        trim_loop_gain:    cand 87.54500 base 87.54490  better=True (+0.0001)
+        trim_phase_margin: cand 89.42130 base 81.13820  better=True (+8.3, real)
+
+    and all three names went into topology_candidate.py's `addresses`, which
+    agents/tuner.py renders straight into the swap-selection prompt - so
+    stage 4's whole purpose (no unverified claim reaches the tuner) was
+    defeated by measurement noise. Only the real improvement may survive.
+
+    Mutation this catches: COMPARISON_REL_TOLERANCE = 0, or dropping the band
+    from _is_better - either puts all three names back in addresses."""
+    criteria = [
+        Criterion(name="core_phase_margin", measurement="core_pm_deg", operator=">=", threshold=0.0),
+        Criterion(name="trim_loop_gain", measurement="trim_gain_db", operator=">=", threshold=0.0),
+        Criterion(name="trim_phase_margin", measurement="trim_pm_deg", operator=">=", threshold=0.0),
+    ]
+    slot = _slot_with_criteria(criteria)
+    backend = _SequencedBackend(
+        [
+            {"core_pm_deg": 66.08350, "trim_gain_db": 87.54500, "trim_pm_deg": 89.42130},
+            {"core_pm_deg": 66.08070, "trim_gain_db": 87.54490, "trim_pm_deg": 81.13820},
+        ]
+    )
+
+    result, addresses = reproduce_characteristics(_candidate(), slot, {"tb1": DECK_SWAPPABLE}, backend)
+
+    assert result.status == "pass"
+    assert addresses == ["trim_phase_margin"]
+    assert result.detail["criteria"]["core_phase_margin"]["better"] is False
+    assert result.detail["criteria"]["trim_loop_gain"]["better"] is False
 
 
 # --- verify_corners ------------------------------------------------------------
@@ -1277,6 +1672,57 @@ def test_a_simulator_exception_during_corner_verification_is_inconclusive_not_a_
 
     assert result.status == "inconclusive"
     assert result.status != "fail"
+
+
+def test_an_empty_addresses_list_records_that_requirement_2_compared_nothing():
+    """I7, measured: an authored candidate with `addresses: []` shipped
+    `verified_at="corners"` having compared nothing at corners. Requirement 2
+    iterates `addresses`; with none it compares zero criteria, `worse` stays
+    empty and the stage returns 'pass' - a pass that means only "requirement 1
+    held", not "the candidate beats the incumbent at its worst corner". The
+    real run read `corners: pass, criteria: {}, worse: []` and ADMITted.
+
+    The stage must record that fact. Not "log it only when it matters": this
+    repo's rule is that a check which records nothing when it finds nothing
+    is indistinguishable from a check that has disappeared.
+
+    Mutation this catches: dropping addresses_compared/requirement_2_note, or
+    writing a note that claims a comparison happened regardless."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    # The candidate is WORSE than the incumbent everywhere, which is exactly
+    # how `addresses` ends up empty in the measured case.
+    backend = _CornerBackend(lambda is_candidate, voltage: {"gain_db": 10.0 if is_candidate else 100.0})
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=[])
+
+    assert result.status == "pass"  # requirement 1 held; requirement 2 had nothing to do
+    assert result.detail["addresses_compared"] == 0
+    assert result.detail["criteria"] == {}
+    note = result.detail["requirement_2_note"]
+    assert "NOTHING" in note
+    assert "requirement 1" in note
+
+
+def test_a_non_empty_addresses_list_records_how_many_criteria_it_compared():
+    """The positive control for the test above: when requirement 2 DOES
+    compare something, the recorded count must say so rather than being a
+    constant. Without this, a mutation hardcoding addresses_compared to 0 (or
+    always emitting the "compared NOTHING" note) would pass the test above."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    pvt = PVTCorners(process=["tt"], voltage=[1.8, 1.62], temperature=[27.0])
+    slot = _corner_slot(criteria, DECK_CORNER, pvt)
+    backend = _CornerBackend(lambda is_candidate, voltage: {"gain_db": 100.0 if is_candidate else 10.0})
+    candidate = _candidate()
+
+    result = verify_corners(candidate, slot, {"tb1": DECK_CORNER}, backend, addresses=["gain"])
+
+    assert result.status == "pass"
+    assert result.detail["addresses_compared"] == 1
+    assert "NOTHING" not in result.detail["requirement_2_note"]
+    assert "gain" in result.detail["requirement_2_note"]
 
 
 def test_the_scope_limit_is_recorded_when_the_stage_actually_runs():

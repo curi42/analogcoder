@@ -63,11 +63,50 @@ from analogcoder.topology_match import SwapCandidate, compatible_swaps
 
 _BETTER_WHEN_LARGER = (">=", ">")
 _BETTER_WHEN_SMALLER = ("<=", "<")
+_EQUALITY = ("==",)
+# 이 모듈의 비교 규칙(`_is_better`/`_at_least_as_good`)이 실제로 판정할 수 있는
+# 연산자 전체. `judge_tools._OPERATORS`가 스펙 언어로 허용하는 다섯 개와 같지만,
+# 여기서 다시 적는 이유는 **판정 가능성**이 통과/불통과 판정과 다른 질문이기
+# 때문이다 - 이 목록 밖의 연산자를 만나면 3단은 "지배가 없었다"(pass)가 아니라
+# `inconclusive`로 끝나야 한다(아래 `_unjudgeable_operators`).
+_COMPARABLE_OPERATORS = _BETTER_WHEN_LARGER + _BETTER_WHEN_SMALLER + _EQUALITY
+
+# 3단(범위 밝힌 비교)의 파레토 판정에 쓰는 **상대** 허용오차.
+#
+# **이 값은 추측이 아니라 실측에서 나왔다.** 출하 슬롯 스펙
+# `benchmarks/bandgap/spec_curate_slot.yaml`(4개 앰프가 바이어스 레일을 공유하는
+# 8기준 단일 테스트벤치)에 Ahuja(지시 보상) 후보를 넣고 `TRIMAMP`의 30노브 x
+# 5점 = 120회 시뮬레이션(2분 40초)을 실제로 돌려 얻은 숫자들이다:
+#
+#   잡음(솔버 정밀도 수준, 노브를 움직여도 변하지 않는다):
+#     core_phase_margin  후보 66.08350 / 기존 66.08070 -> +0.0028 deg = 4.2e-5 상대
+#     trim_loop_gain     후보 87.54500 / 기존 87.54490 -> +0.0001 dB  = 1.1e-6 상대
+#   실제 설계 차이(같은 실행에서 같은 스윕이 낸 값):
+#     trim_phase_margin  기존 81.13820 -> 89.42130     -> +8.3 deg    = 0.102 상대
+#
+# 허용오차가 없으면(엄격한 0 허용오차) 이 두 잡음이 양방향으로 거짓말을 한다.
+# 지배를 막는 쪽으로는 `core_phase_margin`이 0.0011 deg 모자라 스윕 전 구간에서
+# 지배를 봉쇄했고(그래서 이 하위 프로젝트 자신의 증명 사례인 Ahuja 후보가
+# `dominating: None`으로 ADMIT됐다), 주장을 만드는 쪽으로는 같은 크기의 잡음이
+# `addresses`에 `core_phase_margin`/`trim_loop_gain`을 올려 검증되지 않은 개선
+# 주장을 튜너 프롬프트(`agents/tuner.py`)까지 실어 보냈다.
+#
+# 1e-3은 측정된 최대 잡음(4.2e-5)의 **약 24배 위**, 측정된 실제 개선(0.102)의
+# **약 1/100 아래**다 - 양쪽으로 세 자리수 가까운 여유. 이 저장소는 가드 밴드에서
+# 이미 같은 교훈을 값 주고 배웠다(추측한 비율 `g=0.2`는 bandgap에서 공집합
+# 구간을 만들어 어떤 단계도 수락할 수 없게 만들었고, 실측한 0.0051이 그것을
+# 고쳤다) - 그래서 여기서도 둥근 수를 고르지 않고 산술을 적는다.
+COMPARISON_REL_TOLERANCE = 1e-3
 
 # `author_and_verify_variant`(소스 C 거부-재시도 루프)의 재시도 상한.
 # `orchestrator.MAX_TUNING_RETRIES`와 같은 값(3)이지만, 다른 서브시스템의
 # 상수를 임포트해 결합을 만들지 않기 위해 이 모듈 자신의 상수로 복제한다.
 MAX_VARIANT_AUTHOR_RETRIES = 3
+
+# 3단의 지배 후보 중 "아무 노브도 바꾸지 않은" 지점 - 기존 본문 그 자체 - 에
+# 붙는 라벨. 스윕 지점과 **구별 가능해야** 하므로(`knob`/`swept_value`가 둘 다
+# `None`인 것만으로는 결측과 헷갈릴 수 있다) 명시적인 문자열을 둔다.
+INCUMBENT_POINT_LABEL = "incumbent as shipped (no change)"
 
 
 @dataclass(frozen=True)
@@ -338,14 +377,34 @@ def _simulate_deck(netlist_texts: dict[str, str], testbenches: list[Testbench], 
     return measurements, count
 
 
-def _is_better(operator: str, candidate_value: float, baseline_value: float) -> bool:
-    """`operator`의 방향으로 후보 값이 기존 값보다 나은가. 동률은 나은 것이
-    아니다. `==` 기준은 개선 방향이 정의되지 않으므로(맞다/틀리다이지
-    "더 낫다"가 없다) 결코 개선으로 세지 않는다 - 추측하지 않는다."""
+def _is_better(
+    operator: str, candidate_value: float, baseline_value: float, tolerance: float = COMPARISON_REL_TOLERANCE
+) -> bool:
+    """`operator`의 방향으로 후보 값이 기존 값보다 **의미 있게** 나은가.
+
+    "의미 있게"는 상대 허용오차 `tolerance`로 정의한다: 개선은 기준값의
+    `tolerance * |baseline_value|`를 **넘어야** 세어진다. 그 안쪽은 동률이다.
+    허용오차 없이 판정하면 SPICE 솔버 정밀도 수준의 차이(실측: 66.08 deg에서
+    0.0028 deg)가 개선으로 세어져, 이 함수가 낳는 `addresses`가 **측정되지 않은
+    주장**이 되고 그대로 튜너의 스왑 선택 프롬프트까지 간다 -
+    `COMPARISON_REL_TOLERANCE`의 주석에 그 실측이 있다.
+
+    `_at_least_as_good`과 **대칭**이다: 같은 폭의 띠 `[b - m, b + m]`
+    (`m = tolerance * |b|`)를 두 함수가 공유하므로, 그 안의 값은 이쪽에서
+    "낫지 않다"(False)이고 저쪽에서 "적어도 그만큼은 된다"(True)가 된다 -
+    한 차이가 개선이면서 동시에 지배를 막는 일은 생기지 않는다.
+
+    `==` 기준은 개선 방향이 정의되지 않으므로(맞다/틀리다이지 "더 낫다"가 없다)
+    결코 개선으로 세지 않는다 - 추측하지 않는다. 그 밖의 알 수 없는 연산자도
+    `False`(= 개선 아님)로 닫힌다: 이 함수의 실패 방향은 "모르면 주장하지
+    않는다"이다. 반대로 `_at_least_as_good`은 같은 상황에서 조용히 `False`를
+    내면 **열려서** 실패하므로(아무 지점도 지배하지 못해 게이트가 통과된다)
+    거기서는 예외를 던지고, 3단이 그것을 `inconclusive`로 바꾼다."""
+    band = tolerance * abs(baseline_value)
     if operator in _BETTER_WHEN_LARGER:
-        return candidate_value > baseline_value
+        return candidate_value > baseline_value + band
     if operator in _BETTER_WHEN_SMALLER:
-        return candidate_value < baseline_value
+        return candidate_value < baseline_value - band
     return False
 
 
@@ -698,6 +757,12 @@ def verify_corners(
                 "candidate_worst_case_corners": candidate_sweep["worst_case_corners"],
                 "baseline_worst_case_corners": baseline_sweep["worst_case_corners"],
                 "scope_note": scope_note,
+                "addresses": list(addresses),
+                "addresses_compared": 0,
+                "requirement_2_note": (
+                    "requirement 2 (worst-corner comparison on the addressed criteria) was "
+                    "not reached - requirement 1 already failed on a missing measurement"
+                ),
             },
         )
 
@@ -731,9 +796,31 @@ def verify_corners(
         if not better:
             worse.append(name)
 
+    # 요구 2가 **몇 개를 비교했는지**를 항상 적는다. `addresses`가 비어 있으면
+    # 이 루프는 한 바퀴도 돌지 않고 `worse`가 비어 `pass`가 되는데, 그 `pass`는
+    # "코너에서 기존 본문보다 낫다"가 아니라 "요구 1만 통과했다"는 뜻이다.
+    # 이것을 적지 않으면 산출물의 `verified_at="corners"`가 실제로 잰 것보다
+    # 많은 것을 주장하게 된다(실측: 후보가 기존 본문보다 나쁜데 addresses가
+    # 비어 `corners: pass, criteria: {}, worse: []`로 ADMIT됐다).
+    if addresses:
+        requirement_2_note = (
+            f"requirement 2 compared {len(addresses)} addressed criterion(s) at their "
+            f"worst corner: {list(addresses)}"
+        )
+    else:
+        requirement_2_note = (
+            "requirement 2 compared NOTHING: `addresses` is empty, so not a single "
+            "criterion's worst-corner value was compared against the incumbent's. This "
+            "stage's 'pass' therefore rests on requirement 1 (every criterion produced a "
+            "measurement at every corner) alone - read verified_at='corners' as no more "
+            "than that"
+        )
+
     status = "fail" if worse else "pass"
     detail = {
         "addresses": addresses,
+        "addresses_compared": len(addresses),
+        "requirement_2_note": requirement_2_note,
         "criteria": per_address,
         "worse": worse,
         "candidate_worst_case_corners": candidate_sweep["worst_case_corners"],
@@ -743,19 +830,58 @@ def verify_corners(
     return StageResult(name="corners", status=status, detail=detail)
 
 
-def _at_least_as_good(operator: str, value: float, reference: float) -> bool:
+def _at_least_as_good(
+    operator: str, value: float, reference: float, tolerance: float = COMPARISON_REL_TOLERANCE
+) -> bool:
     """`_is_better`와 자매 함수이지만 다른 질문에 답한다: `_is_better`는
-    "엄격히 낫다"(동률은 아니다)이고, 이 함수는 "적어도 그만큼 낫다"(동률도
-    그렇다)이다. 3단의 파레토 지배 규칙이 한국어로 "후보 **이상**"이라고
-    적은 것이 정확히 이 관계다 - 동률이 지배로 세지 않으면, 노브 하나로
-    후보와 정확히 같은 값을 내는 기존 본문이 있어도 그 항목을 들여보내게
-    되는데, 그건 "값 튜닝으로 못 가는 곳에 간다"는 라이브러리의 존재
-    이유를 어긴다."""
+    "의미 있게 낫다"이고, 이 함수는 "적어도 그만큼은 된다"(동률도, 허용오차
+    안의 근소한 열세도 그렇다)이다. 3단의 파레토 지배 규칙이 한국어로 "후보
+    **이상**"이라고 적은 것이 정확히 이 관계다 - 동률이 지배로 세지 않으면,
+    노브 하나로 후보와 정확히 같은 값을 내는 기존 본문이 있어도 그 항목을
+    들여보내게 되는데, 그건 "값 튜닝으로 못 가는 곳에 간다"는 라이브러리의
+    존재 이유를 어긴다.
+
+    허용오차는 `_is_better`와 **같은 띠**를 쓴다(`m = tolerance * |reference|`).
+    실측이 보여준 것은 이 방향의 손실이 더 비싸다는 것이다: 0 허용오차에서
+    `core_phase_margin`이 0.0011 deg(1.7e-5 상대) 모자라 스윕 **전 구간**에서
+    지배를 봉쇄했고, 그 결과 이 하위 프로젝트 자신의 증명 사례인 Ahuja 후보가
+    `dominating: None`으로 ADMIT됐다.
+
+    `==`는 **양방향 허용오차 안이면 "적어도 그만큼"이다.** `_is_better`가 `==`
+    에서 `False`를 내는 것은 옳지만(개선 방향이 없다), 이 함수가 같은 이유로
+    `False`를 내면 **열려서 실패한다** - `==` 기준이 하나라도 있으면 어떤
+    지점도 결코 모든 기준에서 후보 이상이 될 수 없고, 3단은 구조적으로 아무도
+    거부하지 못하는 상태가 되면서 그 사실을 어디에도 적지 않는다.
+
+    판정할 수 없는 연산자는 조용히 `False`를 내지 않고 `ValueError`를 던진다 -
+    "판정 못 했다"와 "지배가 없었다"는 다른 사실이고, 3단은 전자를
+    `inconclusive`(연산자 이름과 함께)로 바꾼다. 정상 경로에서는
+    `scoped_comparison`이 시작하자마자 `_unjudgeable_operators`로 걸러내므로
+    이 예외에 도달하지 않는다."""
+    band = tolerance * abs(reference)
     if operator in _BETTER_WHEN_LARGER:
-        return value >= reference
+        return value >= reference - band
     if operator in _BETTER_WHEN_SMALLER:
-        return value <= reference
-    return False
+        return value <= reference + band
+    if operator in _EQUALITY:
+        return abs(value - reference) <= band
+    raise ValueError(
+        f"_at_least_as_good cannot judge operator {operator!r} - failing open here would "
+        "silently make the Pareto rule unable to reject anything"
+    )
+
+
+def _unjudgeable_operators(criteria) -> list[dict]:
+    """이 모듈의 비교 규칙이 판정할 수 없는 연산자를 쓰는 기준들. 3단이 첫
+    줄에서 이것을 확인하고, 하나라도 있으면 시뮬레이션을 한 번도 쓰지 않고
+    `inconclusive`로 끝낸다 - **연산자 이름과 함께**. 조용한 통과는 "아무도
+    후보를 지배하지 못했다"(측정된 사실)와 "나는 이 기준을 판정할 수 없었다"
+    (판정 불능)를 같은 값으로 뭉갠다."""
+    return [
+        {"criterion": c.name, "operator": c.operator}
+        for c in criteria
+        if c.operator not in _COMPARABLE_OPERATORS
+    ]
 
 
 def _block_tunable_knobs(netlist_text: str, circuit_name: str, block_path: str) -> list[tuple[str, str]]:
@@ -778,8 +904,23 @@ def _block_tunable_knobs(netlist_text: str, circuit_name: str, block_path: str) 
 def _sweep_values(baseline: float, allowed_multiplier: float, points: int, is_count: bool) -> list[float]:
     """`[baseline/M, baseline*M]`을 로그 등간격 `points`점으로 나눈 값들.
 
+    **두 끝의 근거가 다르다.** `M`(`allowed_multiplier`)은 에어리어 게이트가 이
+    파라미터에 허용하는 **성장** 배수이므로, 위쪽 끝 `baseline*M`만 게이트가
+    실제로 긋는 선이다. 아래쪽 끝 `baseline/M`은 이 단계가 **스스로 정한 대칭
+    경계**이지 게이트의 경계가 아니다 - `area_limits.evaluate_area_growth`는
+    `if group.ratio <= 1.0: continue`로 짧게 끊으므로 **축소는 전혀 제한하지
+    않는다.** 그러므로 튜너는 `baseline/M`보다 더 작은 값도 합법적으로 제안할
+    수 있고, 그런 지점은 여기서 **보지 않았다**. 이 비대칭은 판정을 후보에게
+    유리한 쪽으로(= ADMIT 쪽으로) 기울이므로, 3단의 `detail`이 그 사실을
+    문장으로 남긴다(`sweep_bounds_note`). 아래쪽을 무한정 넓히는 것은 다른
+    설계 질문(무제한 축소 스윕)이라 여기서 하지 않는다 - 하지 않는다는 사실을
+    적을 뿐이다.
+
     기준선 자체는 뺀다 - 2단이 이미 그 값을 쟀으므로 3단이 다시 시뮬레이션할
-    이유가 없다(브리프 규칙 2). `points`가 홀수면 로그 등간격의 가운뎃점이
+    이유가 없다. 다만 **그 값이 판정에서 빠지는 것은 아니다**: 3단은 2단이 낸
+    기존 본문의 measurement를 `incumbent_measurements`로 받아 "아무것도 바꾸지
+    않는" 지점을 지배 후보로 넣는다(`scoped_comparison` 참고). 여기서 빼는 것은
+    **시뮬레이션**이지 **지점**이 아니다. `points`가 홀수면 로그 등간격의 가운뎃점이
     기하평균 `sqrt((baseline/M)*(baseline*M)) == baseline`과 정확히 같아지므로,
     끝점만이 아니라 매 값을 기준선과 비교해 걸러낸다.
 
@@ -886,6 +1027,7 @@ def scoped_comparison(
     netlist_texts: dict[str, str],
     sim_backend,
     candidate_measurements: dict,
+    incumbent_measurements: dict,
     max_knobs: int | None,
     points: int,
     knob_names: list[tuple[str, str]] | None = None,
@@ -912,17 +1054,42 @@ def scoped_comparison(
     자연스러운 순서다.
 
     기존 본문은 **그대로 둔 채**, 그 블록의 tunable 인덱스에서 노브
-    **하나씩** 에어리어 게이트가 그 파라미터에 허용하는 배수 `M` 안에서
-    `[baseline/M, baseline*M]`을 `points`점 로그 등간격으로 스윕한다. 한
-    스윕 지점의 변경은 정확히 하나다 - 두 노브를 함께 움직이면 "이 노브
-    하나로 후보를 이긴다"는 주장이 실제로는 "이 두 노브의 조합으로 이긴다"는
-    다른 주장이 되어, 이 게이트의 정직성 근거가 깨진다.
+    **하나씩** `[baseline/M, baseline*M]`을 `points`점 로그 등간격으로 스윕한다
+    (`M`은 에어리어 게이트가 그 파라미터에 허용하는 **성장** 배수 - 아래쪽
+    끝이 왜 게이트의 경계가 아닌지는 `_sweep_values`의 docstring과
+    `detail["sweep_bounds_note"]`에 있다). 한 스윕 지점의 변경은 정확히
+    하나다 - 두 노브를 함께 움직이면 "이 노브 하나로 후보를 이긴다"는 주장이
+    실제로는 "이 두 노브의 조합으로 이긴다"는 다른 주장이 되어, 이 게이트의
+    정직성 근거가 깨진다.
 
-    거부 규칙은 파레토 지배다: 어떤 단일 스윕 지점이 **모든 기준에서**
-    후보 이상이면(`_at_least_as_good`, 동률 포함) `REJECT`(`status="fail"`).
-    후보가 단 하나의 기준에서라도 그 지점을 이기면 그 지점은 지배하지
-    못한다 - "모든 축에서 이겨야 입회"가 아니라 "하나의 축에서라도 후보가
-    앞서면 생존"이다.
+    **지배 후보의 첫 번째는 "아무것도 바꾸지 않은" 지점, 즉 기존 본문 그
+    자체다**(`incumbent_measurements` - 2단이 이미 잰 값이라 여기서 다시
+    시뮬레이션하지 않는다). 그것이 존재하는 튜닝 중 **가장 싼 것**이고 어떤
+    에어리어 허용 범위에도 자명하게 들어간다. 이 지점을 지배 후보에서 빼면,
+    기존 본문보다 **모든 기준에서 더 나쁜** 후보가 "어떤 스윕 지점도 지배하지
+    못했다"는 이유로 ADMIT된다 - 실측된 결함이었다(gain 후보 5.0 / 기존 10.0,
+    스윕은 양 끝에서 1.5, `VERDICT: ADMIT`). 기록에서는 스윕 지점과 구별된다:
+    `detail["incumbent_point"]`로 따로 남고, 지배했다면
+    `dominating_point["point"] == "incumbent"`(`knob`/`swept_value`는 `None`)
+    이다.
+
+    거부 규칙은 파레토 지배다: 어떤 단일 지점(위 기존 본문 지점 또는 어떤
+    스윕 지점)이 **모든 기준에서** 후보 이상이면(`_at_least_as_good`, 동률과
+    허용오차 안의 근소차 포함) `REJECT`(`status="fail"`). 후보가 단 하나의
+    기준에서라도 그 지점을 **의미 있게** 이기면 그 지점은 지배하지 못한다 -
+    "모든 축에서 이겨야 입회"가 아니라 "하나의 축에서라도 후보가 앞서면
+    생존"이다.
+
+    **"이상"과 "앞선다"의 경계는 `COMPARISON_REL_TOLERANCE`(1e-3)의 상대
+    허용오차다** - 그 상수의 주석에 이 값이 나온 실측이 있다. 허용오차가
+    없으면 솔버 정밀도 수준의 차이가 양방향으로 거짓말을 한다(스윕 전 구간에서
+    지배를 봉쇄하고, 동시에 근거 없는 `addresses`를 만든다). 적용된 값은
+    `detail["tolerance"]`에 남는다.
+
+    스펙의 어떤 기준이 이 비교 규칙으로 판정할 수 없는 연산자를 쓰면, 스윕을
+    시작하지도 않고 `inconclusive`로 끝낸다 - `detail["unjudgeable_operators"]`
+    에 기준 이름과 연산자를 적어서. "판정하지 못했다"를 "아무도 지배하지
+    못했다"로 통과시키는 것이 이 게이트가 조용히 사라지는 방식이다.
 
     값을 못 낸 지점(시뮬 예외, 또는 evaluate_criteria가 결측으로 잡는 값 -
     키 부재든 리터럴 None이든)은 지배 후보에서 **제외**한다 - 결측을 무한히
@@ -938,6 +1105,54 @@ def scoped_comparison(
     조용히 빼지 않는다."""
     testbenches = slot.spec.testbenches
     criteria = slot.spec.all_criteria
+
+    sweep_bounds_note = (
+        "each knob was swept over [baseline/M, baseline*M], but the two ends do NOT "
+        "have the same authority: M is the area gate's allowed GROWTH multiplier, so "
+        "only baseline*M is the gate's own bound. area_limits.evaluate_area_growth "
+        "short-circuits on `ratio <= 1.0`, i.e. the gate does not restrict shrinking "
+        "at all - baseline/M is a SELF-IMPOSED symmetric bound of this stage. A tuner "
+        "may legally set a parameter below baseline/M, and no such point was examined "
+        "here; that omission narrows the sweep in the direction the gate does not "
+        "restrict, which biases this stage toward ADMIT"
+    )
+    tolerance_note = (
+        f"a difference within {COMPARISON_REL_TOLERANCE:g} relative to the value it is "
+        "compared against counts as a tie in BOTH directions: it is not an improvement "
+        "(so it cannot manufacture an `addresses` claim) and it does not block "
+        "domination (so solver noise cannot rescue a candidate). See "
+        "curation.COMPARISON_REL_TOLERANCE for the measured numbers this was set from"
+    )
+
+    unjudgeable = _unjudgeable_operators(criteria)
+    if unjudgeable:
+        return StageResult(
+            name="comparison",
+            status="inconclusive",
+            detail={
+                "topology_id": candidate.topology_id,
+                "block_path": slot.block_path,
+                "tolerance": COMPARISON_REL_TOLERANCE,
+                "tolerance_note": tolerance_note,
+                "sweep_bounds_note": sweep_bounds_note,
+                "unjudgeable_operators": unjudgeable,
+                "why": (
+                    "this stage's Pareto rule cannot judge operator(s) "
+                    f"{sorted({entry['operator'] for entry in unjudgeable})} used by criteria "
+                    f"{[entry['criterion'] for entry in unjudgeable]}, so no sweep was run - "
+                    "'could not judge' is a different fact from 'nothing dominated the "
+                    "candidate', and reporting the latter would let the gate pass silently"
+                ),
+                "knobs_swept": [],
+                "knobs_omitted": [],
+                "knobs_unresolved": [],
+                "excluded_points": [],
+                "simulation_count": 0,
+                "best_per_criterion": {},
+                "dominating_point": None,
+                "incumbent_point": None,
+            },
+        )
 
     canonical = slot.spec.canonical
     canonical_text = netlist_texts[canonical.name]
@@ -985,6 +1200,67 @@ def scoped_comparison(
     best_per_criterion: dict[str, dict] = {}
     dominating_point: dict | None = None
     simulation_count = 0
+
+    def _record_best(by_name: dict, knob: str | None, swept_value: float | None, point_kind: str) -> None:
+        for c in criteria:
+            actual = by_name[c.name]["actual"]
+            if math.isnan(actual):
+                continue
+            current = best_per_criterion.get(c.name)
+            if current is None or _is_better(c.operator, actual, current["value"]):
+                best_per_criterion[c.name] = {
+                    "value": actual,
+                    "knob": knob,
+                    "swept_value": swept_value,
+                    "point": point_kind,
+                }
+
+    def _dominates(by_name: dict) -> bool:
+        return all(
+            _at_least_as_good(c.operator, by_name[c.name]["actual"], candidate_by_name[c.name]["actual"])
+            for c in criteria
+        )
+
+    # 지배 후보 0번: 아무것도 바꾸지 않은 지점 = 기존 본문 그 자체. 2단이 이미
+    # 잰 값이므로 시뮬레이션을 쓰지 않는다(그래서 simulation_count에 더하지
+    # 않는다). 스윕 지점과 구별되도록 knob/swept_value는 None이고 "point":
+    # "incumbent" 라벨을 단다.
+    incumbent_eval = evaluate_criteria(incumbent_measurements, criteria)
+    incumbent_by_name = {r["name"]: r for r in incumbent_eval["criteria"]}
+    incumbent_missing = sorted(name for name, r in incumbent_by_name.items() if math.isnan(r["actual"]))
+    incumbent_point: dict = {
+        "point": "incumbent",
+        "label": INCUMBENT_POINT_LABEL,
+        "knob": None,
+        "swept_value": None,
+        "measurements": dict(incumbent_measurements),
+        "simulated_here": False,
+        "source": (
+            "stage 2 (reproduce)'s own baseline simulation - re-simulating the "
+            "unchanged deck here would measure the same point twice"
+        ),
+        "excluded": bool(incumbent_missing),
+        "excluded_reason": f"missing measurements: {incumbent_missing}" if incumbent_missing else None,
+    }
+    _record_best(incumbent_by_name, None, None, "incumbent")
+    if incumbent_missing:
+        excluded_points.append(
+            {
+                "point": "incumbent",
+                "label": INCUMBENT_POINT_LABEL,
+                "knob": None,
+                "swept_value": None,
+                "reason": f"missing measurements: {incumbent_missing}",
+            }
+        )
+    elif not candidate_incomplete and _dominates(incumbent_by_name):
+        dominating_point = {
+            "point": "incumbent",
+            "label": INCUMBENT_POINT_LABEL,
+            "knob": None,
+            "swept_value": None,
+            "measurements": dict(incumbent_measurements),
+        }
 
     for refdes, param in knobs:
         knob_name = f"{refdes}.{param}"
@@ -1039,7 +1315,12 @@ def scoped_comparison(
 
             if error is not None:
                 excluded_points.append(
-                    {"knob": knob_name, "swept_value": value, "reason": f"simulation failed: {error}"}
+                    {
+                        "point": "swept",
+                        "knob": knob_name,
+                        "swept_value": value,
+                        "reason": f"simulation failed: {error}",
+                    }
                 )
                 continue
 
@@ -1047,30 +1328,35 @@ def scoped_comparison(
             point_by_name = {r["name"]: r for r in point_eval["criteria"]}
             missing = sorted(name for name, r in point_by_name.items() if math.isnan(r["actual"]))
 
-            for c in criteria:
-                actual = point_by_name[c.name]["actual"]
-                if math.isnan(actual):
-                    continue
-                current = best_per_criterion.get(c.name)
-                if current is None or _is_better(c.operator, actual, current["value"]):
-                    best_per_criterion[c.name] = {"value": actual, "knob": knob_name, "swept_value": value}
+            _record_best(point_by_name, knob_name, value, "swept")
 
             if missing:
-                excluded_points.append({"knob": knob_name, "swept_value": value, "reason": f"missing measurements: {missing}"})
+                excluded_points.append(
+                    {
+                        "point": "swept",
+                        "knob": knob_name,
+                        "swept_value": value,
+                        "reason": f"missing measurements: {missing}",
+                    }
+                )
                 continue
 
-            if dominating_point is None and not candidate_incomplete:
-                dominates = all(
-                    _at_least_as_good(c.operator, point_by_name[c.name]["actual"], candidate_by_name[c.name]["actual"])
-                    for c in criteria
-                )
-                if dominates:
-                    dominating_point = {"knob": knob_name, "swept_value": value, "measurements": dict(measurements)}
+            if dominating_point is None and not candidate_incomplete and _dominates(point_by_name):
+                dominating_point = {
+                    "point": "swept",
+                    "knob": knob_name,
+                    "swept_value": value,
+                    "measurements": dict(measurements),
+                }
 
     status = "fail" if dominating_point is not None else "pass"
     detail = {
         "topology_id": candidate.topology_id,
         "block_path": slot.block_path,
+        "tolerance": COMPARISON_REL_TOLERANCE,
+        "tolerance_note": tolerance_note,
+        "sweep_bounds_note": sweep_bounds_note,
+        "incumbent_point": incumbent_point,
         "knob_names_requested": knob_names_requested,
         "knobs_swept": knobs_swept,
         "knobs_omitted": knobs_omitted,

@@ -314,13 +314,20 @@ def _stage_fail_reason(name: str, stage: StageResult) -> str:
     raise RuntimeError(f"unknown stage name {name!r} - this should be unreachable")
 
 
-def _reproduce_measurements(stages: list[StageResult]) -> dict:
-    """이미 통과한 2단(`reproduce`) StageResult에서 후보 쪽 measurement를
-    되찾는다 - 3단(`scoped_comparison`)이 요구하는 `candidate_measurements`
-    인자다. 2단을 다시 시뮬레이션하지 않는다."""
+def _reproduce_measurements(stages: list[StageResult]) -> tuple[dict, dict]:
+    """이미 통과한 2단(`reproduce`) StageResult에서 후보 쪽과 **기존 본문 쪽**
+    measurement를 함께 되찾는다 - 3단(`scoped_comparison`)이 요구하는
+    `candidate_measurements`/`incumbent_measurements` 두 인자다. 2단을 다시
+    시뮬레이션하지 않는다.
+
+    기존 본문 쪽을 함께 넘기는 것이 3단의 정확성 요건이다: 그것이 "아무것도
+    바꾸지 않는" 지점, 즉 존재하는 튜닝 중 가장 싼 것이고, 그 지점을 지배
+    후보에서 빼면 기존 본문보다 모든 기준에서 더 나쁜 후보가 ADMIT된다
+    (`scoped_comparison`의 docstring에 실측이 있다). 2단은 이미 두 덱을 다
+    시뮬레이션했으므로 여기서 새로 드는 비용은 없다."""
     for stage in stages:
         if stage.name == "reproduce":
-            return stage.detail["candidate_measurements"]
+            return stage.detail["candidate_measurements"], stage.detail["baseline_measurements"]
     raise RuntimeError("no 'reproduce' stage recorded before scoped_comparison - this should be unreachable")
 
 
@@ -454,13 +461,14 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
     if corners_result.status == "fail":
         return _finalize(ctx, verdict="REJECT", reason=_stage_fail_reason("corners", corners_result))
 
-    candidate_measurements = _reproduce_measurements(ctx.stages)
+    candidate_measurements, incumbent_measurements = _reproduce_measurements(ctx.stages)
     comparison_result = scoped_comparison(
         ctx.candidate,
         ctx.slot,
         netlist_texts,
         sim_backend,
         candidate_measurements,
+        incumbent_measurements,
         args.max_knobs,
         args.points,
         knob_names=knob_names,
@@ -468,6 +476,15 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
     ctx.stages.append(comparison_result)
     if comparison_result.status == "fail":
         return _finalize(ctx, verdict="REJECT", reason=_stage_fail_reason("comparison", comparison_result))
+    if comparison_result.status == "inconclusive":
+        # "판정하지 못했다"는 "아무도 후보를 지배하지 못했다"가 아니다 - 3단이
+        # 자기 비교 규칙으로 판정할 수 없는 연산자를 만나면 그대로 INCONCLUSIVE로
+        # 끝나야 하고, ADMIT으로 넘어가서는 안 된다.
+        return _finalize(
+            ctx,
+            verdict="INCONCLUSIVE",
+            reason=comparison_result.detail.get("why", "stage 3 (comparison) was inconclusive"),
+        )
 
     facts = {
         "topology_id": ctx.candidate.topology_id,
@@ -559,9 +576,47 @@ def _stage_section(stage: StageResult) -> list[str]:
     if stage.name == "comparison":
         lines.append(f"**Comparison scope:** {_comparison_scope_text(stage.detail)}")
         dominating = stage.detail.get("dominating_point")
-        lines.append(f"**Dominating point:** {dominating if dominating is not None else 'none - candidate survives every single-knob sweep point'}")
+        lines.append(
+            f"**Dominating point:** {dominating if dominating is not None else 'none - candidate survives the incumbent-as-shipped point and every single-knob sweep point'}"
+        )
+        if stage.detail.get("tolerance") is not None:
+            lines.append(f"**Relative tolerance applied:** {stage.detail['tolerance']:g} - {stage.detail.get('tolerance_note', '')}")
+        if stage.detail.get("sweep_bounds_note"):
+            lines.append(f"**Sweep bounds:** {stage.detail['sweep_bounds_note']}")
         lines.append("")
+    if stage.name == "corners":
+        # 요구 2가 무엇을 비교했는지(또는 아무것도 비교하지 않았는지)는 리포트에
+        # 반드시 도달해야 한다 - `verified_at="corners"`를 잰 것보다 크게 읽지
+        # 않도록. 이 단계가 건너뛰어졌거나(추출본/파일본) 코너가 없어
+        # inconclusive면 그 detail에는 이 키가 없고, 그때는 줄을 더하지 않는다.
+        note = stage.detail.get("requirement_2_note")
+        if note:
+            lines.append(f"**Requirement 2 (worst-corner comparison):** {note}")
+            lines.append("")
     return lines
+
+
+def _verified_at_caveat(result: dict) -> list[str]:
+    """`verified_at == "corners"`인데 2.5단의 요구 2가 **아무 기준도 비교하지
+    않은** 경우, 그 사실을 판정 바로 옆에 적는다. `addresses`가 비면 요구 2의
+    루프가 한 바퀴도 돌지 않고 `pass`가 나오므로(실측: `corners: pass,
+    criteria: {}, worse: []`로 ADMIT), 태그만 보면 코너에서 기존 본문을 이겼다는
+    뜻으로 읽힌다. 단계 detail에도 같은 사실이 있지만(`requirement_2_note`),
+    이 저장소의 규칙대로 리포트를 읽는 사람이 JSON 덤프를 파고들어야만 알 수
+    있게 두지 않는다."""
+    for stage in result["stages"]:
+        if stage.name == "corners" and stage.status == "pass" and stage.detail.get("addresses_compared") == 0:
+            return [
+                (
+                    "> **`verified_at=\"corners\"` here means requirement 1 only.** Stage 2.5's "
+                    "requirement 2 (the candidate beats the incumbent at its worst corner) "
+                    "compared **zero** criteria, because this run measured no improvement to "
+                    "address. Every criterion did produce a measurement at every corner "
+                    "(requirement 1) - nothing more was verified at corners."
+                ),
+                "",
+            ]
+    return []
 
 
 def write_curation_report_md(out_dir: str, result: dict) -> str:
@@ -584,6 +639,9 @@ def write_curation_report_md(out_dir: str, result: dict) -> str:
             "four shipped library entries earned their tag.)*"
         ),
         "",
+    ]
+    lines += _verified_at_caveat(result)
+    lines += [
         "## Stages",
         "",
     ]
