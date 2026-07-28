@@ -4,12 +4,14 @@ from analogcoder.topology_match import SwapCandidate, compatible_swaps, unavaila
 FIVE_PORT = Topology(
     id="five_port", description="d", addresses=[],
     ports=["vinp", "vinn", "vout", "vdd", "vss"], assumes_scale=1e-6,
+    provenance="authored", verified_at="nominal",
     subckt_body="M1 vout vinp vdd vss NMOSG W=2 L=1\nM2 vout vinn vss vss NMOSG W=2 L=1\n",
 )
 NINE_PORT = Topology(
     id="nine_port", description="d", addresses=[],
     ports=["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"],
     assumes_scale=1e-6,
+    provenance="authored", verified_at="nominal",
     subckt_body=(
         "M1 vout vinp vdd vss NMOSG W=2 L=1\n"
         "M2 vout vinn vss vss NMOSG W=2 L=1\n"
@@ -34,6 +36,45 @@ M1 vout vinp vdd vss NMOSG W=2 L=1
 
 LIB = {"five_port": FIVE_PORT, "nine_port": NINE_PORT}
 
+# 9포트 블록을 두 번 인스턴스화하고, 남는 네 포트(nbias/ncas/pbias/pcas)의 넷을
+# 두 인스턴스가 공유한다 - bandgap의 실제 바이어스 체인과 같은 모양. 부동 넷
+# 검사가 통과해야 하는 경우다.
+DECK_9_SHARED_BIAS = """* t
+.option scale=1.0u
+.subckt AMP vinp vinn vout vdd vss nbias ncas pbias pcas
+M1 vout vinp vdd vss NMOSG W=2 L=1
+.ends AMP
+Xu1 a1 b1 c1 vdd vss nbias ncas pbias pcas AMP
+Xu2 a2 b2 c2 vdd vss nbias ncas pbias pcas AMP
+.end
+"""
+
+# 인스턴스가 정확히 하나 있지만, 남는 포트의 넷(nbias/ncas/pbias/pcas)을 그
+# 스코프의 다른 어떤 소자도 참조하지 않는다 - 유일 참여자.
+DECK_9_LONE_INSTANCE = """* t
+.option scale=1.0u
+.subckt AMP vinp vinn vout vdd vss nbias ncas pbias pcas
+M1 vout vinp vdd vss NMOSG W=2 L=1
+.ends AMP
+Xu1 a1 b1 c1 vdd vss nbias ncas pbias pcas AMP
+.end
+"""
+
+# 같은 정의(AMP)를 세 번 인스턴스화한다: Xu1a/Xu1b는 남는 포트의 넷
+# (nbias/ncas/pbias/pcas)을 서로 공유해 통과하지만, Xu2는 별도의 넷
+# (nbias2/...)을 혼자 쓴다 - 유일 참여자라 실패. "모든 인스턴스가 통과해야
+# 한다"는 규칙은 인스턴스 하나라도 실패하면 전체가 거부됨을 요구한다.
+DECK_9_ONE_INSTANCE_FLOATS = """* t
+.option scale=1.0u
+.subckt AMP vinp vinn vout vdd vss nbias ncas pbias pcas
+M1 vout vinp vdd vss NMOSG W=2 L=1
+.ends AMP
+Xu1a a1 b1 c1 vdd vss nbias ncas pbias pcas AMP
+Xu1b a2 b2 c2 vdd vss nbias ncas pbias pcas AMP
+Xu2  a3 b3 c3 vdd vss nbias2 ncas2 pbias2 pcas2 AMP
+.end
+"""
+
 
 def _reasons(rejections, topology_id):
     return {r.reason for r in rejections if r.topology_id == topology_id}
@@ -56,6 +97,7 @@ def test_a_model_the_deck_never_instantiates_is_rejected():
     other = Topology(
         id="other", description="d", addresses=[],
         ports=["vinp", "vinn", "vout", "vdd", "vss"], assumes_scale=1e-6,
+        provenance="authored", verified_at="nominal",
         subckt_body="M1 vout vinp vdd vss PMOS_NOT_IN_DECK W=2 L=1\n"
                     "M2 vout vinn vss vss PMOS_NOT_IN_DECK W=2 L=1\n",
     )
@@ -147,8 +189,14 @@ def test_the_bandgap_deck_offers_swaps_that_the_old_rule_made_impossible():
     paths = {c.block_path for c in cands}
     assert {"ERRAMP", "BUF_N"} <= paths
     assert all(c.topology_id.startswith("folded_cascode_") for c in cands)
-    # 5포트 항목은 전부 포트 사유로 기각되어야 한다
-    assert {r.reason for r in rej if r.topology_id == "miller_basic"} == {"ports"}
+    # 포트 규칙이 부분집합으로 완화된 뒤: ERRAMP/TRIMAMP/BUF_N/BUF_P는 9포트라
+    # miller_basic(5포트)의 포트 부분집합 검사와 부동 넷 검사를 모두 통과한다
+    # (bandgap의 바이어스 체인을 그 스코프의 형제 인스턴스들이 공유하므로) -
+    # 그다음 models 규칙에서 걸린다(bandgap 덱은 sky130_fd_pr__cap_mim_m3_1을
+    # 안 쓴다). BGR_CORE/BANDGAP은 vinp/vinn/vout 자체가 없어 여전히 ports로
+    # 걸린다. 그래서 miller_basic의 기각 사유 집합은 이제 둘 다 나온다 - F1의
+    # 완전 동등 규칙 아래서는 전부 ports 하나였다.
+    assert {r.reason for r in rej if r.topology_id == "miller_basic"} == {"ports", "models"}
     # BGR_CORE/BANDGAP은 포트가 다르므로 후보에 없어야 한다
     assert "BGR_CORE" not in paths
     assert "BANDGAP" not in paths
@@ -198,3 +246,63 @@ def test_the_two_stage_opamp_deck_behaves_as_before():
     assert {r.reason for r in rej if r.topology_id == "miller_basic" and r.block_path == "OPAMP2STAGE"} == {
         "identical_body"
     }
+
+
+def test_a_candidate_whose_ports_are_a_subset_is_allowed():
+    """9포트 블록(AMP) + 5포트 후보(five_port). 남는 네 포트(nbias/ncas/
+    pbias/pcas)의 넷을 AMP의 두 인스턴스(Xu1/Xu2)가 서로 공유한다 - bandgap의
+    바이어스 체인과 같은 모양. 부동 넷 검사를 통과하므로 후보가 된다."""
+    cands, rej = compatible_swaps({"tb": DECK_9_SHARED_BIAS}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") in cands
+    assert _reasons(rej, "five_port") == set()
+
+
+def test_a_leftover_port_whose_net_has_no_other_user_is_rejected():
+    """인스턴스(Xu1)는 하나 있지만, 남는 포트의 넷을 그 스코프의 다른 어떤
+    소자도 참조하지 않는다 - 유일 참여자이므로 ports 사유로 거부된다."""
+    cands, rej = compatible_swaps({"tb": DECK_9_LONE_INSTANCE}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") not in cands
+    assert _reasons(rej, "five_port") == {"ports"}
+
+
+def test_every_instance_must_pass_the_floating_check():
+    """같은 정의(AMP)를 세 번 인스턴스화: Xu1a/Xu1b는 남는 포트의 넷을
+    공유해 통과하지만 Xu2는 별도의 넷을 혼자 써서 실패한다. 인스턴스 하나라도
+    실패하면 전체가 거부되어야 한다."""
+    cands, rej = compatible_swaps({"tb": DECK_9_ONE_INSTANCE_FLOATS}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") not in cands
+    assert _reasons(rej, "five_port") == {"ports"}
+
+
+def test_a_candidate_requiring_a_port_the_block_lacks_is_still_rejected():
+    """완화는 한 방향뿐이다 - 후보가 블록에 없는 포트를 요구하면(9포트 후보 vs
+    5포트 블록) 여전히 거부된다."""
+    cands, rej = compatible_swaps({"tb": DECK_5}, {"nine_port": NINE_PORT}, set())
+    assert cands == []
+    assert _reasons(rej, "nine_port") == {"ports"}
+
+
+def test_a_definition_with_no_instance_and_leftover_ports_is_rejected():
+    """AMP(9포트)는 이 덱 어디서도 인스턴스화되지 않는다. five_port(5포트)는
+    포트 부분집합이라 남는 포트가 있지만, 인스턴스가 없어 부동 여부를 판정할
+    수 없으므로 추측하지 않고 거부한다."""
+    cands, rej = compatible_swaps({"tb": DECK_9}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") not in cands
+    assert _reasons(rej, "five_port") == {"ports"}
+
+
+def test_the_port_subset_relaxation_admits_nothing_today():
+    """이 완화는 규칙으로서 옳지만 오늘의 라이브러리/덱에서는 0쌍을 추가한다.
+    5포트 항목 둘 다 sky130_fd_pr__cap_mim_m3_1 을 쓰고 bandgap 덱은 MOS 캡만
+    쓰기 때문이다. 라이브러리나 덱이 바뀌어 참이 아니게 되면 이 테스트가 깨지고,
+    그때 이 사실을 다시 적어야 한다."""
+    from pathlib import Path
+
+    from analogcoder.topologies import TOPOLOGY_LIBRARY
+
+    text = Path("benchmarks/bandgap/netlist_loops.cir").read_text()
+    _, rej = compatible_swaps({"loops": text}, TOPOLOGY_LIBRARY, set())
+    five_port = {"miller_basic", "miller_nulling_resistor"}
+    reasons = {r.topology_id: r.reason for r in rej if r.topology_id in five_port}
+    assert set(reasons) == five_port
+    assert set(reasons.values()) == {"models"}  # ports가 아니라 models로 걸린다

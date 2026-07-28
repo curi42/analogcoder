@@ -9,6 +9,15 @@ class Topology:
     addresses: list[str]  # criterion names this is known to help; informational only, used in the tuner prompt
     ports: list[str]  # ports this body requires, in the source block header's order
     assumes_scale: float  # the .option scale (in metres) this body's geometry numbers assume
+    # 이 항목이 어디서 왔는가 - "extracted"(실제 통과한 덱에서 뽑음) |
+    # "file"(다른 어딘가의 완성된 SPICE 파일에서 그대로 가져옴) |
+    # "authored"(사람/에이전트가 직접 작성). 큐레이션 파이프라인(F2)이 항목을
+    # 어떤 검증 절차에 태울지 이 필드로 가른다 - 파일에서 값을 추측하지 않는다.
+    provenance: str
+    # 이 본문이 어느 수준까지 검증됐는가 - "nominal"(한 지점) | "corners"
+    # (다지점 PVT 스윕). 오늘의 네 항목은 전부 45-코너 스윕을 통과한 덱에서
+    # 뽑았으므로 "corners"다.
+    verified_at: str
 
 
 TOPOLOGY_LIBRARY: dict[str, Topology] = {
@@ -18,6 +27,8 @@ TOPOLOGY_LIBRARY: dict[str, Topology] = {
         addresses=[],
         ports=["vinp", "vinn", "vout", "vdd", "vss"],
         assumes_scale=1e-6,
+        provenance="extracted",
+        verified_at="corners",
         subckt_body="""\
 Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
 Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
@@ -51,6 +62,8 @@ Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
         addresses=["phase_margin"],
         ports=["vinp", "vinn", "vout", "vdd", "vss"],
         assumes_scale=1e-6,
+        provenance="extracted",
+        verified_at="corners",
         subckt_body="""\
 Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
 Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
@@ -84,6 +97,8 @@ Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
         addresses=[],
         ports=["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"],
         assumes_scale=1e-6,
+        provenance="extracted",
+        verified_at="corners",
         subckt_body="""\
 Xt   tail nbias vss  vss sky130_fd_pr__nfet_01v8 L=1 W=8
 X1   nx   vinn tail  vss sky130_fd_pr__nfet_01v8 L=1 W=20
@@ -116,6 +131,8 @@ XRz  vout nz 0 sky130_fd_pr__res_high_po w=1 l=15
         addresses=["buf0_loop_gain"],
         ports=["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"],
         assumes_scale=1e-6,
+        provenance="extracted",
+        verified_at="corners",
         subckt_body="""\
 Xt   tail pbias vdd  vdd sky130_fd_pr__pfet_01v8 L=1 W=24
 X1   nx   vinn tail  vdd sky130_fd_pr__pfet_01v8 L=1 W=40

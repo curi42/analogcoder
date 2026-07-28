@@ -9,9 +9,27 @@
 세 판정 규칙은 전부 파싱된 사실에만 근거한다 - 이름에서 의미를 추측하지
 않는다:
 
-1. 포트: `set(topology.ports) == set(block.ports)` (양방향 집합 동등,
-   순서 무시). 한 방향만 보면 9포트 대상에 5포트 본문이 통과해 바이어스
-   포트 4개가 조용히 뜬 노드가 된다.
+1. 포트: `set(topology.ports) <= set(block.ports)` (토폴로지가 요구하는
+   포트는 블록에 전부 있어야 하지만, 블록이 더 많은 포트를 가져도 된다).
+   한 방향만 요구하는 이유는 F1 때의 완전 동등 규칙이 9포트 폴디드-캐스코드
+   블록에 5포트 밀러 후보를 아예 못 대게 만들었기 때문이다 - bandgap의
+   네 앰프가 전부 9포트인데 5포트 항목 둘뿐이라 그 규칙 아래서는 후보가
+   0개였다. 완화는 **남는 포트가 안전한지**를 확인해야만 성립한다:
+   블록에 남는 포트(nbias/ncas/pbias/pcas 같은)가 있으면, `apply_topology_swap`은
+   `.subckt` 헤더가 아니라 본문만 교체하므로 헤더는 그 포트를 여전히
+   선언하고 호출부 인스턴스 줄도 그대로 실제 넷을 넘긴다 - 새 본문만 그
+   포트를 내부에서 안 쓴다. 그 넷이 같은 스코프의 **다른** 소자에도
+   쓰이고 있으면(bandgap처럼 바이어스 체인을 여러 앰프 인스턴스가 공유하는
+   경우) 이 인스턴스의 연결을 끊어도 그 넷은 여전히 의미가 있다 - 안전하다.
+   반대로 그 넷을 이 인스턴스 하나만 참조하면, 스왑 후 그 넷은 회로 어디에도
+   안 붙어 뜬 넷이 된다 - 그래서 이 경우 `ports` 사유로 거부한다(새 사유
+   코드를 만들지 않는다 - 포트 규칙의 일부다). 이 부동 넷 검사는 **지역적**
+   질문이다: `signal_path.net_blocks`는 최상위 넷만 담아 bandgap의 바이어스
+   넷(`BANDGAP`/`BGR_CORE` 정의 내부에 있다)을 보지 못하므로 쓰지 않고,
+   대신 인스턴스 줄과 같은 스코프의 소자 목록만 직접 본다. 그 블록의
+   인스턴스가 이 테스트벤치 어디에도 없으면(정의만 있고 아무도 부르지 않는
+   블록) 남는 포트가 안전한지 판정할 근거가 없으므로 추측하지 않고
+   거부한다.
 2. 모델: 토폴로지 본문이 쓰는 모델 이름 집합이 덱 전체(모든 스코프)가
    인스턴스화하는 모델 이름 집합의 부분집합이어야 한다. 역방향은 요구하지
    않는다. `.include`를 따라가지 않아도 판정 가능한 이유는, 덱이 이미 그
@@ -140,6 +158,68 @@ def _topology_model_names(topology: Topology) -> set[str]:
     return _all_model_names(_wrap_topology_body(topology))
 
 
+def _instances_of(parsed: ParsedNetlist, subckt_name: str) -> list[tuple[str | None, Component]]:
+    """이 서브회로를 인스턴스화하는 모든 (scope, component) - 최상위와 모든
+    서브회로 스코프를 훑는다. 인스턴스는 `ctype == "X"`이고 위치 값(서브회로
+    이름)이 `subckt_name`과 같은 소자다. scope는 최상위일 때 None."""
+    found: list[tuple[str | None, Component]] = []
+    for component in parsed.top_components:
+        if component.ctype == "X" and component.value == subckt_name:
+            found.append((None, component))
+    for path, sub in parsed.subckts.items():
+        for component in sub.components:
+            if component.ctype == "X" and component.value == subckt_name:
+                found.append((path, component))
+    return found
+
+
+def _leftover_ports_float_reason(
+    parsed: ParsedNetlist,
+    block_path: str,
+    subckt,
+    leftover_ports: list[str],
+) -> str | None:
+    """남는 포트들이 스왑 후 뜬 넷이 되지 않는지 판정한다. 문제 없으면 None,
+    있으면 `SwapRejection.detail`에 실을 문자열을 돌려준다.
+
+    `apply_topology_swap`은 `.subckt` 헤더가 아니라 본문만 바꾸므로, 헤더가
+    선언하는 남는 포트와 호출부의 실제 넷은 스왑 후에도 그대로 남는다 - 새
+    본문만 그 포트를 내부에서 안 쓴다. 그 넷이 인스턴스와 **같은 스코프의
+    다른 소자**에도 쓰이면 이 인스턴스의 연결을 끊어도 안전하고, 이 인스턴스
+    하나만 그 넷을 참조하면 스왑 후 그 넷은 회로 어디에도 안 붙어 뜬 넷이
+    된다. `signal_path.net_blocks`를 쓰지 않는 이유는 최상위 넷만 담기
+    때문이다 - bandgap의 바이어스 넷은 `BGR_CORE`/`BANDGAP` 정의 내부에
+    있다. 대신 인스턴스 줄과 같은 스코프의 소자 목록만 직접 본다(지역적
+    질문)."""
+    instances = _instances_of(parsed, subckt.name)
+    if not instances:
+        return (
+            f"block {block_path!r} has no instance anywhere in this testbench, so whether "
+            f"leftover port(s) {leftover_ports} would float cannot be judged"
+        )
+
+    port_index = {name: idx for idx, name in enumerate(subckt.ports)}
+    for scope, instance in instances:
+        siblings = parsed.top_components if scope is None else parsed.subckts[scope].components
+        for port_name in leftover_ports:
+            idx = port_index[port_name]
+            if idx >= len(instance.nodes):
+                return (
+                    f"instance {instance.refdes!r} of {block_path!r} in scope "
+                    f"{scope if scope is not None else '<top-level>'!r} has fewer nodes than "
+                    f"{block_path!r} declares ports; cannot judge leftover port {port_name!r}"
+                )
+            net = instance.nodes[idx]
+            if not any(other is not instance and net in other.nodes for other in siblings):
+                return (
+                    f"leftover port {port_name!r} of {block_path!r} is tied to net {net!r} on "
+                    f"instance {instance.refdes!r} in scope "
+                    f"{scope if scope is not None else '<top-level>'!r}, and no other component in "
+                    f"that scope references {net!r} - it would float if this port were dropped"
+                )
+    return None
+
+
 def _component_key(component: Component) -> tuple:
     """구조적 동등 비교용 키. 스코프/raw_line/geometry_scale 등 파생/장식
     필드는 뺀다 - 덱의 블록 본문은 주석과 공백을 갖지만 토폴로지 본문은
@@ -225,20 +305,40 @@ def compatible_swaps(
                     is_compatible = False
                     continue
 
-                if set(topology.ports) != set(subckt.ports):
+                topo_ports = set(topology.ports)
+                block_ports = set(subckt.ports)
+                if not topo_ports <= block_ports:
                     rejections.append(
                         SwapRejection(
                             block_path=block_path,
                             topology_id=topology_id,
                             reason="ports",
                             detail=(
-                                f"topology ports {sorted(topology.ports)} != block ports "
-                                f"{sorted(subckt.ports)} in testbench {tb!r}"
+                                f"topology needs port(s) {sorted(topo_ports - block_ports)} that block "
+                                f"{block_path!r} does not declare in testbench {tb!r}"
                             ),
                         )
                     )
                     is_compatible = False
                     continue
+
+                # 남는 포트(블록에는 있지만 토폴로지 본문은 안 쓰는 포트)마다
+                # 부동 넷 검사. subckt.ports 순서를 보존한다 - _leftover_ports_
+                # float_reason이 위치로 인스턴스 노드를 찾는다.
+                leftover_ports = [p for p in subckt.ports if p not in topo_ports]
+                if leftover_ports:
+                    float_reason = _leftover_ports_float_reason(parsed, block_path, subckt, leftover_ports)
+                    if float_reason is not None:
+                        rejections.append(
+                            SwapRejection(
+                                block_path=block_path,
+                                topology_id=topology_id,
+                                reason="ports",
+                                detail=f"{float_reason} (testbench {tb!r})",
+                            )
+                        )
+                        is_compatible = False
+                        continue
 
                 deck_models = models_by_tb[tb]
                 if not required_models <= deck_models:

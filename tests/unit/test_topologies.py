@@ -103,3 +103,10 @@ def test_declared_ports_match_the_source_block_header(topology_id, deck, block):
 
     parsed = parse_netlist(Path(deck).read_text())
     assert TOPOLOGY_LIBRARY[topology_id].ports == parsed.subckts[block].ports
+
+
+@pytest.mark.parametrize("topology_id", sorted(TOPOLOGY_LIBRARY))
+def test_every_entry_declares_its_provenance_and_what_it_was_verified_at(topology_id):
+    t = TOPOLOGY_LIBRARY[topology_id]
+    assert t.provenance in {"extracted", "file", "authored"}
+    assert t.verified_at in {"nominal", "corners"}

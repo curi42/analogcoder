@@ -29,6 +29,8 @@ NINE_PORT = Topology(
     addresses=[],
     ports=["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"],
     assumes_scale=1e-6,
+    provenance="authored",
+    verified_at="nominal",
 )
 
 FIVE_PORT = Topology(
@@ -38,6 +40,8 @@ FIVE_PORT = Topology(
     addresses=[],
     ports=["vinp", "vinn", "vout", "vdd", "vss"],
     assumes_scale=1e-6,
+    provenance="authored",
+    verified_at="nominal",
 )
 
 
@@ -121,6 +125,8 @@ async def test_propose_topology_swap_calls_run_agent_with_candidates():
             addresses=["phase_margin"],
             ports=["vinp", "vinn", "vout", "vdd", "vss"],
             assumes_scale=1e-6,
+            provenance="authored",
+            verified_at="nominal",
         ),
     }
     candidates = [SwapCandidate(block_path="AMP", topology_id="miller_nulling_resistor")]
@@ -153,6 +159,8 @@ async def test_propose_topology_swap_includes_rejection_feedback_in_prompt():
             addresses=[],
             ports=["vinp", "vinn", "vout", "vdd", "vss"],
             assumes_scale=1e-6,
+            provenance="authored",
+            verified_at="nominal",
         ),
     }
     candidates = [SwapCandidate(block_path="AMP", topology_id="miller_basic")]
