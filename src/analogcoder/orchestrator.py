@@ -76,6 +76,31 @@ def _outcome_counts(attempts: list[Attempt]) -> dict[str, int]:
     return counts
 
 
+def _record_rejected(
+    history: list[Attempt], outer_iter: int, retry: int, proposal: dict, reason: str, detail: str
+) -> None:
+    """게이트는 제안 **전체**를 거부하므로 모든 변경이 같은 사유로 항목이 된다.
+
+    어느 변경이 게이트를 촉발했는지는 게이트가 알려 주지 않으므로 추측하지
+    않는다 - detail에 게이트가 낸 피드백이 그대로 들어가고, 그 문자열이 보통
+    refdes를 이름으로 담고 있다.
+    """
+    for change in proposal["proposed_changes"]:
+        history.append(
+            Attempt(
+                outer_iter=outer_iter,
+                retry=retry,
+                refdes=change["refdes"],
+                param=change["param"],
+                old_value=change["old_value"],
+                new_value=change["new_value"],
+                outcome="rejected",
+                reason=reason,
+                detail=detail,
+            )
+        )
+
+
 def _candidate_pairs(candidates: list[SwapCandidate]) -> list[tuple[str, str]]:
     return sorted((c.block_path, c.topology_id) for c in candidates)
 
@@ -208,6 +233,8 @@ async def run_orchestration(
                 measurement = measurement_by_criterion.get(criterion["name"])
                 failing_nets |= nets_by_measurement.get(measurement, set())
 
+            # 거부된 시도의 refdes도 들어간다 - 튜너에게 "이 블록에서
+            # 거부당했다"고 말하면서 그 블록을 접어서 보여 줄 수는 없다.
             touched_refdes = {attempt.refdes for attempt in tuning_history}
             focus = select_focus(
                 structure, paths, failing_nets, touched_refdes, netlist_texts[canonical_name]
@@ -485,6 +512,7 @@ async def run_orchestration(
                 )
                 if not area_ok:
                     rejection_feedback = area_feedback
+                    _record_rejected(tuning_history, outer_iter, retry, proposal, "area", area_feedback)
                     continue
 
                 refdes_ok, refdes_feedback = check_refdes_resolution(
@@ -496,6 +524,7 @@ async def run_orchestration(
                 )
                 if not refdes_ok:
                     rejection_feedback = refdes_feedback
+                    _record_rejected(tuning_history, outer_iter, retry, proposal, "refdes", refdes_feedback)
                     continue
 
                 # 원본 전문을 넘긴다 - 이 게이트는 초점과 무관하게 판정해야
@@ -509,6 +538,7 @@ async def run_orchestration(
                 )
                 if not param_ok:
                     rejection_feedback = param_feedback
+                    _record_rejected(tuning_history, outer_iter, retry, proposal, "param", param_feedback)
                     continue
 
                 # 최상위 자극원/전원을 건드리는 제안은 "회로를 안 고친 채
@@ -528,6 +558,7 @@ async def run_orchestration(
                 )
                 if not stimulus_ok:
                     rejection_feedback = stimulus_feedback
+                    _record_rejected(tuning_history, outer_iter, retry, proposal, "stimulus", stimulus_feedback)
                     continue
 
                 misses = focus_misses(focus, proposal["proposed_changes"], netlist_texts[canonical_name])
@@ -562,6 +593,9 @@ async def run_orchestration(
                     break
                 verify_pre_rejected_any = True
                 rejection_feedback = review["feedback"]
+                _record_rejected(
+                    tuning_history, outer_iter, retry, proposal, "verify_pre", review["feedback"]
+                )
 
             if approved_proposal is None:
                 if verify_pre_rejected_any:

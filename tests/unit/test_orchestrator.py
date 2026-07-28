@@ -1785,3 +1785,150 @@ async def test_the_attempt_log_event_is_written_even_before_any_attempt_exists(t
     assert logs[0]["total"] == 0
     assert logs[0]["rendered"] == 0
     assert logs[0]["dropped"] == 0
+
+
+STIMULUS_NETLIST = "* tb\nVin in 0 1\nRf vminus vout 10k\n.end\n"
+
+
+def one_change(refdes, param, old_value, new_value):
+    return {
+        "proposed_changes": [
+            {"refdes": refdes, "param": param, "old_value": old_value,
+             "new_value": new_value, "reasoning": "x"}
+        ],
+        "overall_reasoning": "x",
+        "confidence": 90,
+    }
+
+
+@pytest.mark.parametrize(
+    "reason, netlist, proposal, reject_verify_pre",
+    [
+        # 면적: 40u -> 100u 는 2.5x 로 티어를 넘는다 (기존 oversized_tune 와 동일)
+        ("area", AREA_TEST_NETLIST, one_change("M6", "W", "40u", "100u"), False),
+        # refdes: 어느 컴포넌트와도 안 맞는다
+        ("refdes", BASE_NETLIST, one_change("Znope", "value", "1k", "2k"), False),
+        # param: "width" 는 Rf 줄에도 동일 모델 peer 에도 없는 이름이다
+        ("param", BASE_NETLIST, one_change("Rf", "width", "10k", "11k"), False),
+        # stimulus: 최상위 V 원이다
+        ("stimulus", STIMULUS_NETLIST, one_change("Vin", "value", "1", "100"), False),
+        # verify_pre: 게이트는 전부 통과하고 LLM 검토자가 거부한다
+        ("verify_pre", BASE_NETLIST, FAKE_PROPOSAL, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_each_gate_records_its_own_reason_code(
+    tmp_path, reason, netlist, proposal, reject_verify_pre
+):
+    """어느 변형을 잡는가: 다섯 게이트의 사유를 하나로 뭉개는 구현 -
+    "rejected"만 남기거나, 이벤트 스트림에서 사유를 다시 파싱하는 구현
+    (area_check와 refdes_check가 둘 다 feedback 키를 쓰므로 그쪽에서는
+    복원되지 않는다). 다섯 파라미터가 다섯을 구별한다."""
+    seen = []
+
+    async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
+        seen.append(attempts_view)
+        return proposal
+
+    overrides = {"judge": lambda m, s: _async(FAIL_JUDGE), "tune": tune}
+    if reject_verify_pre:
+        async def reject(structure_view, judge_result, proposal_, netlist_view):
+            return {"approved": False, "concerns": [], "feedback": "not justified"}
+        overrides["verify_pre"] = reject
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+    await run_orchestration(
+        {"ac_loop_gain": netlist}, FAKE_SPEC, state, make_agents(**overrides)
+    )
+
+    assert any(f"{reason}:" in view for view in seen), f"{reason} 사유가 튜너에게 안 보인다"
+
+
+@pytest.mark.asyncio
+async def test_a_gate_rejection_survives_into_the_next_outer_iteration(tmp_path):
+    """어느 변형을 잡는가: 거부를 rejection_feedback으로만 나르는 원래 구현.
+    그 변수는 outer 이터레이션마다 None으로 리셋되고 할당마다 덮어써지므로,
+    이터레이션 1에서 막힌 노브는 이터레이션 2에서 존재하지 않는다.
+    이 테스트가 사라지면 그 회귀가 조용해진다."""
+    seen = []
+
+    async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
+        seen.append(attempts_view)
+        return one_change("M6", "W", "40u", "100u")  # 항상 면적 게이트에 막힌다
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
+
+    # 이터레이션 1은 재시도 MAX_TUNING_RETRIES(3)회로 끝난다 -> seen[0..2].
+    # seen[3]은 이터레이션 2의 첫 호출이고, 원래 구현에서는 여기가 "" 였다.
+    assert seen[0] == ""
+    assert seen[3].count("area:") == 3
+
+
+# AMP와 OTHER 두 블록 - OTHER만 top-level 넷 vother를 구동해서, 아래 spec의
+# measurement가 그 넷을 가리키면 select_focus의 씨앗이 OTHER 하나로만
+# 잡히고("전 블록 노출" 폴백을 타지 않는다), AMP는 거부를 통해서만 초점에
+# 들어온다.
+FOCUS_TEST_NETLIST = (
+    "* two blocks - only OTHER drives the net the spec's measurement watches\n"
+    ".subckt AMP vinp vinn vout vdd vss\n"
+    "R1 vinp mid 1k\n"
+    "R2 mid vout 2k\n"
+    ".ends AMP\n"
+    ".subckt OTHER a b\n"
+    "Rx a b 1k\n"
+    ".ends OTHER\n"
+    "Xamp1 vinp vinn vout vdd vss AMP\n"
+    "Xother1 vother n2 OTHER\n"
+    "Rf vminus vout 10k\n"
+    ".end\n"
+)
+FOCUS_TEST_SPEC = SimpleNamespace(
+    circuit_name="fake",
+    testbenches=[
+        SimpleNamespace(
+            name="ac_loop_gain",
+            criteria=[SimpleNamespace(name="gain", measurement="gain")],
+            control_block=".control\nmeas ac gain find v(vother)\n.endc\n",
+        )
+    ],
+)
+FOCUS_TEST_SPEC.canonical = FOCUS_TEST_SPEC.testbenches[0]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_attempt_puts_its_block_into_focus(tmp_path):
+    """어느 변형을 잡는가: 거부 항목을 touched_refdes에서 빼는 구현.
+    튜너에게 "이 블록에서 거부당했다"고 말하면서 그 블록을 접어서 보여 주는
+    것은, verify_pre에 접힌 덱을 주면서 "덱에 없는 것은 거부하라"고
+    지시했던 것과 같은 모양이다."""
+    async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
+        return one_change("AMP.R1", "width", "1k", "2k")  # param 게이트가 막는다
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": FOCUS_TEST_NETLIST}, FOCUS_TEST_SPEC, state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    focus_events = [e for e in events if e["step"] == "focus"]
+
+    # FAKE_SPEC의 테스트벤치는 criteria가 비어 있어 measurement_by_criterion이
+    # 항상 비고, failing_nets도 항상 비어 select_focus가 씨앗을 하나도 못
+    # 잡는다 - 그 경우 select_focus는 "모르면 침묵" 대신 "전 블록 노출"로
+    # 폴백하므로(구조_view.select_focus의 마지막 줄 `return focus or
+    # definitions`), AMP는 이미 focus_events[0]에도 들어 있다. 그래서 실측
+    # 결과는 이 자산이 애초에 서지 않는다는 것이었다: 두 assert 모두 원래
+    # 문안대로는 통과할 수 없다(실행 로그로 확인). 이는 select_focus의
+    # 버그가 아니라 - 그 폴백은 의도된 것이고 다른 테스트가 지킨다 - 이
+    # 픽스처가 "씨앗이 이미 있다"는 가정과 충돌한다는 뜻이다.
+    #
+    # 같은 성질(거부된 refdes가 touched_refdes에 들어가 다음 focus를
+    # 끌어온다)을 다른 경로로 검사한다: 씨앗이 진짜로 OTHER 하나만 잡히도록
+    # 두 번째 블록과 그 블록을 가리키는 measurement를 가진 spec을 쓴다. 그러면
+    # iteration 1의 focus는 폴백 없이 {OTHER}뿐이고, AMP는 거부를 통해서만
+    # 들어온다.
+    assert focus_events[0]["blocks"] == ["OTHER"]   # 아직 아무것도 안 건드렸다 - 폴백 아님
+    assert "AMP" in focus_events[1]["blocks"]       # 거부가 초점을 끌어왔다
