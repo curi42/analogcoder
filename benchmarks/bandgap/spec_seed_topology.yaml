@@ -1,0 +1,97 @@
+# Seeded-failure variant for the topology-swap-applicability benchmark (F1).
+# Unlike spec_seed_tc.yaml/spec_seed_trim_pm.yaml/spec_seed_buf0_droop.yaml,
+# this declares ONLY the amp_loops testbench - one measurable thing with
+# predictable runtime, not the full five-testbench run. No optimize: or
+# corner_reduction: block, for the same reason.
+#
+# netlist_seed_topology.cir is netlist_loops.cir with exactly one change:
+# BUF_P's body replaced by BUF_N's NMOS-input-fold body (see that file's
+# header comment for the full measured rationale). buf0_loop_gain is raised
+# from spec.yaml's 60.0 to 90.0: the seed measures 73.52dB, widening the
+# input pair saturates well short of 90 (W 20->40: 78.88dB, W 20->80:
+# 83.45dB, W=150 aborts on sky130's 100um bin ceiling), and swapping BUF_P's
+# body back to a PMOS-input fold (folded_cascode_pmos_in_cs) measures
+# 100.16dB - comfortably over 90. Every other criterion here is spec.yaml's
+# amp_loops value, unchanged.
+circuit_name: bandgap
+testbenches:
+  - name: amp_loops
+    netlist: netlist_seed_topology.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      set units=degrees
+      alter @Vsc[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(ampout)-vdb(mpgate)
+      let tph  = vp(ampout)-vp(mpgate)
+      meas ac core_gain_db FIND tmag AT=1
+      meas ac core_pm_deg  FIND tph WHEN tmag=0
+      alter @Vsc[acmag] = 0
+      alter @Vst[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vfb)-vdb(trm_i)
+      let tph  = vp(vfb)-vp(trm_i)
+      meas ac trim_gain_db FIND tmag AT=1
+      meas ac trim_pm_deg  FIND tph WHEN tmag=0
+      alter @Vst[acmag] = 0
+      alter @Vs1[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vbg1)-vdb(b1_i)
+      let tph  = vp(vbg1)-vp(b1_i)
+      meas ac buf1_gain_db FIND tmag AT=1
+      meas ac buf1_pm_deg  FIND tph WHEN tmag=0
+      alter @Vs1[acmag] = 0
+      alter @Vs0[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vbg0)-vdb(b0_i)
+      let tph  = vp(vbg0)-vp(b0_i)
+      meas ac buf0_gain_db FIND tmag AT=1
+      meas ac buf0_pm_deg  FIND tph WHEN tmag=0
+      .endc
+    criteria:
+      # measured 45.2 .. 65.1 dB / 58.3 .. 78.4 deg (spec.yaml, unchanged)
+      - name: core_loop_gain
+        measurement: core_gain_db
+        operator: ">="
+        threshold: 40.0
+        unit: dB
+      - name: core_phase_margin
+        measurement: core_pm_deg
+        operator: ">="
+        threshold: 50.0
+        unit: deg
+      # measured 76.9 .. 95.9 dB / 78.8 .. 86.2 deg (spec.yaml, unchanged)
+      - name: trim_loop_gain
+        measurement: trim_gain_db
+        operator: ">="
+        threshold: 60.0
+        unit: dB
+      - name: trim_phase_margin
+        measurement: trim_pm_deg
+        operator: ">="
+        threshold: 70.0
+        unit: deg
+      # measured 88.4 .. 105.9 dB / 94.0 .. 111.9 deg (spec.yaml, unchanged)
+      - name: buf1_loop_gain
+        measurement: buf1_gain_db
+        operator: ">="
+        threshold: 70.0
+        unit: dB
+      - name: buf1_phase_margin
+        measurement: buf1_pm_deg
+        operator: ">="
+        threshold: 80.0
+        unit: deg
+      # SEEDED: raised from spec.yaml's 60.0 to 90.0. Seed measures 73.52dB;
+      # the swap (folded_cascode_pmos_in_cs) measures 100.16dB.
+      - name: buf0_loop_gain
+        measurement: buf0_gain_db
+        operator: ">="
+        threshold: 90.0
+        unit: dB
+      - name: buf0_phase_margin
+        measurement: buf0_pm_deg
+        operator: ">="
+        threshold: 80.0
+        unit: deg
