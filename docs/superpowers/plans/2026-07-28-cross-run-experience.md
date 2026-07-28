@@ -1,5 +1,13 @@
 # 런 간 경험 (D) 구현 계획
 
+> **상태: 실행하지 말 것. 보류(D3). 2026-07-28.**
+> 이 계획의 설계 문서가 보류되었다 — 이유는
+> `docs/superpowers/specs/2026-07-28-cross-run-experience-design.md`의 머리말.
+> 요약하면 런 내 히스토리가 이미 튜너에게 가고 있고, 이 계획은 같은 런이 이미
+> 버리는 필드를 런 사이로 나르는 인프라를 짓는다.
+> **지금 실행할 계획:** `docs/superpowers/plans/2026-07-28-tuning-attempt-record.md` (D1).
+> 아래 태스크 중 회로 지문과 패턴 키에 대한 것은 D3에서 다시 쓴다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 런이 시도와 결과를 기계 판독 가능한 형태로 남기고, 같은 회로·같은 기준을 다시 만난 런이 그것을 사실로 회상하게 만든다.
