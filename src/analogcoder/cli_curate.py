@@ -96,6 +96,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--max-knobs", type=int, default=DEFAULT_MAX_KNOBS, help="stage 3: cap on how many of the block's own knobs are swept")
     parser.add_argument("--points", type=int, default=DEFAULT_POINTS, help="stage 3: how many log-spaced points per knob")
+    parser.add_argument(
+        "--knobs",
+        default=None,
+        help=(
+            "stage 3: comma-separated 'refdes.param' list to restrict the sweep to "
+            "(e.g. 'TRIMAMP.XRz.l,TRIMAMP.Xcc.W') - a named narrowing alongside "
+            "--max-knobs's count-based one (see scoped_comparison's docstring); "
+            "applied before --max-knobs's cap"
+        ),
+    )
 
     parser.add_argument("--simulator", choices=["ngspice"], default="ngspice")
     parser.add_argument("--agent-backend", choices=["claude", "openai-compatible"], default="claude")
@@ -148,6 +158,27 @@ def _validate_source_flags(args) -> str:
 def _read_text(path: str) -> str:
     with open(path) as f:
         return f.read()
+
+
+def _parse_knob_names(raw: str | None) -> list[tuple[str, str]] | None:
+    """`--knobs` 인자를 `scoped_comparison`의 `knob_names` 모양(list[tuple[refdes,
+    param]])으로 판다. `rsplit(".", 1)`인 이유는 refdes 자체가 스코프 경로라
+    점을 품을 수 있어서다(`OUTER.INNER.XRz`) - 마지막 점만 param과의 경계이고,
+    그 앞은 전부 refdes다. `None`이면(플래그 생략) `None`을 그대로 돌려 이
+    좁히기가 아예 요청되지 않았다는 사실을 보존한다 - 빈 리스트는 다른 사실
+    ("스윕할 노브가 0개로 좁혀졌다")이다."""
+    if raw is None:
+        return None
+    result: list[tuple[str, str]] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "." not in token:
+            raise ValueError(f"--knobs entry {token!r} is not in 'refdes.param' form")
+        refdes, param = token.rsplit(".", 1)
+        result.append((refdes, param))
+    return result
 
 
 # --- 다중 테스트벤치 슬롯 비용 추정(로그 전용) -------------------------------
@@ -282,17 +313,25 @@ def _finalize(ctx: _RunContext, verdict: str, reason: str, description: str = ""
 
 def _comparison_scope_text(detail: dict) -> str:
     """3단 detail을 사람이 읽는 한 줄로 - description 렌더링 프롬프트에 실을
-    `comparison_scope` 사실(측정된 것만, LLM의 주장이 아니다)."""
+    `comparison_scope` 사실(측정된 것만, LLM의 주장이 아니다).
+
+    `knob_names_requested`가 있으면(명명된 좁히기, `max_knobs`와 나란한
+    선택지 - `scoped_comparison`의 docstring 참고) 그 사실 자체를 앞에
+    적는다 - "몇 개를 스윕했는가"만으로는 "이 실행이 특정 노브로 의도적으로
+    좁혀졌다"는 사실이 사라진다."""
     knobs = detail.get("knobs_swept", [])
     knob_names = [k["knob"] for k in knobs]
+    requested = detail.get("knob_names_requested")
+    prefix = f"scope narrowed to explicitly requested knob(s) {requested} - " if requested else ""
     return (
-        f"{len(knobs)} knob(s) swept ({', '.join(knob_names) if knob_names else 'none'}), "
+        f"{prefix}{len(knobs)} knob(s) swept ({', '.join(knob_names) if knob_names else 'none'}), "
         f"{detail.get('simulation_count', 0)} simulation(s) total"
     )
 
 
 async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBackend, ctx: _RunContext) -> dict:
     ctx.source = _validate_source_flags(args)
+    knob_names = _parse_knob_names(getattr(args, "knobs", None))
 
     spec = load_spec(args.slot_spec)
     spec_dir = Path(os.path.dirname(os.path.abspath(args.slot_spec)))
@@ -374,7 +413,14 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
 
     candidate_measurements = _reproduce_measurements(ctx.stages)
     comparison_result = scoped_comparison(
-        ctx.candidate, ctx.slot, netlist_texts, sim_backend, candidate_measurements, args.max_knobs, args.points
+        ctx.candidate,
+        ctx.slot,
+        netlist_texts,
+        sim_backend,
+        candidate_measurements,
+        args.max_knobs,
+        args.points,
+        knob_names=knob_names,
     )
     ctx.stages.append(comparison_result)
     if comparison_result.status == "fail":

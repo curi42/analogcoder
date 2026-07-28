@@ -364,6 +364,21 @@ R2 a b 2k
 .end
 """
 
+# Three tunable knobs, sorted order R1 < R2 < R3 - used to distinguish
+# knob_names selection from max_knobs truncation: naming {R2, R3} and
+# capping to max_knobs=1 must keep R2 (first of the requested set), not R1
+# (first of the full set), which only holds if selection is applied before
+# the cap.
+DECK_THREE_KNOBS = """* t
+.option scale=1.0u
+.subckt BLOCK a b
+R1 a b 1k
+R2 a b 2k
+R3 a b 3k
+.ends BLOCK
+.end
+"""
+
 # A count-valued knob (m=4 on a bipolar). Not X-prefixed, so _tier_baseline_value
 # can't resolve a geometry tier for it (the positional value is a model name,
 # not a number) - but m is a count token, so _direct_target still assigns it
@@ -656,6 +671,109 @@ def test_omitted_knobs_are_named_when_max_knobs_truncates():
 
     assert len(result.detail["knobs_swept"]) == 1
     assert result.detail["knobs_omitted"] == ["BLOCK.R2.value"]
+
+
+def test_knob_names_default_none_means_no_named_narrowing_was_requested():
+    """The default (knob_names omitted) must record 'no named narrowing was
+    requested' as None, distinct from 'a narrowing to zero knobs was
+    requested' (an empty list) - collapsing them would misreport an
+    ordinary max_knobs-only run (this one has no cap either) as one that was
+    deliberately scoped to specific knobs."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(), slot, {"tb1": DECK_ONE_KNOB}, backend, {"gain_db": 1.0}, max_knobs=None, points=2
+    )
+
+    assert result.detail["knob_names_requested"] is None
+
+
+def test_knob_names_restricts_the_sweep_and_records_the_rest_as_omitted():
+    """Two tunable knobs exist. Naming just BLOCK.R2.value must sweep ONLY
+    that one, name BLOCK.R1.value in knobs_omitted (the same 'don't
+    silently drop it' rule test_omitted_knobs_are_named_when_max_knobs_
+    truncates pins for max_knobs), and separately record the request itself
+    in knob_names_requested - the fact that this run's scope was
+    deliberately narrowed to a specific knob must survive independently of
+    knobs_swept's length (a max_knobs=1 run reaching the same swept-count
+    would look identical in knobs_swept alone)."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_TWO_KNOBS)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_TWO_KNOBS},
+        backend,
+        {"gain_db": 1.0},
+        max_knobs=None,
+        points=2,
+        knob_names=[("BLOCK.R2", "value")],
+    )
+
+    assert [k["knob"] for k in result.detail["knobs_swept"]] == ["BLOCK.R2.value"]
+    assert result.detail["knobs_omitted"] == ["BLOCK.R1.value"]
+    assert result.detail["knob_names_requested"] == ["BLOCK.R2.value"]
+
+
+def test_a_requested_knob_name_absent_from_the_tunable_index_is_recorded_unresolved():
+    """BLOCK.R9.value was never a real knob on this block (a typo or a stale
+    name). Silently sweeping nothing here would make that mistake
+    indistinguishable from 'we correctly narrowed to zero knobs' - it must
+    be named in knobs_unresolved with a reason that says it was explicitly
+    requested, distinct from the sweep's own 'unresolved' reasons (baseline
+    value / tier)."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_ONE_KNOB)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_ONE_KNOB},
+        backend,
+        {"gain_db": 1.0},
+        max_knobs=None,
+        points=2,
+        knob_names=[("BLOCK.R9", "value")],
+    )
+
+    assert result.detail["knobs_swept"] == []
+    entry = result.detail["knobs_unresolved"][0]
+    assert entry["knob"] == "BLOCK.R9.value"
+    assert "explicitly requested" in entry["reason"]
+
+
+def test_knob_names_selection_is_applied_before_max_knobs_caps():
+    """Three tunable knobs exist in sorted order R1 < R2 < R3. Requesting
+    {R2, R3} and capping to max_knobs=1 must keep R2 - the first knob of the
+    REQUESTED, already-filtered set - not R1, which is only the first knob
+    of the FULL set. A mutation that applies max_knobs to the full knob
+    list before intersecting with knob_names would instead keep R1 (never
+    requested at all) or, if capping ran first and only then filtered,
+    could drop the requested knobs entirely - either way this assertion on
+    exactly which knob got swept catches it."""
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
+    slot = _scoped_slot(criteria, DECK_THREE_KNOBS)
+    backend = _ConstantBackend({"gain_db": 1.0})
+
+    result = scoped_comparison(
+        _candidate(),
+        slot,
+        {"tb1": DECK_THREE_KNOBS},
+        backend,
+        {"gain_db": 1.0},
+        max_knobs=1,
+        points=2,
+        knob_names=[("BLOCK.R2", "value"), ("BLOCK.R3", "value")],
+    )
+
+    assert [k["knob"] for k in result.detail["knobs_swept"]] == ["BLOCK.R2.value"]
+    assert "BLOCK.R1.value" in result.detail["knobs_omitted"]
+    assert "BLOCK.R3.value" in result.detail["knobs_omitted"]
 
 
 def test_only_one_knob_moves_per_sweep_point():

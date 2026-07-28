@@ -888,8 +888,28 @@ def scoped_comparison(
     candidate_measurements: dict,
     max_knobs: int | None,
     points: int,
+    knob_names: list[tuple[str, str]] | None = None,
 ) -> StageResult:
     """3단: 범위 밝힌 비교와 파레토 거부.
+
+    `knob_names`는 `max_knobs`와 나란한, **명명된** 좁히기다(Task 7이 남긴
+    "max_knobs는 개수 절삭만 지원하고 이름 지정 선택은 없다"는 공백을 여기서
+    채운다). `max_knobs`는 정렬 순서의 접두 N개를 자르므로 - 노브가 알파벳
+    순으로 어디 있는지에 좌우된다 - "이 노브 하나가 후보를 이긴다"는 것을
+    알고 있을 때 그 노브 하나만 정확히 스윕하고 싶다면 정렬 위치에 기대는
+    것은 사실을 안다는 착각으로 우연히 맞아떨어지는 것이지 그 사실을 실제로
+    쓰는 것이 아니다. `knob_names`가 주어지면 그 집합과 이 블록의 전체 노브
+    인덱스의 **교집합**만 스윕한다(순서는 전체 인덱스의 정렬 순서를 그대로
+    따른다 - 결정론). 교집합에서 빠진 나머지는 이유가 있는 좁히기이므로
+    `max_knobs` 절삭과 같은 자리(`knobs_omitted`)에 이름이 남고,
+    `detail["knob_names_requested"]`가 "이 실행은 특정 노브들로 명시적으로
+    좁혀졌다"는 사실 자체를 - 몇 개가 잘렸는지가 아니라 무엇이 요청됐는지를
+    - 별도로 기록한다(브리프 규칙 2: 좁혔다는 사실 자체가 리포트에 남아야
+    한다). 요청됐지만 이 블록의 노브 인덱스에 없는 이름은 오탈자를 조용히
+    삼키지 않도록 `knobs_unresolved`에 사유와 함께 남는다. `max_knobs`는
+    named 선택 **다음에** 적용된다 - 두 좁히기가 같은 파이프라인에서 함께
+    쓰일 수 있고, 순서는 "무엇을 볼지 정하고, 그중 몇 개까지 볼지 정한다"는
+    자연스러운 순서다.
 
     기존 본문은 **그대로 둔 채**, 그 블록의 tunable 인덱스에서 노브
     **하나씩** 에어리어 게이트가 그 파라미터에 허용하는 배수 `M` 안에서
@@ -926,9 +946,26 @@ def scoped_comparison(
 
     knobs = all_knobs
     knobs_omitted: list[str] = []
-    if max_knobs is not None and len(all_knobs) > max_knobs:
-        knobs = all_knobs[:max_knobs]
-        knobs_omitted = [f"{refdes}.{param}" for refdes, param in all_knobs[max_knobs:]]
+    knobs_unresolved: list[dict] = []
+    knob_names_requested: list[str] | None = None
+    if knob_names is not None:
+        wanted = set(knob_names)
+        knobs = [k for k in all_knobs if k in wanted]
+        knobs_omitted = [f"{refdes}.{param}" for refdes, param in all_knobs if (refdes, param) not in wanted]
+        found = set(knobs)
+        knobs_unresolved = [
+            {
+                "knob": f"{refdes}.{param}",
+                "reason": "explicitly requested via knob_names but not present in this block's tunable index",
+            }
+            for refdes, param in knob_names
+            if (refdes, param) not in found
+        ]
+        knob_names_requested = [f"{refdes}.{param}" for refdes, param in knob_names]
+
+    if max_knobs is not None and len(knobs) > max_knobs:
+        knobs_omitted = knobs_omitted + [f"{refdes}.{param}" for refdes, param in knobs[max_knobs:]]
+        knobs = knobs[:max_knobs]
 
     baseline_components = index_baseline_components(canonical_text)
 
@@ -940,7 +977,10 @@ def scoped_comparison(
     candidate_incomplete = any(math.isnan(r["actual"]) for r in candidate_by_name.values())
 
     knobs_swept: list[dict] = []
-    knobs_unresolved: list[dict] = []
+    # knobs_unresolved may already carry entries from a knob_names request
+    # that named a (refdes, param) absent from this block's tunable index -
+    # this loop only ever appends to it, never resets it, so that fact
+    # survives alongside whatever the sweep itself finds unresolved.
     excluded_points: list[dict] = []
     best_per_criterion: dict[str, dict] = {}
     dominating_point: dict | None = None
@@ -1031,6 +1071,7 @@ def scoped_comparison(
     detail = {
         "topology_id": candidate.topology_id,
         "block_path": slot.block_path,
+        "knob_names_requested": knob_names_requested,
         "knobs_swept": knobs_swept,
         "knobs_omitted": knobs_omitted,
         "knobs_unresolved": knobs_unresolved,
