@@ -204,3 +204,46 @@ async def test_the_schema_does_not_require_block_path():
 
 def test_the_system_prompt_does_not_assume_a_single_amplifier():
     assert "the amplifier's internal structure" not in TOPOLOGY_TUNER_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_the_swap_prompt_renders_how_each_candidate_entry_was_verified():
+    """M6. F2 added `provenance`/`verified_at` to `Topology` precisely so that
+    a reader can tell what an entry actually passed - but nothing consumed
+    them: this prompt rendered only `description` and `addresses`, so a
+    `verified_at="nominal"` entry looked identical to a corner-verified one to
+    the agent choosing the swap. A field that nothing reads is not a record.
+
+    Mutation this catches: dropping the two f-string fields from
+    `candidate_descriptions` (observed: 'verified_at: nominal' is absent from
+    the prompt and the assertion fails)."""
+    library = {
+        "nominal_only": Topology(
+            id="nominal_only",
+            description="an LLM-authored variant",
+            subckt_body="Rz vnull vout 500\n",
+            addresses=["phase_margin"],
+            ports=["vinp", "vinn", "vout", "vdd", "vss"],
+            assumes_scale=1e-6,
+            provenance="authored",
+            verified_at="nominal",
+        ),
+    }
+    candidates = [SwapCandidate(block_path="AMP", topology_id="nominal_only")]
+    with patch("analogcoder.agents.tuner.run_agent", new=AsyncMock(return_value={})) as mock_run:
+        await propose_topology_swap(
+            structure_view="x",
+            judge_result={"overall_pass": False},
+            candidates=candidates,
+            library=library,
+            rejection_feedback=None,
+            backend=object(),
+        )
+
+    prompt = mock_run.call_args.kwargs["user_prompt"]
+    assert "provenance: authored" in prompt
+    assert "verified_at: nominal" in prompt
+    # ... and the system prompt must say what those words mean, or rendering
+    # them is decoration the agent cannot act on.
+    assert "verified_at: corners" in TOPOLOGY_TUNER_SYSTEM_PROMPT
+    assert "prefer the one verified at corners" in TOPOLOGY_TUNER_SYSTEM_PROMPT

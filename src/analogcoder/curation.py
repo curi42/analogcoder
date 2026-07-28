@@ -35,6 +35,7 @@ cascode-compensation 후보가 기각된 것은 그 후보가 나빠서가 아�
 
 import math
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 
@@ -48,6 +49,7 @@ from analogcoder.area_limits import (
 )
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import (
+    all_model_names,
     apply_changes,
     apply_topology_swap,
     declares_include,
@@ -288,6 +290,86 @@ def candidate_from_technique(subckt_body: str, ports: list[str], assumes_scale: 
         assumes_scale=assumes_scale,
         provenance="authored",
     )
+
+
+# SPICE 식별자로 성립할 수 없는 토큰을 걸러내는 패턴. 이름에서 **의미**를
+# 읽는 것이 아니라(그것은 이 저장소가 금지하는 추측이다) 그 문자열이 애초에
+# 이름일 수 **없다**는 구문적 사실만 본다.
+_VALID_MODEL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.\[\]+\-]*$")
+
+
+def prompt_available_models(netlist_texts: dict[str, str]) -> tuple[set[str], dict]:
+    """소스 C의 프롬프트에 실을 "이 덱이 인스턴스화하는 모델 이름" 집합과,
+    거기서 무엇이 왜 빠졌는지의 기록을 함께 돌려준다.
+
+    **세 가지를 고친다. 셋 다 실측이다.**
+
+    1. **프롬프트와 게이트의 발산.** `cli_curate`는 이 집합을 **캐노니컬
+       테스트벤치 하나**에서 뽑았는데, 1단의 게이트(`compatible_swaps`)는
+       필요한 모델이 **모든** 테스트벤치에 있을 것을 요구한다
+       (`missing_in_testbench`와 같은 이유 - `RunState.push_netlist_version`이
+       테스트벤치 전체를 원자적으로 버저닝하므로 일부만 스왑된 상태가 있을 수
+       없다). 즉 캐노니컬에만 있는 모델을 프롬프트가 권하고 게이트가 거부하는
+       조합이 가능했다. 여기서는 **모든 테스트벤치의 교집합**을 쓴다 - 게이트가
+       실제로 통과시키는 것과 같은 규칙이다.
+       (오늘의 `benchmarks/bandgap` 두 슬롯 스펙에서는 교집합이 캐노니컬 집합과
+       **같다**. 즉 이 수정이 오늘 바꾸는 값은 없다 - 잠재된 발산이었고,
+       그 사실을 여기 적어 둔다. 이 저장소의 규칙대로, 아무것도 하지 않는
+       규칙은 그 사실과 함께 출하한다.)
+
+    2. **이름일 수 없는 토큰.** `all_model_names`는 `parse_spice_value`로
+       파싱되지 않는 위치 값을 전부 모델 이름으로 본다. 실측:
+       `benchmarks/bandgap`의 startup 덱은 `'1.8)'`을, settling 덱은 `'10u)'`을
+       낸다(제어문/표현식 줄의 오파싱). 그것들이 "이 덱이 인스턴스화하는 모델"
+       이라고 에이전트에게 건네지고 있었다. `_VALID_MODEL_NAME`에 걸리지 않는
+       토큰은 구문적으로 이름일 수 없으므로 뺀다 - 이름의 **뜻**을 읽는 것이
+       아니라 그것이 이름 꼴인지만 본다.
+
+    3. **덱 자신의 `.subckt` 정의 이름.** `BANDGAP`/`BGR_CORE`/`TRIMAMP` 등이
+       같은 목록에 섞여 있었다. 그것들은 거짓이 아니다(덱은 정말로 그것들을
+       인스턴스화한다) - 다만 이 에이전트가 하는 일은 **그 블록들 중 하나의
+       본문을 국소 수정하는 것**이고, 그 본문 안에서 형제 블록 정의를
+       인스턴스화하는 것은 어떤 기법도 아니다. 프롬프트에서만 뺀다.
+
+    **셋 다 프롬프트를 좁히기만 한다(프롬프트 ⊆ 게이트).** 그래서 이 함수
+    때문에 게이트가 통과시켰을 본문이 거부되는 일은 없다 - 좁힌 사실 자체는
+    돌려주는 기록에 남아 산출물까지 간다."""
+    per_testbench: dict[str, set[str]] = {}
+    block_definitions: set[str] = set()
+    for name, text in sorted(netlist_texts.items()):
+        parsed = parse_netlist(text)
+        per_testbench[name] = all_model_names(parsed)
+        block_definitions |= set(parsed.subckts)
+
+    if not per_testbench:
+        union: set[str] = set()
+        in_every: set[str] = set()
+    else:
+        union = set().union(*per_testbench.values())
+        in_every = set.intersection(*per_testbench.values())
+
+    malformed = {n for n in in_every if not _VALID_MODEL_NAME.match(n)}
+    offered = in_every - malformed - block_definitions
+
+    record = {
+        "per_testbench": {tb: sorted(names) for tb, names in per_testbench.items()},
+        "offered_to_the_agent": sorted(offered),
+        "dropped_not_in_every_testbench": sorted(union - in_every),
+        "dropped_not_a_syntactically_valid_name": sorted(malformed),
+        "dropped_block_definitions_of_this_deck": sorted(in_every & block_definitions),
+        "why": (
+            "the set offered to the variant-author agent is the INTERSECTION across "
+            "every testbench (matching compatible_swaps' own 'compatible in every "
+            "testbench' rule, so the prompt cannot suggest a model the gate will "
+            "reject), minus tokens that cannot syntactically be a SPICE name (e.g. "
+            "'1.8)' / '10u)', which all_model_names produces from mis-parsed control "
+            "or expression lines), minus this deck's own .subckt definition names (a "
+            "LOCAL modification of one block's body never instantiates a sibling "
+            "block). All three only NARROW the prompt relative to the gate, so no "
+            "body the gate would have accepted is made unreachable by them"
+        ),
+    }
+    return offered, record
 
 
 @dataclass(frozen=True)

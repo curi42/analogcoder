@@ -19,6 +19,7 @@ from analogcoder.curation import (
     candidate_from_file,
     candidate_from_technique,
     check_structure,
+    prompt_available_models,
     reproduce_characteristics,
     scoped_comparison,
     verify_corners,
@@ -2430,3 +2431,115 @@ def test_stage_3_detail_records_every_requested_narrowing_including_zero():
     assert unnarrowed.detail["max_knobs_requested"] is None
     assert unnarrowed.detail["points_requested"] == 5
     assert unnarrowed.detail["knob_names_requested"] is None
+
+
+# --- M5: the prompt's model set must not diverge from the gate's ------------
+
+
+def test_the_prompt_model_set_is_the_intersection_across_every_testbench():
+    """`available_models` was derived from the CANONICAL testbench alone while
+    `compatible_swaps` requires a model to be present in EVERY testbench (the
+    same reason it has a `missing_in_testbench` rejection at all:
+    push_netlist_version versions every testbench atomically, so a
+    partially-swapped state cannot exist). So the prompt could recommend a
+    model the gate would then reject.
+
+    Here `MODEL_ONLY_IN_CANONICAL` exists only in tb1; the prompt must not
+    offer it.
+
+    Mutation this catches: using `union` instead of `set.intersection`
+    (observed: 'MODEL_ONLY_IN_CANONICAL' appears in `offered` and both
+    assertions below fail)."""
+    tb1 = "* t\n.subckt BLOCK a b\nX1 a b MODEL_SHARED\nX2 a b MODEL_ONLY_IN_CANONICAL\n.ends BLOCK\n.end\n"
+    tb2 = "* t\n.subckt BLOCK a b\nX1 a b MODEL_SHARED\n.ends BLOCK\n.end\n"
+
+    offered, record = prompt_available_models({"tb1": tb1, "tb2": tb2})
+
+    assert offered == {"MODEL_SHARED"}
+    assert record["dropped_not_in_every_testbench"] == ["MODEL_ONLY_IN_CANONICAL"]
+
+
+def test_tokens_that_cannot_be_a_spice_name_are_dropped_from_the_prompt():
+    """Measured on this repo's own decks: `all_model_names` treats any
+    positional value `parse_spice_value` cannot parse as a model name, so
+    `benchmarks/bandgap`'s startup deck yields `'1.8)'` and its settling deck
+    yields `'10u)'` (mis-parsed control/expression lines). Those were handed
+    to the agent as "models this deck instantiates".
+
+    The filter reads no MEANING out of the name - only whether the string can
+    syntactically be a SPICE identifier at all, which `'1.8)'` cannot.
+
+    Mutation this catches: removing the `_VALID_MODEL_NAME` filter (observed:
+    `offered == {'MODEL_OK', '1.8)'}` and the first assertion fails)."""
+    deck = "* t\n.subckt BLOCK a b\nX1 a b MODEL_OK\nX2 a b 1.8)\n.ends BLOCK\n.end\n"
+
+    offered, record = prompt_available_models({"tb1": deck})
+
+    assert offered == {"MODEL_OK"}
+    assert record["dropped_not_a_syntactically_valid_name"] == ["1.8)"]
+
+
+def test_the_decks_own_block_definitions_are_not_offered_as_device_models():
+    """`all_model_names` also returns the deck's own `.subckt` definition
+    names (measured on bandgap: BANDGAP, BGR_CORE, BUF_N, BUF_P, ERRAMP,
+    TRIMAMP). Those are true - the deck really instantiates them - but this
+    agent's job is a LOCAL modification of ONE such block's body, and
+    instantiating a sibling block inside it is not a technique.
+
+    This is a parsed fact ("the deck defines this name as a .subckt"), not a
+    name heuristic. And it only narrows the PROMPT: the gate keeps its own
+    broader set, so no body the gate would accept becomes unreachable.
+
+    Mutation this catches: not subtracting `block_definitions` (observed:
+    'BLOCK' and 'OTHER' both appear in `offered`)."""
+    deck = (
+        "* t\n"
+        ".subckt BLOCK a b\nX1 a b sky130_fd_pr__nfet_01v8\n.ends BLOCK\n"
+        ".subckt OTHER a b\nR9 a b 5k\n.ends OTHER\n"
+        "Xu1 n1 n2 BLOCK\nXu2 n2 n3 OTHER\n.end\n"
+    )
+
+    offered, record = prompt_available_models({"tb1": deck})
+
+    assert offered == {"sky130_fd_pr__nfet_01v8"}
+    assert record["dropped_block_definitions_of_this_deck"] == ["BLOCK", "OTHER"]
+
+
+def test_on_the_shipped_bandgap_slot_this_narrowing_changes_only_the_block_names():
+    """The measured state of the fix on real decks, pinned so that "this rule
+    does nothing today" cannot quietly become "this rule is gone".
+
+    On `benchmarks/bandgap/spec_curate_slot.yaml` the intersection EQUALS the
+    canonical set (there is one testbench), and no mis-parsed token appears -
+    so of the three narrowings, only the block-definition one actually fires
+    here. The prompt/gate divergence was latent, not live, and this test says
+    so rather than letting a passing suite imply it was live.
+
+    Mutation this catches: dropping the block-definition subtraction
+    (observed: `offered` gains BANDGAP/BGR_CORE/BUF_N/BUF_P/ERRAMP/TRIMAMP and
+    the first assertion fails)."""
+    import os
+
+    from analogcoder.netlist import resolve_includes
+    from analogcoder.spec import load_spec
+
+    spec = load_spec("benchmarks/bandgap/spec_curate_slot.yaml")
+    netlist_texts = {
+        tb.name: resolve_includes(Path(tb.netlist_path).read_text(), os.path.dirname(tb.netlist_path))
+        for tb in spec.testbenches
+    }
+
+    offered, record = prompt_available_models(netlist_texts)
+
+    assert offered == {
+        "sky130_fd_pr__nfet_01v8",
+        "sky130_fd_pr__pfet_01v8",
+        "sky130_fd_pr__pnp_05v5_W3p40L3p40",
+        "sky130_fd_pr__res_high_po",
+    }
+    assert record["dropped_block_definitions_of_this_deck"] == [
+        "BANDGAP", "BGR_CORE", "BUF_N", "BUF_P", "ERRAMP", "TRIMAMP",
+    ]
+    # Measured: on THIS slot the other two narrowings fire on nothing.
+    assert record["dropped_not_in_every_testbench"] == []
+    assert record["dropped_not_a_syntactically_valid_name"] == []

@@ -41,12 +41,12 @@ from analogcoder.curation import (
     candidate_from_deck,
     candidate_from_file,
     check_structure,
+    prompt_available_models,
     reproduce_characteristics,
     scoped_comparison,
     verify_corners,
 )
 from analogcoder.netlist import (
-    all_model_names,
     extract_subckt_body,
     netlist_scale,
     parse_netlist,
@@ -334,6 +334,9 @@ class _RunContext:
     # 소스 C 에이전트가 낸 설명. 어떤 게이트도 읽지 않지만(그래서 스키마에서
     # optional이다) 버리지도 않는다 - 산출물까지 실어 사람이 읽게 한다.
     rationale: str | None = None
+    # 소스 C 프롬프트에 실린 모델 이름 집합과, 거기서 무엇이 왜 빠졌는지
+    # (`curation.prompt_available_models`). 좁혔다면 조용히 좁히지 않는다.
+    available_models: dict | None = None
 
 
 def _stage_fail_reason(name: str, stage: StageResult) -> str:
@@ -411,6 +414,7 @@ def _finalize(ctx: _RunContext, verdict: str, reason: str, description: str = ""
         "stages": list(ctx.stages),
         "addresses": list(ctx.addresses),
         "rationale": ctx.rationale,
+        "available_models": ctx.available_models,
         "candidate": ctx.candidate,
         "description": description,
         "description_source": description_source,
@@ -482,11 +486,14 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
         subckt = parsed.subckts[ctx.slot.block_path]
         base_body = extract_subckt_body(base_text, ctx.slot.block_path)
 
+        available_models, model_scope = prompt_available_models(netlist_texts)
+        ctx.available_models = model_scope
+
         variant = await author_and_verify_variant(
             base_body=base_body,
             technique=args.technique,
             ports=list(subckt.ports),
-            available_models=all_model_names(parsed),
+            available_models=available_models,
             scale=netlist_scale(base_text),
             topology_id=args.topology_id,
             slot=ctx.slot,
@@ -642,6 +649,7 @@ def write_curation_json(out_dir: str, result: dict) -> str:
         # 버리지 않고 여기 남긴다 - 그 전에는 `VariantAuthorResult` 필드
         # 하나로 존재하다 그대로 사라졌다.
         "rationale": result.get("rationale"),
+        "available_models": result.get("available_models"),
         "candidate": asdict(result["candidate"]) if result["candidate"] is not None else None,
         "stages": [asdict(stage) for stage in result["stages"]],
     }
@@ -805,6 +813,14 @@ def write_curation_report_md(out_dir: str, result: dict) -> str:
         "## Addresses (measured improvement over the incumbent)",
         "",
         f"{result['addresses'] if result['addresses'] else 'none'}",
+        "",
+        "## Models offered to the variant author (source C only)",
+        "",
+        (
+            "```json\n" + json.dumps(result["available_models"], indent=2) + "\n```"
+            if result.get("available_models")
+            else "(not applicable - this source calls no authoring agent)"
+        ),
         "",
         "## Variant author rationale (source C only)",
         "",

@@ -361,6 +361,12 @@ async def run_orchestration(
                                 "outer_iter": outer_iter,
                                 "block_path": resolved.block_path,
                                 "topology_id": resolved.topology_id,
+                                # 이 항목이 무엇으로 검증됐는지가 로그에 없으면
+                                # `verified_at="nominal"`인 항목을 스왑해 넣은
+                                # 실행과 코너 검증된 항목을 넣은 실행이
+                                # history.jsonl에서 구별되지 않는다.
+                                "provenance": topology.provenance,
+                                "verified_at": topology.verified_at,
                                 "unconstrained_refdes": unconstrained_refdes,
                                 "stale_baseline_refdes": stale_baseline_refdes,
                             },
@@ -374,6 +380,8 @@ async def run_orchestration(
                             "outer_iter": outer_iter,
                             "block_path": resolved.block_path,
                             "topology_id": resolved.topology_id,
+                            "provenance": topology.provenance,
+                            "verified_at": topology.verified_at,
                             "unconstrained_refdes": len(unconstrained_refdes),
                             "stale_baseline_refdes": len(stale_baseline_refdes),
                             "outcome": None,

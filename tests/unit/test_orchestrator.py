@@ -961,6 +961,13 @@ async def test_a_kept_swap_reaches_the_result_with_its_block_topology_and_area_c
         "outer_iter": 4,
         "block_path": "AMP",
         "topology_id": "miller_nulling_resistor",
+        # M6: what this entry was actually verified with must travel with the
+        # swap record. Without it, `history.jsonl` and result.json cannot tell
+        # a run that swapped in a `verified_at="nominal"` entry from one that
+        # swapped in a corner-verified one - which is the entire reason F2
+        # added these two fields to Topology.
+        "provenance": "extracted",
+        "verified_at": "corners",
         # miller_nulling_resistor's body has 16 components; Xn1 and Xcc share
         # a refdes with GENERIC_5PORT_SWAPPABLE_BODY (so they keep a - now
         # stale - baseline entry), the other 14 were never indexed at all.

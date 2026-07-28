@@ -91,6 +91,14 @@ and rejected). block_path MUST be exactly that same candidate's block_path, copi
 Base your choice on which listed candidate's description most directly addresses the
 currently failing criteria.
 
+Each candidate also carries how it was verified. `verified_at: corners` means that
+entry's body was measured across a full PVT corner sweep; `verified_at: nominal`
+means it was only ever measured at a single operating point, so it may behave
+differently at corners. `provenance` says where the body came from ("extracted"
+from a deck that ran, "file" as submitted by a human, "authored" by an LLM as a
+local modification). Between two candidates that address the failing criteria
+equally well, prefer the one verified at corners.
+
 Respond via the structured output schema."""
 
 
@@ -102,9 +110,15 @@ async def propose_topology_swap(
     rejection_feedback: str | None,
     backend: AgentBackend,
 ) -> dict:
+    # `provenance`/`verified_at`는 F2의 큐레이션 게이트가 항목마다 실제로
+    # 통과시킨 것을 기록한 필드인데, 여기까지 오지 않으면 스왑을 고르는
+    # 에이전트에게는 `verified_at="nominal"`인 항목과 45코너를 통과한 항목이
+    # 완전히 같아 보인다 - 그 구별을 위해 필드를 만든 것이므로 렌더링한다.
     candidate_descriptions = "\n".join(
         f"- {c.block_path} / {c.topology_id}: {library[c.topology_id].description} "
-        f"(addresses: {library[c.topology_id].addresses})"
+        f"(addresses: {library[c.topology_id].addresses}, "
+        f"provenance: {library[c.topology_id].provenance}, "
+        f"verified_at: {library[c.topology_id].verified_at})"
         for c in candidates
     )
     user_prompt = (
