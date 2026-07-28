@@ -1159,6 +1159,101 @@ async def test_the_retry_budget_is_respected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_swap_kept_in_an_earlier_attempt_survives_into_the_final_result(tmp_path):
+    """재진입은 **수렴된 덱에서 시작한다**(그 배선은 바로 위 테스트가 못박는다).
+    그래서 attempt 0이 유지한 스왑은 마지막에 돌려주는 덱에 구조로 그대로
+    남아 있는데, cli는 시도마다 run_orchestration의 결과로 result를 통째로
+    덮는다 - 누적하지 않으면 result.json이 "스왑 없음"이라고 말하면서
+    final_netlist_paths는 본문이 통째로 교체된 덱을 가리킨다.
+
+    어떤 변형을 잡는가: `all_topology_swaps` 누적을 지우고
+    `result["topology_swaps"]`를 그대로 두는 변형(= 이 수정 이전의 동작).
+    그러면 마지막 시도의 빈 목록만 남는다."""
+    run_dir = str(tmp_path / "runs" / "c_swap1")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict_fail = _sweep({"gain": _wc("ff", 12.0)}, failing=["gain"])
+    verdict_pass = _sweep({"gain": _wc("ff", 45.0)})
+
+    swapped = {
+        **_pass_result(run_dir),
+        "topology_swaps": [{
+            "outer_iter": 4, "block_path": "AMP",
+            "topology_id": "miller_nulling_resistor",
+            "unconstrained_refdes": 14, "stale_baseline_refdes": 2,
+            "outcome": "kept",
+        }],
+    }
+    no_swap = {**_pass_result(run_dir), "topology_swaps": []}
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail, verdict_pass], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([swapped, no_swap], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 2          # 재진입이 실제로 일어났다
+    assert result["status"] == "PASS"
+    assert result["topology_swaps"] == [{
+        "attempt": 0,
+        "outer_iter": 4,
+        "block_path": "AMP",
+        "topology_id": "miller_nulling_resistor",
+        "unconstrained_refdes": 14,
+        "stale_baseline_refdes": 2,
+        "outcome": "kept",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_the_attempt_index_distinguishes_two_swaps_of_the_same_block(tmp_path):
+    """`outer_iter`는 시도마다 1부터 다시 세고 `tried_topologies`도 시도마다
+    리셋되므로, 같은 블록이 다른 시도에서 정당하게 다시 스왑될 수 있다 -
+    그러면 누적 목록에 `outer_iter`가 같은 레코드가 둘 생긴다. `attempt`가
+    없으면 두 줄은 구별되지 않는다(그리고 중복 기록처럼 보인다).
+
+    어떤 변형을 잡는가: 누적할 때 `{"attempt": attempt, **swap}` 대신
+    `swap`을 그대로 넣는 변형."""
+    run_dir = str(tmp_path / "runs" / "c_swap2")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict_fail = _sweep({"gain": _wc("ff", 12.0)}, failing=["gain"])
+    verdict_pass = _sweep({"gain": _wc("ff", 45.0)})
+
+    def _swap_result(topology_id: str) -> dict:
+        return {
+            **_pass_result(run_dir),
+            "topology_swaps": [{
+                "outer_iter": 4, "block_path": "AMP", "topology_id": topology_id,
+                "unconstrained_refdes": 14, "stale_baseline_refdes": 2,
+                "outcome": "kept",
+            }],
+        }
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail, verdict_pass], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence(
+                  [_swap_result("miller_basic"), _swap_result("miller_nulling_resistor")],
+                  orch_calls,
+              )),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    swaps = result["topology_swaps"]
+    assert len(swaps) == 2
+    assert [s["attempt"] for s in swaps] == [0, 1]
+    # 같은 블록, 같은 outer_iter - attempt만이 둘을 구별한다.
+    assert [s["outer_iter"] for s in swaps] == [4, 4]
+    assert [s["block_path"] for s in swaps] == ["AMP", "AMP"]
+
+
+@pytest.mark.asyncio
 async def test_a_failure_that_adds_no_new_corner_is_reported_as_a_path_disagreement(tmp_path):
     # 중간 루프가 코너 c에서 통과라 했는데 판정 스윕이 같은 덱의 같은 c에서
     # 실패했다면 두 경로가 다른 말을 하고 있는 것이다. 재시도하면 같은 정보로

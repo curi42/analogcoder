@@ -345,6 +345,21 @@ async def _run(args) -> dict:
     unattributed_failures: dict | None = None
     reentry_skipped: dict | None = None
     final_sweep: dict | None = None
+    # **스왑 레코드만은 시도를 가로질러 누적한다.** 아래 루프는 시도마다
+    # run_orchestration을 새로 부르고 그 결과로 result를 통째로 덮는데,
+    # 재진입은 **수렴된 덱에서 시작하므로**(아래 state.current_netlist_texts())
+    # 앞선 시도가 유지한 스왑은 지금 돌려주는 덱에 구조로 그대로 살아 있다.
+    # 누적하지 않으면 result.json이 "스왑 없음"이라고 말하면서
+    # final_netlist_paths는 본문이 통째로 교체된 덱을 가리킨다 - I-3이 금지한
+    # 바로 그 어긋남이다. 실측: attempt 0이
+    # [AMP <- miller_nulling_resistor, kept]를 내고 attempt 1이 []를 냈는데
+    # 덱의 AMP 본문에는 여전히 Rz가 있었다.
+    #
+    # 이것이 iterations_used/final_criteria와 다른 이유: 그 둘은 **그 시도의
+    # 덱**을 옳게 설명하고(그리고 시도별이라는 사실이
+    # corner_reduction.attempts로 공개된다), topology_swaps는 **이어서 넘겨지는
+    # 덱의 구조**를 설명한다. 누적 덱에 시도별 기록을 붙이는 것이 어긋남이다.
+    all_topology_swaps: list[dict] = []
 
     while True:
         result = await run_orchestration(
@@ -373,6 +388,14 @@ async def _run(args) -> dict:
                 "failure_reason": result.get("failure_reason"),
             },
         )
+        # `attempt`를 함께 박는다. `outer_iter`는 시도마다 1부터 다시 세고
+        # `tried_topologies`도 시도마다 리셋되므로, 한 블록이 다른 시도에서
+        # 정당하게 다시 스왑될 수 있다 - 그러면 누적 목록에 같은 블록·같은
+        # outer_iter의 레코드가 둘 생기고 시도 번호 없이는 구별되지 않는다.
+        all_topology_swaps += [
+            {"attempt": attempt, **swap} for swap in result.get("topology_swaps", [])
+        ]
+        result["topology_swaps"] = list(all_topology_swaps)
 
         # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
         # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된

@@ -234,6 +234,7 @@ SAMPLE_SWAPPED_RESULT = {
     **SAMPLE_RESULT,
     "topology_swaps": [
         {
+            "attempt": 0,
             "outer_iter": 4,
             "block_path": "BUF_P",
             "topology_id": "folded_cascode_pmos_in_cs",
@@ -241,8 +242,11 @@ SAMPLE_SWAPPED_RESULT = {
             "stale_baseline_refdes": 2,
             "outcome": "kept",
         },
+        # 코너 축소 재진입이 붙으면 outer_iter가 시도마다 1부터 다시 세므로,
+        # 시도 번호 없이는 이 줄과 위 줄이 같은 iteration으로 보인다.
         {
-            "outer_iter": 7,
+            "attempt": 1,
+            "outer_iter": 4,
             "block_path": "TRIMAMP",
             "topology_id": "folded_cascode_nmos_in_cs",
             "unconstrained_refdes": 3,
@@ -265,7 +269,8 @@ def test_write_report_md_reports_every_topology_swap(tmp_path):
     assert "## Topology swaps" in content
     assert "BUF_P" in content and "folded_cascode_pmos_in_cs" in content
     assert "TRIMAMP" in content and "folded_cascode_nmos_in_cs" in content
-    assert "iteration 4" in content and "iteration 7" in content
+    assert "attempt 0, iteration 4" in content
+    assert "attempt 1, iteration 4" in content
     # 유지된 스왑과 되돌린 스왑은 다른 사실이다 - 둘을 구별하지 않으면 리포트가
     # 실제로 출하된 덱을 잘못 설명한다.
     assert "(kept)" in content

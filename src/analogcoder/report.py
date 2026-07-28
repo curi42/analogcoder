@@ -141,8 +141,12 @@ def _topology_lines(swaps: list | None) -> list[str]:
     lines = ["", "## Topology swaps", ""]
     for swap in swaps:
         outcome = swap.get("outcome") or "unknown"
+        # 코너 축소 재진입이 붙은 실행에서는 `outer_iter`가 시도마다 1부터
+        # 다시 세므로, 시도 번호 없이는 attempt 0의 iteration 4와 attempt 1의
+        # iteration 4가 같은 줄로 보인다.
+        prefix = f"attempt {swap['attempt']}, " if "attempt" in swap else ""
         lines.append(
-            f"- iteration {swap.get('outer_iter')}: `{swap.get('block_path')}` <- "
+            f"- {prefix}iteration {swap.get('outer_iter')}: `{swap.get('block_path')}` <- "
             f"`{swap.get('topology_id')}` ({outcome})"
         )
         lines.append(

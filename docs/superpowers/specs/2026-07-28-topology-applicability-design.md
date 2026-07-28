@@ -409,6 +409,13 @@ FAIL하며, 결정론적 게이트 소진으로는 결코 그러지 않는다.
   - `no_subckt_definitions` — 덱에 `.subckt` 정의가 없어 쌍을 열거할 수 없다.
   - `empty_library` — 라이브러리가 비었다.
   - `all_pairs_already_tried` — 모든 쌍을 이 런에서 이미 시도했다.
+    **정밀도 한계(기록만 한다):** 판정은 `all(r.reason == "already_tried")`
+    이므로, 기각이 그것만인 덱에서만 나온다. 실제 다중 블록 덱은 언제나
+    `ports`/`identical_body` 기각도 함께 내므로(실측
+    `spec_corner_reduction.yaml`: `Counter({'ports': 80, 'identical_body': 10,
+    'already_tried': 6})`), 진짜 소진도 `all_pairs_rejected`로 보고된다.
+    더 세밀한 사실은 `topology_candidates`에 쌍 단위로 그대로 남으므로
+    막는 문제는 아니다.
   - `all_pairs_rejected` — 호환성 규칙이 전부 기각했다.
   - `proposal_unresolved` — 후보는 있었으나 에이전트의 제안이
     `MAX_TUNING_RETRIES` 동안 하나의 쌍으로 해소되지 않았다(위 "에이전트
@@ -427,11 +434,27 @@ FAIL하며, 결정론적 게이트 소진으로는 결코 그러지 않는다.
 치른 모양이다(CLAUDE.md: "결과는 자기가 돌려주는 덱을 설명해야 한다").
 
 - `result["topology_swaps"]` — **항상** 있는 키(스왑이 없으면 빈 목록).
-  항목마다 `{outer_iter, block_path, topology_id, unconstrained_refdes,
-  stale_baseline_refdes, outcome}`이며 `outcome`은 `"kept"` 또는
-  `"rolled_back"`이다. refdes는 **개수**로 싣는다 — 전문은 이미
+  항목마다 `{attempt, outer_iter, block_path, topology_id,
+  unconstrained_refdes, stale_baseline_refdes, outcome}`이며 `outcome`은
+  `"kept"` 또는 `"rolled_back"`이다. refdes는 **개수**로 싣는다 — 전문은 이미
   `topology_swap` 이벤트에 있고, 여기서 필요한 것은 "면적 게이트가 이 런의
   나머지 구간에서 몇 개를 더 이상 묶지 못하는가"다.
+- **코너 축소 재진입을 가로질러 누적한다.** `cli.py`의 재진입 루프는 시도마다
+  `run_orchestration`을 새로 부르고 그 결과로 `result`를 통째로 덮지만,
+  재진입은 **수렴된 덱에서 시작하므로**(`state.current_netlist_texts()`,
+  의도된 동작) 앞선 시도가 유지한 스왑은 돌려주는 덱에 구조로 그대로 살아
+  있다. 누적하지 않으면 `result.json`이 "스왑 없음"이라고 말하면서
+  `final_netlist_paths`는 본문이 통째로 교체된 덱을 가리킨다 — 이 절이 금지한
+  바로 그 어긋남이다. 재현: attempt 0이
+  `[AMP <- miller_nulling_resistor, kept]`, attempt 1이 `[]`인데 덱의 `AMP`에는
+  여전히 `Rz`가 있었다. 이것이 `iterations_used`/`final_criteria`와 다른
+  이유는, 그 둘은 **그 시도의 덱**을 옳게 설명하고 시도별이라는 사실도
+  `corner_reduction.attempts`로 공개되는 반면, `topology_swaps`는 **이어서
+  넘겨지는 덱의 구조**를 설명하기 때문이다. `attempt`가 필요한 이유는
+  `outer_iter`가 시도마다 1부터 다시 세고 `tried_topologies`도 시도마다
+  리셋되어 같은 블록이 다른 시도에서 정당하게 다시 스왑될 수 있기 때문이다.
+  이 조합은 `spec_corner_reduction.yaml`에서 실제로 가능하다 — 그 스펙은
+  `corner_reduction`을 선언하면서 동시에 `compatible_swaps` 후보 6개를 낸다.
 - `report.md`의 `## Topology swaps` 섹션 — 스왑이 없었으면 **그리지 않는다**
   (최적화/코너 축소 섹션과 같은 규칙: 빈 섹션은 "시도했는데 아무것도 못
   했다"로 읽힌다).
