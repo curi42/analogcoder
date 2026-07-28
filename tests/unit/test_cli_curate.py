@@ -351,6 +351,39 @@ async def test_the_candidate_snippet_carries_the_provenance_actually_verified(tm
     assert "verified_at='corners'" in snippet_c
 
 
+@pytest.mark.asyncio
+async def test_the_report_does_not_assert_the_source_was_corner_verified(tmp_path):
+    """For an extracted candidate, curation_report.md prints `Verified at:
+    nominal` and then, a few lines later, the corners stage's own inherited
+    `why` text - that text must NOT assert as fact that the source deck
+    passed a corner sweep, which would flatly contradict `nominal` two
+    paragraphs above it. Corner-verification is a property of (body x slot),
+    not of the SPICE text alone: this pipeline cannot know whether an
+    arbitrary --from-deck target was ever corner-swept, or whether that
+    verification would transfer to this slot, so the report must not claim
+    it either way. Catches a regression to the old wording ("an extracted
+    body already comes from a deck that passed a full corner sweep")."""
+    spec_path = _write_slot(tmp_path, SPEC_NO_CORNERS)
+    out_dir = tmp_path / "out"
+    deck_path = tmp_path / "source_deck.cir"
+    deck_path.write_text(SOURCE_DECK)
+    args = _args(tmp_path, spec_path, out_dir, from_deck=str(deck_path), from_block="BLOCK", max_knobs=0)
+
+    result = await run_curation(args, sim_backend=_ConstantSimBackend({"r1v": 500.0}), agent_backend=_FakeAgentBackend())
+    assert result["verdict"] == "ADMIT"
+    assert result["verified_at"] == "nominal"
+
+    write_curation_artifacts(str(out_dir), result)
+    report = (out_dir / "curation_report.md").read_text()
+
+    assert "**Verified at:** nominal" in report
+    # the resolving sentence next to "Verified at" must itself be present
+    assert "does not imply that history transfers" in report
+    # and the corners stage's own skip text must not contradict it
+    assert "passed a full corner sweep" not in report
+    assert "already comes from a deck" not in report
+
+
 # --- test_the_library_module_is_not_modified --------------------------------
 
 

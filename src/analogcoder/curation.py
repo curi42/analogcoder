@@ -578,12 +578,21 @@ def verify_corners(
 ) -> StageResult:
     """2.5단: 저술본(`provenance == "authored"`)에만 붙는 코너 검증.
 
-    추출본은 이미 45코너 스윕을 통과한 덱에서 나오고, 파일 제출본은 제출자의
-    책임이다 - 이 단계가 실제로 시뮬레이션을 도는 대상은 **LLM이 지어낸** 본문
+    **코너 검증은 (본문 x 슬롯)의 속성이지, SPICE 텍스트 자체의 속성이
+    아니다.** 추출본이 원래 덱의 원래 자리에서 45코너를 통과했다는 사실이
+    있어도, 그 본문을 뽑아 **다른** 슬롯에 제안하는 것은 이력과 무관한 새
+    조합이고, 이 파이프라인은 임의의 `--from-deck` 대상이 실제로 코너
+    스윕을 거쳤는지, 거쳤다 해도 그 검증이 이 슬롯으로 옮아오는지 알 방법이
+    없다 - 그래서 추측하지 않는다. 파일 제출본은 애초에 제출자의 책임이라
+    이 파이프라인이 검증할 근거 자체가 없다. 이 단계가 실제로 시뮬레이션을
+    도는 대상은 **LLM이 지어낸**(즉 지금까지 누구도 검증한 적 없는) 본문
     뿐이다. `provenance`가 그 밖의 값이면 스윕 없이 `skipped`를 돌려주되
     `detail["why"]`에 사유를 적는다 - 건너뛴 것도 기록이라는 이 저장소의
     규칙대로, "이 출처는 대상이 아니다"와 "게이트가 조용히 사라졌다"를
-    로그에서 구별할 수 있어야 한다.
+    로그에서 구별할 수 있어야 한다. 그 문구는 "원 덱이 코너를 통과했다"는
+    사실 주장을 하지 않는다 - 그런 주장은 이 파이프라인이 확인할 수 없는
+    것이고, 그것을 확인한 것처럼 적으면 리포트의 `verified_at`(추출본은
+    `"nominal"`)과 정면으로 모순된다.
 
     슬롯의 스펙이 `pvt_corners`를 선언하지 않으면 `inconclusive`를 돌려준다 -
     `fail`이 아니다. 코너를 잴 방법이 없다는 것은 "이 회로가 코너에서
@@ -621,10 +630,15 @@ def verify_corners(
             status="skipped",
             detail={
                 "why": (
-                    f"provenance is {candidate.provenance!r}, not 'authored' - corner "
-                    "verification applies only to authored bodies (an extracted body "
-                    "already comes from a deck that passed a full corner sweep; a file "
-                    "body is the submitter's responsibility, not this pipeline's)"
+                    f"provenance is {candidate.provenance!r}, not 'authored' - this "
+                    "pipeline only measures corners for authored bodies, because an "
+                    "authored body is the one nobody has ever verified. "
+                    "Corner-verification is a property of (body x slot), not of the "
+                    "SPICE text alone: this pipeline does not know, and does not "
+                    "guess, whether an extracted or file-provenance candidate's source "
+                    "was ever corner-swept, or whether that history would transfer to "
+                    "THIS slot - so this skip makes no claim either way about the "
+                    "source deck's own corner-verification history"
                 ),
             },
         )

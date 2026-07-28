@@ -485,6 +485,15 @@ def write_curation_report_md(out_dir: str, result: dict) -> str:
         f"**Source:** {result['source']}",
         f"**Block:** {result['block_path']}",
         f"**Verified at:** {result['verified_at']}",
+        (
+            "*(This reflects only what THIS curation run measured for THIS candidate "
+            "in THIS slot - it makes no claim about the source deck's own "
+            "corner-verification history, and does not imply that history transfers "
+            "to a different slot. A human committing this snippet may upgrade "
+            "`verified_at` to `\"corners\"` only after independently confirming a "
+            "corner sweep for this exact candidate-in-slot pairing - the way the "
+            "four shipped library entries earned their tag.)*"
+        ),
         "",
         "## Stages",
         "",
