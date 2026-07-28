@@ -7,6 +7,7 @@ import pytest
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.state import RunState
+from analogcoder.topologies import TOPOLOGY_LIBRARY
 from tests.unit.wrapper_decks import INCLUDE_ONLY_DECK
 
 PASS_JUDGE = {"overall_pass": True, "criteria": [{"name": "gain", "target": ">=19.5", "actual": 20.0, "pass": True, "margin": 0.5}]}
@@ -440,6 +441,12 @@ async def test_topology_candidates_is_logged_even_when_a_swap_is_approved(tmp_pa
     candidates_events = [e for e in events if e["step"] == "topology_candidates"]
     assert len(candidates_events) == 1
     assert candidates_events[0]["candidates"]  # non-empty, and logged despite the approved swap
+    # GENERIC_5PORT_SWAPPABLE_NETLIST's AMP also gets rejected for both
+    # folded_cascode topologies (9 ports vs its 5) - those rejections must
+    # still be reported even though this same iteration ALSO has real
+    # candidates and an approved swap. Catches forcing rejections to [] on
+    # any iteration that has a non-empty candidates list.
+    assert candidates_events[0]["rejections"]
 
 
 @pytest.mark.asyncio
@@ -531,6 +538,121 @@ async def test_an_omitted_block_path_with_two_candidate_blocks_retries_with_feed
     swap_events = [e for e in events if e["step"] == "topology_swap"]
     assert len(swap_events) == 1
     assert swap_events[0]["block_path"] == "AMP2"
+
+
+@pytest.mark.asyncio
+async def test_a_block_path_topology_id_pair_not_in_candidates_is_rejected(tmp_path):
+    """A (block_path, topology_id) pair the agent invents - one that isn't
+    actually in the candidate list compatible_swaps offered - must be
+    rejected with retryable feedback, never applied unchecked. Applying it
+    unchecked would swap a port-mismatched body into a real block silently;
+    an invented topology_id would instead reach TOPOLOGY_LIBRARY[topology_id]
+    as an uncaught KeyError (caught by neither `except AgentExecutionError`
+    nor `except ValueError`), crashing the run instead of failing cleanly.
+    Here the pair names two things that are each real on their own -
+    "AMP" is a real block, "folded_cascode_nmos_in_cs" is a real library
+    topology - just never a real candidate together (folded_cascode_* needs
+    9 ports; AMP has 5), so this also exercises the exact-pair check rather
+    than a lookup that would trivially fail on a nonexistent name."""
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    proposal_calls = []
+
+    async def propose_topology_hallucinated_then_valid(structure_view, judge_result, candidates, library, rejection_feedback):
+        proposal_calls.append(rejection_feedback)
+        if len(proposal_calls) == 1:
+            return {
+                "topology_id": "folded_cascode_nmos_in_cs", "block_path": "AMP",
+                "reasoning": "x", "confidence": 90,
+            }
+        return {
+            "topology_id": "miller_nulling_resistor", "block_path": "AMP",
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(
+        judge=judge_sequence, verify_post=verify_post_sequence,
+        propose_topology=propose_topology_hallucinated_then_valid,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents
+    )
+
+    assert len(proposal_calls) == 2
+    assert proposal_calls[0] is None  # first attempt, no feedback yet
+    assert proposal_calls[1] is not None  # rejected with retryable feedback, not a crash
+    assert result["status"] == "PASS"
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 1
+    assert swap_events[0]["topology_id"] == "miller_nulling_resistor"
+    assert swap_events[0]["block_path"] == "AMP"
+
+
+@pytest.mark.asyncio
+async def test_a_swap_is_applied_to_every_testbench_that_defines_the_block(tmp_path):
+    """compatible_swaps' missing_in_testbench rule guarantees a genuine
+    candidate is defined in every testbench that gets versioned together, so
+    the orchestrator must actually rewrite the block in all of them, not
+    just canonical. Mutating the swap's dict comprehension to only touch
+    canonical_name (e.g. `apply_topology_swap(...) if name == canonical_name
+    else text`) leaves every single-testbench topology test in this file
+    green - this is the one shape only a multi-testbench test can catch.
+    Measured consequence on a real spec: `two_stage_opamp/spec.yaml` has 4
+    testbenches and `bandgap/spec.yaml` has 5; under that mutant the
+    non-canonical decks would keep the OLD block body while judge merges
+    measurements from two different circuits, and push_netlist_version would
+    version that inconsistent set."""
+    judge_calls = {"count": 0}
+
+    async def judge_sequence(measurements, spec):
+        judge_calls["count"] += 1
+        return PASS_JUDGE if judge_calls["count"] == 8 else FAIL_JUDGE
+
+    verify_post_calls = {"count": 0}
+
+    async def verify_post_sequence(prev_judge, new_judge, applied_changes):
+        verify_post_calls["count"] += 1
+        if verify_post_calls["count"] <= 3:
+            return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "fixed"}
+
+    async def propose_topology(structure_view, judge_result, candidates, library, rejection_feedback):
+        chosen = next(c for c in candidates if c.topology_id == "miller_nulling_resistor")
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 90,
+        }
+
+    agents = make_agents(judge=judge_sequence, verify_post=verify_post_sequence, propose_topology=propose_topology)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    initial = {
+        "ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST,
+        "psr_plus": GENERIC_5PORT_SWAPPABLE_NETLIST,
+    }
+    result = await run_orchestration(initial, MULTI_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    final_texts = state.current_netlist_texts()
+    # Rz only exists in miller_nulling_resistor's body - if it's missing from
+    # either testbench, that deck was never actually swapped.
+    assert "Rz" in final_texts["ac_loop_gain"]
+    assert "Rz" in final_texts["psr_plus"]
 
 
 @pytest.mark.asyncio
@@ -649,13 +771,19 @@ async def test_the_swap_event_records_which_refdes_the_area_gate_can_no_longer_b
     swap_events = [e for e in events if e["step"] == "topology_swap"]
     assert len(swap_events) == 1
     unconstrained = set(swap_events[0]["unconstrained_refdes"])
+    stale = set(swap_events[0]["stale_baseline_refdes"])
     # GENERIC_5PORT_SWAPPABLE_BODY's Xn1/Xcc happen to share a refdes with two
-    # of miller_nulling_resistor's own components, so those two keep a
-    # (now-stale) baseline entry; everything else the new topology
-    # introduces has never been indexed and is genuinely unconstrained.
-    assert "Xn1" not in unconstrained
-    assert "Xcc" not in unconstrained
-    assert {"Rz", "Xp3", "Xp4", "Xn2"} <= unconstrained
+    # of miller_nulling_resistor's own components, but with entirely
+    # different nodes/params - so those two keep a baseline entry, and it is
+    # now stale (bounded against the OLD device's geometry, not the new
+    # topology's). Everything else the new topology introduces has never
+    # been indexed at all and is genuinely unconstrained. Keys are fully
+    # qualified ("<block_path>.<refdes>") since a bare "Rz" is ambiguous the
+    # moment a deck has more than one amp.
+    assert "AMP.Xn1" not in unconstrained
+    assert "AMP.Xcc" not in unconstrained
+    assert stale == {"AMP.Xn1", "AMP.Xcc"}
+    assert {"AMP.Rz", "AMP.Xp3", "AMP.Xp4", "AMP.Xn2"} <= unconstrained
 
 
 @pytest.mark.asyncio
@@ -688,6 +816,19 @@ async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollbac
     # be entangled with an analyze-call-count assertion; that part no longer
     # applies now that structure derivation isn't an LLM call, but the "can
     # recur with a different topology" behavior itself still needs coverage.
+    #
+    # The propose_topology fake always returns candidates[0] - the ONLY thing
+    # that can make the second attempt differ from the first is
+    # tried_topologies actually excluding the first pair from the second
+    # call's candidate list. Asserting propose_topology_calls["count"] == 2
+    # alone does not pin this: with always-rollback, 10 outer iterations
+    # allow exactly 2 swap attempts regardless of whether `tried` records
+    # anything, so deleting the `tried_topologies.add(...)` call - or storing
+    # a bare topology_id instead of the (block_path, topology_id) tuple -
+    # leaves this count assertion green while both attempts silently pick the
+    # SAME topology (candidates[0] never changes). The topology_id
+    # comparison below is what actually distinguishes "recur with a
+    # different topology" from "retry the same one twice".
     async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
         return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
 
@@ -713,6 +854,63 @@ async def test_topology_swap_can_recur_with_a_different_topology_after_a_rollbac
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
     assert propose_topology_calls["count"] == 2
+    events = [json.loads(line) for line in open(state.history_path)]
+    swap_events = [e for e in events if e["step"] == "topology_swap"]
+    assert len(swap_events) == 2
+    assert swap_events[0]["topology_id"] != swap_events[1]["topology_id"]
+
+
+@pytest.mark.asyncio
+async def test_the_library_can_genuinely_exhaust_and_the_run_falls_back_to_parameter_tuning(tmp_path, monkeypatch):
+    """Distinct from test_no_compatible_candidate_logs_topology_unavailable_...:
+    that one reaches zero candidates via a "models" rejection on a fixture
+    that never had a real candidate at all. Here the fixture
+    (GENERIC_5PORT_SWAPPABLE_NETLIST) has exactly one genuine candidate once
+    the library is monkeypatched down to a single topology - so the run can
+    exhaust it within the iteration budget - and this proves
+    `tried_topologies` is what turns "tried once" into "genuinely
+    unavailable next time", not a structural fact about the deck.
+
+    Deleting `tried_topologies.add(...)` (or storing a bare topology_id
+    instead of the (block_path, topology_id) tuple) leaves the same one
+    candidate available forever, so a second call to propose_topology would
+    happen instead of topology_unavailable ever being logged - that is the
+    mutation this test catches.
+    """
+    monkeypatch.setattr(
+        "analogcoder.orchestrator.TOPOLOGY_LIBRARY",
+        {"miller_nulling_resistor": TOPOLOGY_LIBRARY["miller_nulling_resistor"]},
+    )
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    propose_topology_calls = {"count": 0}
+
+    async def propose_topology_once(structure_view, judge_result, candidates, library, rejection_feedback):
+        propose_topology_calls["count"] += 1
+        chosen = candidates[0]
+        return {
+            "topology_id": chosen.topology_id, "block_path": chosen.block_path,
+            "reasoning": "x", "confidence": 80,
+        }
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+        propose_topology=propose_topology_once,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": GENERIC_5PORT_SWAPPABLE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    assert propose_topology_calls["count"] == 1  # tried once, never re-offered
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    unavailable_events = [e for e in events if e["step"] == "topology_unavailable"]
+    assert unavailable_events  # the (only) candidate was genuinely exhausted
 
 
 @pytest.mark.asyncio

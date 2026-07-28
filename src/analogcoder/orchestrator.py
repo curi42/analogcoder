@@ -59,6 +59,19 @@ def _candidate_pairs(candidates: list[SwapCandidate]) -> list[tuple[str, str]]:
     return sorted((c.block_path, c.topology_id) for c in candidates)
 
 
+def _component_signature(component) -> tuple:
+    """Structural identity used to tell "still describes the same device" from
+    "same refdes, different device" - deliberately excludes refdes itself
+    (the caller already matched on that) and any derived/decorative field
+    (scope, raw_line, geometry_scale), mirroring topology_match._component_key."""
+    return (
+        component.ctype,
+        component.value,
+        tuple(component.nodes),
+        tuple(sorted(component.params.items())),
+    )
+
+
 def _resolve_swap_target(
     proposal: dict, candidates: list[SwapCandidate]
 ) -> tuple[SwapCandidate | None, str | None]:
@@ -257,19 +270,39 @@ async def run_orchestration(
                     }
 
                     swapped_block = parse_netlist(new_netlist_texts[canonical_name]).subckts[resolved.block_path]
-                    # Among the swapped-in block's own components, which
-                    # refdes have no entry in the run's frozen baseline
-                    # (netlist_v0) - those are the ones a later area-growth
-                    # check can no longer bound, because there is nothing to
-                    # compare their value against. A refdes that happens to
-                    # coincide with one already in the baseline keeps its
-                    # (now stale) entry; that staleness is the documented,
-                    # intentional cost of never refreshing the baseline.
-                    unconstrained_refdes = sorted(
-                        component.refdes
-                        for component in swapped_block.components
-                        if f"{resolved.block_path}.{component.refdes}" not in baseline_components
-                    )
+                    # Among the swapped-in block's own components, split by
+                    # what the frozen baseline (netlist_v0) can still say
+                    # about them - fully-qualified "<block_path>.<refdes>"
+                    # keys in both lists, since a bare refdes is ambiguous the
+                    # moment a deck has more than one amp (this repo's
+                    # bandgap benchmark always does).
+                    #
+                    # unconstrained: no baseline entry at all - a later
+                    # area-growth check has nothing to compare against, so
+                    # this refdes is simply unbound for the rest of the run.
+                    #
+                    # stale_baseline_refdes: a baseline entry exists (so a
+                    # later check will still run one), but its geometry
+                    # belongs to a component this refdes no longer is - the
+                    # component parameters differ from what actually got
+                    # swapped in. Reporting only "unconstrained" reads as "the
+                    # gate is intact everywhere else", when a stale entry
+                    # tiers a growth proposal against the PREVIOUS topology's
+                    # geometry, not the current one. This is logging only -
+                    # the area gate itself, and the choice to never refresh
+                    # the baseline, are unchanged; see the baseline_components
+                    # comment above.
+                    unconstrained_refdes = []
+                    stale_baseline_refdes = []
+                    for component in swapped_block.components:
+                        key = f"{resolved.block_path}.{component.refdes}"
+                        baseline_component = baseline_components.get(key)
+                        if baseline_component is None:
+                            unconstrained_refdes.append(key)
+                        elif _component_signature(baseline_component) != _component_signature(component):
+                            stale_baseline_refdes.append(key)
+                    unconstrained_refdes.sort()
+                    stale_baseline_refdes.sort()
                     state.log_event(
                         "topology_swap",
                         {
@@ -277,6 +310,7 @@ async def run_orchestration(
                             "block_path": resolved.block_path,
                             "topology_id": resolved.topology_id,
                             "unconstrained_refdes": unconstrained_refdes,
+                            "stale_baseline_refdes": stale_baseline_refdes,
                         },
                     )
 
