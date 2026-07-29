@@ -781,6 +781,20 @@ class SearchRun:
             self._reject(self._event(knob, gate=gate, reason=reason, reason_code=code), code)
         return state
 
+    def log_event(self, step: str, payload: dict) -> None:
+        """전략이 **자기 행동에 대해** 남기는 기록. 이력에 닿는 유일한 문이다.
+
+        필요한 이유는 이 저장소가 게이트에 열 번 물었던 질문과 같다: "이것이
+        아무것도 안 할 때 로그가 어떻게 보이는가." 탐색기도 조용히 무력해질 수
+        있다 - 폴이 한 번도 완결되지 않은 실행과 매번 첫 방향에서 성공한 실행은
+        `optimize_step`만 보면 구별되지 않는데, 둘 다 "적응 스텝이 발화하지
+        않았다"이고 그 실행으로는 아무것도 판정할 수 없다.
+
+        **집계는 여전히 전략이 쓸 수 없다.** accepted/rejected/best_objective는
+        읽기 전용이고, 이 문으로 나가는 것은 이력의 이벤트뿐이다 - 실행이
+        돌려주는 넷리스트를 설명하는 숫자는 하나도 전략을 거치지 않는다."""
+        self._state.log_event(step, payload)
+
     def exhausted(self, knob: Knob, state: KnobState, reason: str) -> None:
         """전략이 "이 노브는 더 갈 곳이 없다"고 판단한 경우. 사실이 사유와
         함께 이력에 남아야 하므로 전략이 조용히 넘어가지 못하게 문을 준다."""
@@ -1366,3 +1380,13 @@ async def _optimize(
         # 다른 사실이고, 후자는 고칠 대상이 회로가 아니다.
         corner_failure=confirm_failure,
     )
+
+
+# 전략 등록. `mads`는 이 모듈의 SearchRun/ProposedStep을 쓰므로 반대 방향으로만
+# 의존할 수 없다 - 그래서 표를 만든 **뒤** 여기서 부른다. 어느 쪽을 먼저
+# import해도 순환이 풀린다: 이 줄은 속성이 아니라 모듈만 묶고(`import`),
+# analogcoder.mads는 이 줄 위에서 이미 정의된 이름만 가져간다.
+#
+# 이 줄이 없으면 SEARCH_STRATEGIES에 `mads`가 없고, scripts/search_ab.py가
+# 이 표만 읽으므로 A/B에서 전략 이름이 조용히 사라진다.
+import analogcoder.mads  # noqa: E402,F401
