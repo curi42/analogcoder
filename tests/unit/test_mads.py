@@ -257,7 +257,14 @@ async def test_a_count_knob_floors_at_one_mesh_unit_and_the_log_says_so():
     assert run.polls()[1]["repeated_directions"] >= 1
     assert run.polls()[1]["evaluated"] == 0
     assert run.summary()["stopped"] == "all_knobs_exhausted"
-    assert run.exhaustions and "already rejected" in run.exhaustions[0][2]
+    assert run.exhaustions and "rejected candidates" in run.exhaustions[0][2]
+    # 그리고 소진은 **축소해 보고 나서** 선언된다. 첫 빈 폴은 축소하고, 축소한
+    # 뒤에도 같은 서명이 나온 두 번째 빈 폴에서 비로소 멈춘다 - 정수 바닥에서는
+    # 그 축소가 헛돌지만, 그 사실을 노브의 종류로 **가정**하지 않고 재서 안다.
+    # 빈 폴은 시뮬레이션을 쓰지 않으므로 이 확인은 공짜다(값은 여전히 [19.0]).
+    assert run.polls()[1]["mesh"] == "contract"
+    assert run.polls()[2]["mesh"] == "hold"
+    assert run.polls()[2]["evaluated"] == 0
 
 
 @pytest.mark.asyncio
@@ -479,3 +486,91 @@ async def test_mads_composes_with_the_real_accept_rule_and_gates(tmp_path):
     with open(state.history_path) as f:
         steps = [json.loads(line)["step"] for line in f]
     assert "mads_poll" in steps and "mads_summary" in steps
+
+
+# --- 검증이 잡은 세 결함의 회귀 못 ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_rejected_point_key_is_the_whole_assignment_not_the_knobs_that_moved():
+    """거절점 억제의 키는 **움직인 노브가 아니라 살아 있는 노브 전부**의 값이다.
+
+    부분 배정으로 키를 잡으면, n >= 2에서 같은 부분 배정이 다른 노브의 값에
+    따라 **다른 덱**을 뜻하는데도 "결과를 이미 안다"며 재지 않는다 - 보지 않은
+    점을 실패로 단정하는 것이고, 이 모듈이 최소 양기저에서 이미 한 번 고친
+    모양이다. 노브가 하나일 때만 우연히 참이었고, 다음 실험(결합 측정)이
+    정확히 n >= 2 구성이다.
+
+    구성: L만, 그것도 30 미만일 때만 수락한다. L이 30을 넘으면 폴이 실패해
+    반경이 **되돌아오고**, 그러면 W의 좌표 후보가 이전 값과 같아진다 - 그
+    사이 L은 움직여 있으므로 덱은 다르다."""
+
+    def accept(steps):
+        if len(steps) != 1:
+            return False
+        step = steps[0]
+        return (step.knob.refdes, step.knob.param) == ("TRIMAMP.X7", "L") and step.value < 30.0
+
+    run = FakeRun(
+        [W, L],
+        {("TRIMAMP.Xt", "W"): 8.0, ("TRIMAMP.X7", "L"): 10.0},
+        accept=accept,
+        budget=25,
+    )
+    at_attempt: list[float] = []
+    inner = run.attempt
+
+    async def recording(steps):
+        at_attempt.append(run._values[("TRIMAMP.X7", "L")])
+        return await inner(steps)
+
+    run.attempt = recording
+    await mads(run)
+
+    repeats = [i for i, c in enumerate(run.attempts) if c == {("TRIMAMP.Xt", "W"): 5.2488}]
+    # 부분 배정으로 키를 잡으면 이 점은 **한 번만** 나온다.
+    assert len(repeats) >= 2
+    # 그리고 그 반복은 낭비가 아니다 - 매번 L이 다르므로 다른 덱이다.
+    assert len({at_attempt[i] for i in repeats}) == len(repeats)
+
+
+@pytest.mark.asyncio
+async def test_a_barren_poll_contracts_before_declaring_a_geometry_knob_exhausted():
+    """빈 폴이 곧 소진은 아니다.
+
+    "반경을 줄여도 같은 점만 나온다"는 정수 노브가 granularity 바닥에 닿은
+    경우에만 참이다. 기하 노브의 후보는 value·exp(±Δ)이므로 Δ를 줄이면 언제나
+    새 점이 나온다. 실측 A/B에서 MADS는 폴 8에서 이 분기로 예산 20 중 8만 쓰고
+    멈추면서 로그에는 "모든 노브가 소진됐다"고 적었다 - 그때 축소했다면 나왔을
+    점 2.78943은 좌표 하강이 실제로 **수락한** 점이다."""
+    run = FakeRun(
+        [W], {("TRIMAMP.Xt", "W"): 8.0}, accept=lambda steps: steps[0].value > 3.0, budget=30
+    )
+    await mads(run)
+
+    values = [round(v, 5) for v in run.values_of(W)]
+    # 폴 8이 빈 폴이다: 그 자리에서 멈추지 않고 축소해서 새 점을 찾았다.
+    assert run.polls()[7]["evaluated"] == 0
+    assert run.polls()[7]["mesh"] == "contract"
+    assert values[:8] == [7.2, 5.832, 3.82638, 1.64713, 2.51048, 3.09936, 2.03349, 2.78943]
+    assert run.summary()["stopped"] == "budget"
+
+
+@pytest.mark.asyncio
+async def test_an_unbounded_poll_radius_produces_no_value_instead_of_raising():
+    """폴 반경은 성공할 때마다 τ배로 무한히 자라고, 상한은 새로 만들지 않았다.
+    그래서 `math.exp`가 float 표현 범위를 넘는 지점이 실제로 온다 - 실측으로
+    13번 연속 수락(밴드갭 실행이 좌표 하강으로 10번 연속 수락했다).
+
+    `math.exp`는 `inf`를 돌려주는 것이 아니라 `OverflowError`를 던지고, 그것은
+    `ArithmeticError`이지 `ValueError`가 아니므로 `run_optimization`의 가드를
+    빠져나간다 - 이미 PASS한 런이 `result.json`도 `report.md`도 없이 끝난다.
+    값이 나오지 않는 방향은 **무효 방향**이고, 빈 폴은 축소하므로 반경은 스스로
+    돌아온다."""
+    run = FakeRun([L], {("TRIMAMP.X7", "L"): 10.0}, accept=lambda steps: True, budget=20)
+    await mads(run)
+
+    assert len(run.attempts) == 13
+    assert run.summary()["stopped"] == "all_knobs_exhausted"
+    # 마지막 폴들은 방향이 무효라 시뮬레이션을 쓰지 않는다.
+    assert run.polls()[-1]["void_directions"] >= 1

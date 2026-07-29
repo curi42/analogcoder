@@ -49,13 +49,31 @@
   **정확히** 같아진다. 두 팔이 다른 출발점에서 갈라지면 이긴 쪽이 알고리즘
   덕인지 출발점 덕인지 갈리지 않는다.
 - ``MADS_STEP_FACTOR = 2.0`` (τ) — **MADS 문헌(Audet–Dennis 2006)의 표준값이고
-  이 저장소에서 측정된 값이 아니다. 관례다.** 이 저장소가 값을 치른 세
-  상수(가드밴드 비율, 큐레이션 허용오차, 면적 티어)와 **종류가 다르다**: 셋은
-  전부 판정 임계값이라 틀리면 승인/거부가 조용히 뒤집힌다. τ는 **일정
-  상수**이고 `accept_step`은 전략 밖에 있으므로(optimizer.py), τ가 나쁘면
-  시뮬레이션을 더 쓸 뿐 판정이 뒤집히지 않는다. **이것은 논증이지 측정이
-  아니다** - 그래서 사전 등록에 τ=2를 판정 팔로 고정했고, 결과를 본 뒤
-  만지지 않는다.
+  이 저장소에서 측정된 값이 아니다. 관례다.** 사전 등록에 τ=2를 판정 팔로
+  고정했고, 결과를 본 뒤 만지지 않았다.
+
+  **이 자리에 적혀 있던 정당화는 첫 A/B가 반증했다.** 그 정당화는 "τ는 일정
+  상수이고 `accept_step`은 전략 밖에 있으므로(optimizer.py), τ가 나쁘면
+  시뮬레이션을 더 쓸 뿐 판정이 뒤집히지 않는다"였다 — 즉 이 저장소가 값을
+  치른 세 상수(가드밴드 비율, 큐레이션 허용오차 1e-3, 면적 티어)와 달리
+  **판정 임계값이 아니다**라는 주장이었다. 그것이 틀렸다.
+
+  `optimizer.py`의 `_bisect_last_passing`은 **밀어 넣은 버전 사슬 안에서만**
+  착지하고, 그 착지값이 곧 1차 지표다. 그러므로 τ는 사슬의 촘촘함을 정하고,
+  사슬의 촘촘함이 판정을 정한다. 실측(`benchmarks/bandgap/spec_pvt.yaml`,
+  단일 노브 `TRIMAMP.Xt:W`): 코너 통과 경계가 W ∈ (4.72392, 5.2488]인데
+  좌표 하강의 ×0.9 사슬은 5.2488을 담아 **212.2517 µA**에 착지하고, τ=2
+  배증 사슬 {8.0, 7.2, 5.832, 3.82638, 3.09937}은 그 띠를 통째로 건너뛰어
+  **212.4025 µA**에 착지한다. 두 팔의 차이 0.1508 µA는 탐색의 하강 효율이
+  아니라 **사슬 밀도**가 만든 것이다(MADS 쪽이 nominal 하강 효율은 오히려
+  높았다 — 호출당 0.15456 대 0.10931 µA).
+
+  따라서 이 모듈의 불채택 판정은 기법 MADS에 대한 것이 아니라 **(MADS × τ=2)
+  × 단일 노브 구성**에 대한 것이다. 더 촘촘한 τ(예: 1.5)가 이긴다는 주장도
+  진다는 주장도 재지 않았다 — 결과를 본 뒤 상수를 고르는 것이므로 다시
+  재려면 사전 등록을 새로 해야 한다. 남는 교훈은 τ의 값이 아니라 **"전략
+  밖에 있으니 판정에 못 닿는다"는 논증이 회수 메커니즘을 건너뛰었다**는
+  것이다.
 - ``mesh_count`` (ρ = max(1, round(1/Δ))) — LT-MADS의 δ = min(Δ, Δ²)를 정수
   메시 칸수로 반올림한 것이다. 반올림하는 이유는 위 앵커다: ‖d‖_∞ = ρ 이고
   δ = Δ/ρ 이면 순수 좌표 방향의 반경이 **정확히** Δ가 된다.
@@ -274,7 +292,31 @@ def _candidate_value(
     if component == 0:
         return None
     if not state.integer:
-        return state.value * math.exp(delta * component / rho)
+        # 폴 반경은 성공할 때마다 τ배로 **무한히** 자란다 - 상한을 새로 만들지
+        # 않기로 했으므로 그것을 막는 것은 없다. 그러면 exp(Δ·d/ρ)가 float의
+        # 표현 범위를 넘고, `math.exp`는 `inf`를 돌려주는 것이 아니라
+        # `OverflowError`를 **던진다**. 그것은 `ArithmeticError`이지
+        # `ValueError`가 아니므로 `run_optimization`의 가드
+        # (`AgentExecutionError, ValueError, OSError`)를 그대로 빠져나가고,
+        # 이미 PASS한 런이 `result.json`도 `report.md`도 없이 트레이스백으로
+        # 끝난다 - 그 가드가 존재하는 이유인 바로 그 결말이다. 실측으로 13번
+        # 연속 수락이면 닿는다(Δ ≈ 863). 밴드갭 실측 실행이 좌표 하강으로 10번
+        # 연속 수락했으므로 여유가 셋뿐이다.
+        #
+        # 상한을 지어내지 않고 **표현 가능성**으로 닫는다: 값이 나오지 않는
+        # 방향은 무효 방향이고, 그것은 정수 노브가 바닥에 닿았을 때 이미
+        # 쓰고 있는 답이다(아래 `return None`). 전부 무효가 되면 폴이 비고,
+        # 빈 폴은 축소하므로 Δ가 표현 가능한 범위로 스스로 돌아온다.
+        try:
+            candidate = state.value * math.exp(delta * component / rho)
+        except OverflowError:
+            return None
+        # 움직이지 않는 값은 후보가 아니다 - 아래 정수 가지가 이미 두고 있는
+        # 규칙과 같다. 값이 언더플로로 0.0에 눌리면 이후 모든 후보가 같은
+        # 0.0이므로, 이것이 없으면 그 자리를 한 번 더 시뮬레이션한다.
+        if not math.isfinite(candidate) or candidate == state.value:
+            return None
+        return candidate
     raw = (delta / MADS_INITIAL_POLL_SIZE) * (component / rho)
     displacement = int(round(raw))
     if displacement == 0:
@@ -376,6 +418,10 @@ async def mads(run: SearchRun) -> None:
     # granularity 바닥(±1)에 닿은 뒤에는 반경을 줄여도 같은 점만 나오므로,
     # 이 억제가 없으면 예산이 같은 시뮬레이션으로 소진된다.
     rejected_points: set[tuple] = set()
+    # 직전 폴이 **빈 폴**(evaluated == 0)이었다면 그때 만들어진 서명 집합.
+    # 소진 판정의 대조군이다 - `None`은 "직전 폴은 비지 않았다"를 뜻하고
+    # 어떤 집합과도 같지 않으므로, 첫 빈 폴은 언제나 축소를 한 번 더 준다.
+    barren_signatures: set[tuple] | None = None
 
     while True:
         iteration += 1
@@ -412,15 +458,33 @@ async def mads(run: SearchRun) -> None:
         floored: list[str] = []
         success = False
         complete = True
+        exhausted = False
+        seen_signatures: set[tuple] = set()
         for direction in directions:
             move = _build_move(direction, live, states, delta, rho)
             if move is None:
                 void += 1
                 continue
+            moved = {step.knob: step for step in move.steps}
+            # 서명은 **움직인 노브가 아니라 살아 있는 노브 전부**의 값이다.
+            # 움직인 것만 담으면 부분 배정이 되고, n ≥ 2에서 같은 부분 배정은
+            # 다른 노브의 값에 따라 **다른 덱**을 뜻한다 - 수락/거절은 덱 전체의
+            # 기준으로 정해지므로, 부분 배정으로 억제하면 보지 않은 점을
+            # 실패로 단정하게 된다. 그 모양은 이 모듈이 최소 양기저에서
+            # 이미 한 번 고친 것과 같고(폴 스냅 주석 참고), 노브가 하나일
+            # 때만 우연히 참이었다.
             signature = tuple(
-                (step.knob.refdes, step.state.token, _format_value(step.value, step.state.integer))
-                for step in move.steps
+                (
+                    knob.refdes,
+                    states[knob].token,
+                    _format_value(
+                        moved[knob].value if knob in moved else states[knob].value,
+                        states[knob].integer,
+                    ),
+                )
+                for knob in live
             )
+            seen_signatures.add(signature)
             if signature in rejected_points:
                 # 결과를 이미 아는 점이다. 재지 않지만 **폴은 완결된 것으로
                 # 센다** - 그 방향의 결과가 실패라는 것을 알고 있으므로,
@@ -451,12 +515,31 @@ async def mads(run: SearchRun) -> None:
         elif success:
             mesh = "expand"
         elif evaluated == 0:
-            # 잰 것이 하나도 없다 - 모든 방향이 무효(정수 노브가 전부 바닥에
-            # 닿았거나 원뿔이 통째로 막혔다)이거나 이미 거절된 점을 되풀이한다.
-            # 반경을 줄여도 같은 점만 나오므로 축소가 아니라 소진이다.
-            mesh = "hold"
+            # 잰 것이 하나도 없다. 이것이 **소진**인지 **아직 축소가 남은
+            # 것**인지는 가정하지 않고 잰다.
+            #
+            # 여기 있던 근거는 "반경을 줄여도 같은 점만 나오므로 축소가 아니라
+            # 소진이다"였고, 그것은 **정수 노브가 granularity 바닥(±1)에 닿은
+            # 경우에만 참이다.** 기하 노브의 후보는 value·exp(±Δ)이므로 Δ를
+            # 줄이면 언제나 **새 점**이 나온다. 실측(단일 기하 노브, 폴 8):
+            # Δ=0.21072에서 후보 3.09937·exp(−Δ)는 폴 5에서 이미 거절된 점이라
+            # 빈 폴이 되고 여기서 종료했지만, Δ를 절반으로 줄이면
+            # 3.09937×0.9 = 2.78943이라는 새 점이 나오고 그것은 좌표 하강이
+            # 실제로 **수락한** 점이다. 그래서 예산 20 중 8만 쓰고 멈췄고,
+            # 로그는 그것을 "모든 노브가 소진됐다"고 적었다.
+            #
+            # 소진의 근거는 이제 노브의 종류가 아니라 **직전 빈 폴과 서명
+            # 집합이 같은가**이다. 축소했는데 표현 가능한 새 점이 하나도 안
+            # 나왔다면 그때는 정말 소진이고, 그것은 추측한 종료 허용오차가
+            # 아니라 잰 사실이다 - 새 상수를 만들지 않는다는 위 규칙 그대로다.
+            # 빈 폴은 시뮬레이션을 하나도 쓰지 않으므로 이 확인의 비용은
+            # `mads_poll` 한 줄이다.
+            exhausted = seen_signatures == barren_signatures
+            mesh = "hold" if exhausted else "contract"
         else:
             mesh = "contract"
+
+        barren_signatures = seen_signatures if evaluated == 0 else None
 
         before = delta
         if mesh == "expand":
@@ -477,12 +560,12 @@ async def mads(run: SearchRun) -> None:
         if not complete:
             stopped = "budget"
             break
-        if evaluated == 0:
+        if exhausted:
             detail = (
-                "every poll direction reproduces a candidate that was already rejected "
-                "at this point"
+                "contracting the poll radius reproduced the same rejected candidates, "
+                "so no representable point is left in this direction"
                 if repeated
-                else "no poll direction moves it on the current mesh"
+                else "no poll direction moves it, and contracting changed nothing"
             )
             for knob in live:
                 run.exhausted(
