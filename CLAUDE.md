@@ -565,7 +565,15 @@ that number was measured.
   and `_run_point` simulates the file on disk unrendered. `tt/27` is a real
   corner and is *not* nominal: rendering the deck through `tt` rewrites its
   include and injects a `.temp`, so it is no longer the deck whose thresholds
-  were set. `pvt._corner_fields` reports it as `"(deck)"` with no numbers, and
+  were set. **`corner_fields` writes `{"corner_id": None}` — an absent
+  identity, not the string `"(deck)"`.** This entry used to say
+  `pvt._corner_fields` "reports it as `(deck)`", which was true before the
+  corner-identity change and is now wrong in a way that matters: putting a
+  *name* where a coordinate goes leaves a reader of the artifact seeing
+  `"(deck)"` in the slot `ss` sits in, with no way to know it is not one. The
+  human-readable `"(deck)"` is `corner_selection.raw_label`'s job, and that
+  function is the rule's owner — do not re-derive the dict shape at a call
+  site (a slow test did, and rotted).
   `corner_selection._as_point` **rejects** that shape — detected by the *absence*
   of voltage/temperature coordinates, never by matching the string `"(deck)"`.
   Without the rejection a `CornerPoint(process="(deck)", ...)` reaches
@@ -740,16 +748,28 @@ that number was measured.
   nor any threshold, only each criterion's argmax. With 22 criteria the union
   saturates any small grid, so the only lever is a bigger grid — hence the
   voltage axis came back. Expect real reduction only where corners ≫ criteria.
-- **Re-entry is not dead code, but this benchmark cannot reach it.** Growth
-  requires a *failing* criterion whose argmax sits **outside** the set — and if
-  a criterion's argmax is inside, the mid loop measured that same corner and
-  would have failed there first. On this deck the only outside corners are `tt`,
-  the typical corner, which is nobody's worst case. That is structure, not luck.
-  The mechanism does fire in principle: a smaller move (`TRIMAMP.Xt.W` 8 →
-  5.2488, the value the optimizer's bisection landed on) drifted exactly one
-  argmax — `vbg1_residual`, `ff/1.98` → **`tt/1.62`, outside the set**. It just
-  was not a failing criterion. Re-entry needs an argmax to leave the set *and*
-  that criterion to fail.
+- **Re-entry is reachable, and the claim that it was not has been measured
+  false (2026-07-30).** Growth requires a *failing* criterion whose argmax sits
+  **outside** the set — and if a criterion's argmax is inside, the mid loop
+  measured that same corner and would have failed there first. This entry used
+  to conclude "this benchmark cannot reach it: the only outside corners are
+  `tt`, the typical corner, which is nobody's worst case. That is structure,
+  not luck." **`tt` being nobody's worst is a property of the *entry* deck
+  only.** The seed is taken from the entry sweep; the verdict is taken on a
+  deck the tuner *moved*. `scripts/reentry_feasibility.py` swept 11
+  perturbation shapes over every (entry deck, verdict deck) pair and found
+  **25 of 242** combinations firing on the 9-corner grid (argmax 7, coverage
+  18) — and every one of them lands on `tt/1.98` or `ss/1.98`. On
+  `tail_both_2`, `trim_loop_gain` and `buf1_loop_gain` have their worst at
+  `tt/1.98`, the exact corner the old text called nobody's worst.
+  The measurement needs all **three** conditions, not two: the mid loop must
+  exit **PASS** on the reduced set (the optimism this design is named for), the
+  verdict sweep must fail that criterion, and its worst corner must be outside.
+  Checking only the third inflates the count (29 → 25 here).
+  Still true and worth keeping: a smaller move (`TRIMAMP.Xt.W` 8 → 5.2488, the
+  value the optimizer's bisection landed on) drifted exactly one argmax —
+  `vbg1_residual`, `ff/1.98` → **`tt/1.62`, outside the set** — and it was not
+  a failing criterion.
 - **A two-sided window shares one judge slot, so the slot is resolved rather
   than overwritten — and the corner path is what exposed it.**
   `worst_case_measurements` returns a dict keyed by *measurement* name, so
@@ -818,7 +838,26 @@ that number was measured.
   criterion it covered**. The pre-registered rule was "fewer simulations at the
   same coverage rate", which under disjointness has no satisfying case at all.
   Same shape as D1's `0.000`; caught before running rather than after.
-- **ε-근접 피복 is what makes the sets overlap**, declared per spec:
+- **ε-근접 피복 was REJECTED by its own pre-registered rule on 2026-07-30, and
+  everything below describes a mechanism that is measured, correct, and not
+  adopted.** The rule required zero missed violations. Broadening the
+  perturbation from one shape to eleven produced a counter-example on the first
+  try: on `cc_trim_20` (`TRIMAMP.Xcc.W` 40 → 20) the ε=0.03 seed misses
+  `trim_phase_margin`, which the argmax seed catches. The shipped measurement
+  spec — `spec_corner_coverage.yaml`, 9 corners, ε=0.03 — is therefore
+  **불채택**. Two facts the rejection turns on:
+  **ε is a property of (deck × grid), not of the deck.** Same deck, same
+  perturbation: 45 corners tolerate ε=0.03, 9 corners do not. A sparse grid's
+  ε-neighbourhood pulls in *far* corners rather than similar ones. The largest
+  ε holding 0 missed on the 9-corner grid is **0.01**.
+  **The value 0.03 was derived from a single perturbation axis**, and that
+  derivation is what got falsified — not the mechanism. Reviving it needs a new
+  pre-registration, ε derived per (deck × grid) from *several* perturbation
+  axes, and the probe-promotion fix below. Nothing ships with `coverage:`
+  declared except the measurement copy, so the rejection required no revert.
+  Full numbers:
+  `docs/superpowers/specs/2026-07-29-theory-combination-results.md` §9.
+  The mechanism, for whoever revives it: declared per spec as
   `corner_reduction.coverage: {epsilon, tau}`. Corner `c` covers criterion `j`
   iff `|value_j(c) − worst_j| ≤ ε·|worst_j|`. Absent block ⇒ today's argmax
   union, and the selected `CornerSet` is **byte-identical** (verified over 603
@@ -833,9 +872,22 @@ that number was measured.
   a constant derived from nothing. Failing closed here only ever grows the seed,
   which is the safe direction. **A corner with no measurement is never
   approximated** — "the circuit does not work here" is not smoothed away by ε.
-- **The cost this buys is small and measured: zero missed violations at every ε
-  up to 0.1, across 11 violation instances** (`benchmarks/bandgap/spec_pvt.yaml`
-  entry deck plus three perturbed decks, `scripts/coverage_feasibility.py`).
+- **"Zero missed violations at every ε up to 0.1" was measured on ONE
+  perturbation axis and is false in general — this is the finding that
+  rejected the technique.** The original number (11 violation instances,
+  `spec_pvt.yaml` entry deck plus three decks perturbed the *same* way — both
+  amplifiers' tail widths together) is reproduced below because the reasoning
+  it rests on is still right; what was wrong was concluding a *bound* from a
+  single axis. Re-measured over 11 shapes (single/multi-block, FET width vs
+  resistor length vs MOS-cap width, shrink *and* grow) across both grids, 36
+  violation instances: **9-corner ε=0.03 misses one**. The lesson generalises
+  past ε: **a tolerance derived from one perturbation axis is not a tolerance.**
+  Same error class as the D1 metric that could only return `0.000` — the
+  measurement lacked the condition under which it could have answered
+  differently, and here that condition is *perturbation diversity*, not run
+  count. `scripts/perturbations.py` owns the shape list so the two feasibility
+  scripts cannot drift apart on it.
+  The original single-axis measurement, kept for its reasoning:
   The reason is physical: **a violation is a band, not a knife edge** — a
   criterion failing at its worst corner generally fails at neighbouring corners
   too, so dropping the exact argmax rarely loses the violation. The first

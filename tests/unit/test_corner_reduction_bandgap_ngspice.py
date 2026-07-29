@@ -35,6 +35,7 @@ from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.netlist import apply_changes, resolve_includes
 from analogcoder.pvt import all_corners, run_full_pvt_sweep
 from analogcoder.simulators.ngspice import NgspiceBackend
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.spec import load_spec
 from analogcoder.state import RunState
 
@@ -42,6 +43,10 @@ pytestmark = pytest.mark.slow
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC_PATH = os.path.join(REPO, "benchmarks", "bandgap", "spec_corner_reduction.yaml")
+# 같은 회로·같은 격자·같은 임계값이고 `coverage:` 블록 하나만 다르다.
+COVERAGE_SPEC_PATH = os.path.join(
+    REPO, "benchmarks", "bandgap", "spec_corner_coverage.yaml"
+)
 
 # 메인 루프의 튜너가 낼 법한 크기의 변경을 대신한다. 두 증폭기의 꼬리 전류원을
 # 8 -> 4로 좁히는 것으로, 실측상 buf1 루프를 임계값 아래로 밀어 **판정 스윕을
@@ -365,3 +370,88 @@ def test_the_argmax_moves_when_the_design_moves(entry_sweep, verdict_sweep):
     # 움직인 곳이 전부 씨앗 안이라는 사실이 재진입 미발화의 직접 원인이다.
     in_set = {label(c) for c in cs.corners}
     assert {dest for _, dest in moved.values()} <= in_set
+
+
+# ---------------------------------------------------------------------------
+# ε-근접 피복 불채택을 고정한다 (2026-07-30)
+# ---------------------------------------------------------------------------
+
+# 불채택의 근거가 된 **반례 덱**. `TRIMAMP.Xcc`(밀러 보상 캡)의 폭을 40 -> 20 으로
+# 줄인다. 이 덱은 22기준 중 `trim_phase_margin` 하나만 실패하고, 그 최악이
+# `ss/1.98` 에 있다 - argmax 씨앗은 그 코너를 들고 있고 ε=0.03 씨앗은 버린다.
+COVERAGE_COUNTEREXAMPLE = [
+    {"refdes": "TRIMAMP.Xcc", "param": "W", "new_value": "20"},
+]
+
+
+@pytest.fixture(scope="module")
+def counterexample_sweep():
+    """반례 덱의 9코너 스윕. ~57초라 모듈에서 한 번만 돈다."""
+    spec = _spec()
+    moved = {
+        name: apply_changes(text, COVERAGE_COUNTEREXAMPLE)
+        for name, text in _texts(spec).items()
+    }
+    return run_full_pvt_sweep(moved, spec, NgspiceBackend())
+
+
+def test_the_epsilon_coverage_seed_misses_a_violation_the_argmax_seed_catches(
+    counterexample_sweep,
+):
+    """**불채택 판정을 고정한다.** 사전 등록 규칙은 "놓친 위반 0건"이었고,
+    이 덱이 그 규칙을 깬 반례다.
+
+    **왜 코드로 막지 않고 테스트로 박는가.** ε-근접 피복 자체는 정당한
+    기법이고, ε 을 (덱 × 격자)마다 여러 축의 교란으로 다시 유도하면 되살릴 수
+    있다. 그러니 `coverage:` 선언을 코드가 거부해서는 안 된다. 대신 이
+    저장소가 `COMPARISON_REL_TOLERANCE`의 counter-run 을 핀으로 박은 것과 같은
+    방식으로 **반례를 박는다** - 판정이 문서에만 있으면 다음 사람이 숫자만 보고
+    되켠다.
+
+    이 테스트가 실패하기 시작하면 둘 중 하나다: 벤치마크가 바뀌어 반례가
+    사라졌거나(그러면 판정을 다시 재야 한다), 누군가 ε 을 고쳤거나. 어느
+    쪽이든 조용히 지나가면 안 되는 사건이다."""
+    spec = _spec()
+    criteria = list(spec.all_criteria)
+
+    # **출하된 두 스펙을 그대로 쓴다.** `seed_from_sweep`은 coverage 설정을
+    # 인자가 아니라 `spec.corner_reduction.coverage`에서 읽으므로, 여기서
+    # CoverageConfig를 손으로 만들면 출하 파일이 무엇을 선언하든 이 테스트는
+    # 통과하게 된다 - 정확히 이 테스트가 막으려는 상황이다.
+    coverage_spec = load_spec(COVERAGE_SPEC_PATH)
+    assert coverage_spec.corner_reduction.coverage is not None, (
+        "spec_corner_coverage.yaml이 더 이상 coverage를 선언하지 않는다"
+    )
+    argmax_set, _ = seed_from_sweep(counterexample_sweep, spec)
+    coverage_set, _ = seed_from_sweep(counterexample_sweep, coverage_spec)
+
+    def caught(corner_set):
+        """이 씨앗이 실제로 잡아내는 위반 기준. 판정 스윕이 이미 낸
+        per-corner 값을 읽는다 - 여기서 비교식을 다시 세우면 두 정의가
+        갈라진다."""
+        chosen = {
+            label(point) for point in corner_set.corners if point is not NOMINAL
+        }
+        out = set()
+        for entry in counterexample_sweep["per_corner"]:
+            if raw_label(entry["corner"]) not in chosen:
+                continue
+            verdict = evaluate_criteria(entry["measurements"], criteria)
+            out |= {c["name"] for c in verdict["criteria"] if not c["pass"]}
+        return out
+
+    argmax_caught = caught(argmax_set)
+    coverage_caught = caught(coverage_set)
+
+    # 선행 조건: 이 덱이 실제로 위반을 낸다. 안 그러면 아래 단언이 0 == 0 으로
+    # 통과하면서 아무것도 재지 않는다 - 이 저장소가 세 번 지불한 무효 측정이다.
+    assert argmax_caught == {"trim_phase_margin"}, (
+        f"반례 덱이 더 이상 이 위반을 내지 않는다: {argmax_caught}"
+    )
+
+    # 판정: ε=0.03 씨앗은 그것을 **놓친다**.
+    assert "trim_phase_margin" not in coverage_caught, (
+        "ε=0.03 씨앗이 반례를 잡아 버렸다 - 불채택 판정의 근거가 사라졌으니 "
+        "다시 재야 한다"
+    )
+    assert argmax_caught - coverage_caught == {"trim_phase_margin"}
