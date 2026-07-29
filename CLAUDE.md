@@ -404,8 +404,9 @@ that number was measured.
   absorb that.** D1's repeat-proposal-rate metric produced `0.000` on its
   baseline run because that run had **zero** rollbacks and zero rejections, and
   the metric only fires on a `(refdes, param)` that already failed — so `0.000`
-  was the only value it could return (see "D1 ships unproven" under
-  "Deterministic netlist derivation"). That is this defect class applied to a
+  was the only value it could return (see "D1's claim was measured" under
+  "Deterministic netlist derivation" — the re-measurement that fixed this is
+  the paired probe described there). That is this defect class applied to a
   metric rather than a gate. It is **not** counted here and the total stays at
   **ten**: this ledger enumerates gates, and folding a metric in would make the
   number mean two things. The transferable rule is the question, not the count —
@@ -974,12 +975,33 @@ that number was measured.
   `test_the_tuner_prompt_says_lines_sharing_an_iteration_prefix_were_applied_together`.
   Splitting the measurement per knob is not available — one simulation measures
   one deck.
-- **D1 ships unproven, and a session that finds `attempt_log` events in
-  `history.jsonl` should learn that here rather than assume the mechanism was
-  demonstrated.** Tasks 1-4 prove the record *reaches the prompt* (code and
-  tests). Whether it changes behaviour was measured in task 5 and **the
-  measurement failed to answer it**.
-  **The re-measurement is a paired probe, not another pair of runs**
+- **D1's claim was measured and is not supported; the mechanism it rests on
+  is.** The paired probe ran to completion 2026-07-29 — **75 pairs, 150 calls,
+  0 failed** — and the pre-registered rule returns **no measured effect**:
+  `R_exact` A 0.173 vs B 0.187, discordant pairs 12 vs 13, **p = 1.0**. Per the
+  rule that was fixed before running, that makes D1 a feature spending prompt
+  tokens for a benefit that did not appear — **explicitly not neutral**.
+  **But the history does change behaviour, strongly, in a way the verdict
+  metric does not see.** The context-only `R_knob` went A 0.933 → B **0.653**,
+  discordance 25 vs 4, **p = 1.0e-4**: given the record, the tuner *leaves* a
+  failed knob far more often. It was declared context-only **before** the run,
+  so it does not become the verdict — promoting it now is the exact move this
+  repo forbids. What the experiment establishes is two things: the record
+  reaches the prompt and changes behaviour (**true**), and that change reduces
+  byte-identical resubmission (**false**).
+  A post-hoc observation worth the next experiment's attention, with no test
+  attached: conditional on staying on the knob, B repeats the *value* more
+  (`P(exact|knob)` A 13/70 = 0.186 vs B 14/49 = **0.286**).
+  Three things this does **not** licence: opening D2 (a suppression gate needs
+  repeats shown to be a *cost*, and the metric cannot tell a deliberate knob
+  walk from a rediscovery); the permission-sentence ablation (that needs
+  **B significantly higher**, and p = 1.0); and *removing* D1 (the measurement
+  says "no benefit on this metric", not "no effect" — `R_knob` says otherwise,
+  and whether leaving a knob helps or hurts is unmeasured in both directions).
+  Full numbers, per-timepoint table and limits in
+  `docs/superpowers/specs/2026-07-29-d1-remeasurement-results.md`.
+  **The design is why the answer exists at all** (`scripts/paired_tuner_probe.py`,
+  `…-d1-remeasurement-design.md`): a paired probe, not another pair of runs
   (`scripts/paired_tuner_probe.py`, design in
   `docs/superpowers/specs/2026-07-29-d1-remeasurement-design.md`): it replays a
   recorded run's `history.jsonl` to each proposal point and calls the tuner
@@ -993,7 +1015,9 @@ that number was measured.
   A with `p < 0.05`; `p ≥ 0.05` = no measured effect (and D1 is then a feature
   with a cost and no measured benefit, not a neutral one). Do not read a
   partial sweep's verdict — the script computes one at any n, and a run stopped
-  by an outage rather than by the plan is the same error again. Measured on
+  by an outage rather than by the plan is the same error again; the shipped run
+  went the full distance (150/150) and the verdict above is the complete one.
+  The **superseded** first measurement was on
   `benchmarks/two_stage_opamp/spec.yaml` (a full 10-iteration run of this spec
   costs ~103 min — 6161 s; the 1348 s run only looks cheaper because it died
   at iteration 3 on an agent execution error, `iterations_used: 2`, not
