@@ -267,13 +267,11 @@ def run_side(
     모든 것이고, meta는 그렇지 않은 것(벽시계, 경로)이다. 자기 검사는 record만
     비교한다 - meta를 섞으면 검사가 언제나 실패해 아무 말도 하지 않게 된다."""
     spec = load_spec(args.spec)
-    if corner_regime is not None:
-        from dataclasses import replace as _replace
-
-        from analogcoder.spec import CornerReduction
-
-        base = spec.corner_reduction or CornerReduction()
-        spec.corner_reduction = _replace(base, coverage=corner_regime)
+    # **coverage로 spec.corner_reduction을 고쳐 쓰지 않는다.** `main()`이 이미
+    # coverage 체제를 시작 전에 거부하므로 `corner_regime`은 여기서 항상
+    # None이다 - 그 스펙 변형(dataclasses.replace)이 여기 남아 있으면
+    # `run_optimization`이 애초에 읽지도 않는 필드를 조용히 고쳐 놓고, record의
+    # `corner_regime` 문자열만 다른 이름을 다는 것을 다시 열어 두는 셈이 된다.
     texts = load_deck(spec)
     run_dir = os.path.join(out_dir, f"{side}_{strategy_name}")
     os.makedirs(run_dir, exist_ok=True)
@@ -440,6 +438,27 @@ def main(argv=None) -> int:
         args.corner_regime = [None, None]
     if len(args.corner_regime) != 2:
         parser.error("--corner-regime을 정확히 두 번 주어야 한다 (또는 아예 주지 않는다)")
+    # **coverage 체제를 여기서 거부한다 - 조용히 받아 놓고 아무것도 안 하지
+    # 않는다.** `spec.corner_reduction.coverage`는 `corner_selection.
+    # seed_from_sweep` 한 곳에서만 읽히고, 그 함수는 `cli.py`에서만 불린다.
+    # 그런데 이 하니스는 `run_optimization`을 직접 부르고(`run_side`,
+    # 오케스트레이터의 코너-축소 중간 루프에 들어가지 않는다) `optimizer.py`는
+    # `corner_reduction`을 한 번도 참조하지 않는다 - 그래서 coverage 체제는
+    # spec 필드를 바꿔 놓을 뿐 이 호출 경로 어디에서도 읽히지 않는다. 조용히
+    # 통과시키면 두 쪽이 실제로는 같은(argmax) 코너로 돌면서 기록에는 서로
+    # 다른 체제 이름이 실려, 격자의 셀 하나가 통째로 거짓이 된다 - 시작 전에
+    # 거부하는 것이 이 저장소의 기존 관례다(5764abe: "튜닝 루프는 조합형
+    # 스펙을 조각으로 돌지 않고 시작 전에 거부한다").
+    for regime in args.corner_regime:
+        if regime is not None:
+            parser.error(
+                "이 하니스는 run_optimization을 직접 부르고 corner_reduction의 "
+                "중간-루프 코너 축소를 거치지 않으므로, corner_reduction.coverage는 "
+                "이 경로에서 아무것도 읽지 않는다 - argmax만 낼 수 있다. "
+                "coverage는 corner_selection.seed_from_sweep에서만 읽히고 그것은 "
+                "cli.py에서만 불린다; 이 하니스에서 coverage를 실제로 살리려면 "
+                "이 파일이 그 배선을 통과하도록 바뀌어야 한다."
+            )
 
     name = args.name or f"{args.strategy[0]}__vs__{args.strategy[1]}"
     out_dir = os.path.join(args.out_dir, name)
