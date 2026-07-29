@@ -365,20 +365,24 @@ def test_an_empty_per_corner_yields_an_empty_seed_rather_than_guessing():
 
 
 def test_a_criterion_whose_worst_is_zero_is_covered_only_by_an_exact_tie():
-    """`scale = abs(worst)`이므로 최악값이 0이면 허용오차도 0이다 - 정확히
-    같은 값만 덮는다. 예전에는 `or 1.0` 로 떨어져서 ε 이 그 기준에서만
-    **절대** 허용오차가 됐고, 그 1.0 은 아무 데서도 유도되지 않은 상수였다.
-    닫히는 방향으로 실패한다: 씨앗이 커질 뿐 빠져야 할 코너가 빠지지 않는다."""
+    """최악값이 0 인 기준은 허용오차도 0 이라 정확히 같은 값만 덮는다.
+
+    **기준이 둘이어야 이 테스트가 발화한다.** 하나짜리로는 탐욕이 어차피
+    첫 코너를 고르므로 옛 코드(`abs(worst) if worst else 1.0`)에서도 같은
+    답이 나온다 - 실패할 수 없는 테스트가 된다. 기준을 둘로 두면 옛 코드는
+    SS 가 z 까지 덮는다고 잘못 판단해 **FS 를 버리고**, 그 FS 가 resid 의
+    최악을 유일하게 들고 있던 코너다."""
     sweep = {"per_corner": _per_corner([
-        (FS, {"z": 0.0}),
-        (SS, {"z": -0.002}),
+        (FS, {"z": 0.0, "g": 50.0}),
+        (SS, {"z": -0.002, "g": 42.0}),
     ])}
-    crit = Criterion(name="resid", measurement="z", operator="<=", threshold=1.0)
+    resid = Criterion(name="resid", measurement="z", operator="<=", threshold=1.0)
+    other = Criterion(name="other", measurement="g", operator=">=", threshold=1.0)
 
-    chosen, record = coverage_seed(sweep, [crit], CoverageConfig(epsilon=0.01, tau=1.0))
+    chosen, record = coverage_seed(sweep, [resid, other], CoverageConfig(epsilon=0.01, tau=1.0))
 
-    assert chosen == [FS]          # 최악은 <= 이므로 최대값, 즉 0.0 인 FS
-    assert record["covered"] == 1
+    assert set(chosen) == {FS, SS}
+    assert record["dropped"] == []
 
 
 def test_a_measurement_absent_from_every_corner_names_no_dropped_corner():
