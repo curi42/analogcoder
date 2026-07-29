@@ -22,6 +22,7 @@ from analogcoder.cli import (
 # cli.py가 만드는 status를 optimizer가 실제로 거절하는지까지 확인하지 않으면,
 # "합쳤다"는 사실만 남고 그것이 무엇을 막는지는 아무도 지키지 않는다.
 from analogcoder.optimizer import _run_simulation
+from analogcoder.simulators.base import RawSimResult
 from analogcoder.topologies import TOPOLOGY_LIBRARY
 from analogcoder.topology_match import SwapCandidate
 
@@ -415,6 +416,89 @@ async def test_run_keeps_pass_when_final_pvt_sweep_also_passes(tmp_path):
     assert mock_sweep.call_count == 2
     assert result["status"] == "PASS"
     assert result["pvt_sweep"]["overall_pass"] is True
+
+
+class _StubSimBackend:
+    """run_full_pvt_sweep을 진짜로 돌리기 위한 최소 시뮬레이터 대역.
+    NgspiceBackend 자체를 갈아 끼우므로 CachingSimulator가 실제로 그 위를
+    감싸고, sim_backend.identity()/run()이 실제로 불린다."""
+
+    def identity(self) -> str:
+        return "stub-ngspice"
+
+    def run(self, netlist_path, testbench_config):
+        return RawSimResult(status="success", measurements={}, raw_log="", warnings=[])
+
+
+@pytest.mark.asyncio
+async def test_the_entry_and_verdict_sweeps_each_log_corner_render_per_testbench(tmp_path):
+    """T1: `pvt.run_full_pvt_sweep`의 `log_event`는 기본값 `None`이고, 생산
+    호출부(cli.py)가 그것을 넘기지 않으면 `corner_render` 이벤트가 진입 스윕과
+    판정 스윕 어디에서도 history.jsonl에 남지 않는다 - 이 사건이
+    CLAUDE.md/부록 B가 세는 "조용히 무력한 게이트"의 정확히 그 모양이다.
+
+    `run_full_pvt_sweep` 자체를 mock하면(이 파일의 다른 pvt 테스트들처럼) 이
+    결함을 통과시킨다 - mock은 cli.py가 넘기는 kwargs를 실행하지 않으므로.
+    그래서 여기서는 그 함수는 진짜로 돌리고 그 아래 `NgspiceBackend`만 스텁으로
+    바꾼다: cli.py가 실제로 `log_event=state.log_event`를 넘기는지를 건다."""
+    (tmp_path / "netlist.cir").write_text("* netlist\n.end\n")
+    (tmp_path / "netlist_psr_plus.cir").write_text("* netlist2\n.end\n")
+    spec_path = tmp_path / "spec_pvt.yaml"
+    spec_path.write_text(
+        "circuit_name: test\n"
+        "pvt_corners:\n"
+        "  process: [tt]\n"
+        "  voltage: [1.8]\n"
+        "  temperature: [27]\n"
+        "testbenches:\n"
+        "  - name: ac_loop_gain\n"
+        "    netlist: netlist.cir\n"
+        '    analyses: ["ac"]\n'
+        '    control_block: ".control\\n.endc\\n"\n'
+        "    criteria: []\n"
+        "  - name: psr_plus\n"
+        "    netlist: netlist_psr_plus.cir\n"
+        '    analyses: ["ac"]\n'
+        '    control_block: ".control\\n.endc\\n"\n'
+        "    criteria: []\n"
+    )
+
+    parser = build_arg_parser()
+    run_dir = tmp_path / "runs" / "corner_render_wiring"
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", str(run_dir)])
+
+    fake_result = {
+        "status": "PASS",
+        "final_netlist_paths": {
+            "ac_loop_gain": str(tmp_path / "netlist.cir"),
+            "psr_plus": str(tmp_path / "netlist_psr_plus.cir"),
+        },
+        "run_dir": str(run_dir), "iterations_used": 1, "final_criteria": [],
+    }
+
+    with (
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(fake_result)),
+        patch("analogcoder.cli.NgspiceBackend", return_value=_StubSimBackend()),
+    ):
+        result = await _run(args)
+
+    assert result["status"] == "PASS"
+
+    with open(os.path.join(str(run_dir), "history.jsonl")) as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    renders = [e for e in events if e["step"] == "corner_render"]
+
+    # 진입 스윕(테스트벤치당 1건) + 판정 스윕(테스트벤치당 1건) = 4건.
+    # log_event가 배선되지 않으면 이 리스트는 비어 있다 - 부분적으로 배선된
+    # 경우(둘 중 하나만)와도 구별하려고 테스트벤치별 개수까지 확인한다.
+    assert len(renders) == 4, (
+        f"expected 4 corner_render events (entry+verdict sweeps x 2 testbenches), "
+        f"got {len(renders)}: {renders}"
+    )
+    per_tb: dict[str, int] = {}
+    for e in renders:
+        per_tb[e["testbench"]] = per_tb.get(e["testbench"], 0) + 1
+    assert per_tb == {"ac_loop_gain": 2, "psr_plus": 2}
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1148,7 @@ def _orchestration_sequence(results, calls: list):
 def _sweep_sequence(sweeps, calls: list):
     """run_full_pvt_sweep 대역. 진입 스윕이 첫 호출이고 그 뒤가 판정 스윕들이다."""
 
-    def fake(netlist_texts, spec, sim_backend):
+    def fake(netlist_texts, spec, sim_backend, log_event=None):
         calls.append(dict(netlist_texts))
         return sweeps[min(len(calls) - 1, len(sweeps) - 1)]
 
@@ -2374,7 +2458,7 @@ def test_an_entry_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_pat
     run_dir = str(tmp_path / "runs" / "entryboom")
     args = _corner_args(tmp_path, BAD_OPERATOR_SPEC_YAML, run_dir)
 
-    def production_shaped_sweep(netlist_texts, spec, sim_backend):
+    def production_shaped_sweep(netlist_texts, spec, sim_backend, log_event=None):
         for criterion in spec.all_criteria:
             evaluate_criteria({criterion.measurement: 41.0}, [criterion])
         raise AssertionError("unreachable: the bad operator must raise first")
@@ -2415,7 +2499,7 @@ def test_a_verdict_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_pa
     entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
     calls: list = []
 
-    def entry_then_boom(netlist_texts, spec, sim_backend):
+    def entry_then_boom(netlist_texts, spec, sim_backend, log_event=None):
         calls.append(dict(netlist_texts))
         if len(calls) == 1:
             return entry

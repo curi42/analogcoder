@@ -457,7 +457,15 @@ async def _run(args) -> dict:
         # 부르므로, async로 감싸면 돌아오는 코루틴 객체가 "쓸 수 없는 결과"로
         # 접혀 최적화가 크래시도 로그도 없이 통째로 UNCHANGED가 된다.
         # run_full_pvt_sweep 자체가 동기이고 LLM이 끼지 않으므로 감쌀 이유도 없다.
-        return run_full_pvt_sweep(netlist_texts, spec, sim_backend)
+        #
+        # log_event=state.log_event를 넘긴다 - 이것은 최적화 **확인** 스윕이라
+        # 한 실행 안에서 여러 번 돈다(밴드갭 실측 6회 x 5테스트벤치 = 30줄).
+        # 그래도 적는다: "코너마다 45줄은 안 된다"던 원래 논거는 *같은 덱을
+        # 반복해서* 렌더링하는 것에 대한 것이었지, 여기는 그렇지 않다 - 탐색이
+        # 스텝마다 넷리스트를 바꾸므로 매 확인 스윕이 실제로 다른 덱을 렌더링하고,
+        # PWL 공급이나 include 경로가 그 스텝에서 깨졌는지는 이전 스텝의 렌더
+        # 상태로는 알 수 없다. 30줄은 같은 사실 30번이 아니라 30개의 다른 사실이다.
+        return run_full_pvt_sweep(netlist_texts, spec, sim_backend, log_event=state.log_event)
 
     async def agent_simulate_fn(netlist_path, control_block):
         """corner_sim이 부르는 모양은 `(netlist_path, control_block)` 두 인자다.
@@ -502,7 +510,9 @@ async def _run(args) -> dict:
             )
         else:
             try:
-                baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+                baseline_sweep = run_full_pvt_sweep(
+                    initial_netlist_texts, spec, sim_backend, log_event=state.log_event
+                )
             except Exception as exc:   # noqa: BLE001 - 근거는 아래 주석
                 # **가드가 없으면 여기서 터진 예외가 main()의
                 # write_result_json/write_report_md 두 줄을 그대로 건너뛴다.**
@@ -854,7 +864,9 @@ async def _run(args) -> dict:
             state.log_event("pvt_final_sweep", {"reused_from_optimization": True, **final_sweep})
         else:
             try:
-                final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
+                final_sweep = run_full_pvt_sweep(
+                    state.current_netlist_texts(), spec, sim_backend, log_event=state.log_event
+                )
             except Exception as exc:   # noqa: BLE001 - 근거는 진입 스윕 쪽 주석
                 # **가장 비싼 자리다.** 여기까지 오면 튜닝 루프가 이미 끝났고
                 # (two_stage_opamp 기준 103분) 최적화까지 돌았는데, 가드가

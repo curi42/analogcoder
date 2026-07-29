@@ -909,6 +909,18 @@ def verify_corners(
         for tb in testbenches
     }
 
+    # `log_event`는 여기서 넘기지 않는다 - **일부러**. `run_full_pvt_sweep`은
+    # 받으면 테스트벤치당 `corner_render` 이벤트를 낸다(cli.py의 진입/판정/
+    # 최적화-확인 스윕은 이제 그것을 `state.log_event`로 넘긴다), 하지만
+    # `analogcoder-curate`(cli_curate.py)에는 `RunState`도 `history.jsonl`도
+    # 없다 - 이 콘솔 스크립트는 `curation_report.md`/`curation.json`/
+    # `topology_candidate.py` 스니펫만 쓰고 그 이력 장치 자체를 갖지 않는다
+    # (아키텍처 문서: "이 스크립트는 라이브러리를 절대 쓰지 않는다" 절 참고).
+    # 억지로 로거를 만들어 붙이는 것은 이 함수 하나를 위해 새 상태 채널을
+    # 발명하는 것이므로 범위 밖으로 둔다 - 코너 렌더 상태(`states`)는 이
+    # 경로에서 여전히 관찰되지 않는다는 뜻이고, 그것이 문제가 되면(예: 이
+    # 큐레이션 스윕이 PWL 공급을 조용히 못 바꾸는 덱을 판정하게 되면) 그때
+    # `analogcoder-curate`에 로깅 장치를 새로 놓는 별도 작업이 되어야 한다.
     current_sweep = "candidate"
     try:
         candidate_sweep = run_full_pvt_sweep(candidate_texts, slot.spec, sim_backend)
