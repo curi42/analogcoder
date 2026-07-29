@@ -1447,6 +1447,24 @@ knob that decided the shipped proof case.
   **not applied**. Full diagnosis, the three excluded hypotheses, and the four
   decisions this needs:
   `docs/superpowers/specs/2026-07-30-two-stage-opamp-bistable-bias.md`.
+  **The contamination does not spread to `bandgap`, and that was measured, not
+  assumed.** `scripts/dc_solution_uniqueness.py` pushes the bias chain's initial
+  guess five ways — including **explicitly to the off state** — across four
+  device sizes: all six probes (`nbias`/`ncas`/`pbias`/`pcas`/`vbg1`/`vbg0`)
+  come back identical to displayed precision every time. So `BGR_CORE.Xsu_b`'s
+  trickle really does make the branch unique, exactly as the entry that added it
+  claims. Not a proof of uniqueness — five directions, not a dense size sweep,
+  and the op-amp's flip lived on *isolated* sizes. The control case is the
+  useful half: shrink `Xsu_b` from `W=0.42` to `0.2` and **no DC solution comes
+  out at all** under any of the five guesses. That row is recorded as **void**,
+  not as agreement — reading absent data as "the values matched" is the same
+  error shape as a gate that passes because it cannot fail. Writing that script
+  cost three silent failures with **exit code 0** each time (control block after
+  `.end` is ignored; one bad name in `print v(a) v(b)` discards the whole line;
+  re-reading the `.nodeset` line reports the value you injected as a
+  measurement, which produced a *false* multiple-solution result). Same family
+  as defect #10 — `re.sub`/`print`/an ignored block are all silent by
+  construction.
 - `benchmarks/two_stage_opamp/` — real transistor-level 2-stage CMOS op-amp
   (**sky130**, `.option scale=1.0u` plus `pdk_corner.inc`; it was generic
   level-1 before the 2026-07-26 PDK migration and this line said so until
