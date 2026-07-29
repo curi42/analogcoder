@@ -1098,12 +1098,96 @@ that number was measured.
   this repo's own convention, not an external requirement** — `report.py` and
   `cli.py` declare it and CLAUDE.md calls it locked; it was written when a full
   sweep cost 286 s, and that price is what made it free.
-  Still ahead, deliberately not done: sign-off corners are **opaque include
-  files**, not coordinates. The design fixes the order as *label-only first,
-  axes only after physical confirmation*, because deriving axis identity from a
-  filename would be the third instance of a mistake this repo has already
-  shipped twice (matching the literal basename `pdk_corner.inc`; recognising
-  the rail by `^Vdd`).
+  The label-only half of "sign-off corners are **opaque include files**, not
+  coordinates" **shipped 2026-07-29** (the axis half stays deliberately undone
+  until physical confirmation, because deriving axis identity from a filename
+  would be the third instance of a mistake this repo has already shipped twice
+  — matching the literal basename `pdk_corner.inc`; recognising the rail by
+  `^Vdd`). `CornerPoint` is now `corner_id` (required, derived from the
+  coordinates when there are any) + `payload` (absolute path to the file that
+  realises the corner, **whose contents are never read**) + the three
+  coordinates, optional and filled only by an axis declaration. `_as_point` and
+  `raw_label` had to change in the **same commit**: fix one and every corner
+  becomes `"(deck)"`, and `cli._argmax_drift` compares two label strings, so
+  `moved_count` is **permanently 0** — a metric that runs, never crashes, and
+  reports a conclusion nobody measured. Same defect class as D1's `0.000`.
+
+### The composed deck model
+
+- `compose.py` / `spec.py`'s `compose:` block — a testbench can be declared as
+  **fragments** (`signal declaration + corner + netlist`) instead of one file,
+  because that is how the production flow builds its final deck. On that path
+  corner rendering is **slot filling, not rewriting**: `render_corner_report`'s
+  three regexes do not exist there — the corner file sets models, temperature
+  and supply itself, and we place one `.include` naming it into the slot and
+  **count** that (`corner_slot_filled`). `_apply_corner_voltage`'s docstring
+  already said recognising the rail by the name `vdd` is a guess this repo
+  forbids and is genuinely wrong; the composed model removes that guess here.
+  **Only fragments are versioned** — composition happens just before
+  simulation, the `tunable: true` fragment is `Testbench.netlist_path`, so
+  `RunState`, checkpoint and `resolve_includes` consumers are untouched. Each
+  fragment absolutizes its includes **against its own directory**.
+- **The regexes leave and a quieter failure family arrives.** Every check in
+  `compose.py` came from a failure reproduced against real ngspice-46: a
+  fragment whose first line is a statement is eaten as the deck **title** and
+  vanishes (gain_db 19.999 → 100.0, zero warnings); directive-collision winner
+  rules differ per directive (`.model`/`.option`/`.subckt` first wins,
+  `.param`/`.temp` last wins, all silent) so **no safe fragment order exists**
+  and the collision itself is refused; a relative `.include` resolves against
+  cwd, not the deck's directory; a missing boundary newline after a comment
+  absorbs the next fragment's first line; a `.ends` **name** mismatch is silent
+  (a count mismatch is loud).
+- **`records` counts what was checked; the counts are not the gate.**
+  `corner_slot_filled == 1` says this path ran, not that 0 was reachable — a
+  composed testbench with 0 or 2 slots is refused at the declaration. The
+  counts exist so "composed, fine" and "the compose path is gone" differ.
+- **Where `netlist.py` already owns a parsing rule, import it — do not
+  re-derive it.** `compose.py` hand-copied the include rule and diverged **in
+  both directions**, in a file where `netlist.py` had written the warning
+  against exactly that (`simulators/cache.py` imports the regexes for this
+  reason). Measured: `.inc` — an abbreviation `_INCLUDE_RE` has always known —
+  bypassed the absolute-path gate entirely while `includes_checked` logged
+  `0`; and `.lib <section>` … `.endl`, the **definition** form that names no
+  file, was read as a path and falsely rejected. Separately, `.param rf = 10k`
+  (spaced, which ngspice accepts) made the collision key an **empty string**,
+  so a real collision was missed — confirmed in ngspice, silent, last wins —
+  while two spaced `.param`s with *different* names collided falsely, and
+  `directives_checked` read healthy throughout. All three were caught by
+  whole-branch review, not by a run.
+- **A boundary written in one entry point is not written.** The tuning loop
+  refuses a composed spec (`state.current_netlist_paths()` points at a single
+  fragment — no stimulus, no corner, not a circuit; measured on the fragment
+  view: `check_stimulus_untouched` approves a `Vin` change with
+  `approved=True`, i.e. the gate fails **open**; `supply_nets` empties and
+  `roles_on('vdd')` revives the `AMP drives vdd` false structural claim; a
+  `.option scale` on another fragment flips the same proposal's area verdict).
+  That refusal lived only in `cli._run`, so `analogcoder-curate` still opened
+  the fragment. One sentence now, in `spec.refuse_composed_testbenches`.
+- **A corner-rendering log that skips NOMINAL is wrong on this path.**
+  `_run_point` composes for NOMINAL too (there is no unrendered deck on disk),
+  so a composed testbench with a NOMINAL-only set used to compose and log
+  nothing.
+
+### Theory adoption — what has been tried and rejected
+
+- `docs/superpowers/specs/2026-07-29-theory-adoption-roadmap.md` is the plan;
+  each stage is adopted only against a **pre-registered** rule, and a rejected
+  stage's negative result is recorded rather than deleted.
+- **Stage 2 (Plackett–Burman screening): rejected, 12/22.** PB stays a
+  diagnostic and is never used to delete an axis.
+- **Stage 3 (trust-region DFO / MADS, `mads.py`): rejected** by the
+  pre-registered rule (corner-confirmed objective 212.2517 vs 212.4025), **but
+  the negative result is far narrower than the rule's sentence** and that was
+  measured, not argued. Positive-direction power was ~0: the best improvement
+  any searcher could show was 0.059%, below this repo's own measured 0.1%
+  noise tolerance. Two of the three targeted weaknesses (coupling, mixed
+  integer) could not fire at all — the ranking held one knob. And corner
+  blindness is undecidable in that harness by construction, since corner
+  information only arrives after the search ends. So **stage 4's precondition
+  is left open** — do not read this rejection as "search is not the
+  bottleneck". Before the next verdict: pre-register a minimum effect size,
+  use ≥2 knobs, and pick a configuration where recovery-chain density does not
+  dominate the metric.
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -1588,8 +1672,11 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1273 tests as of
-  2026-07-29).** It was ~69 s / 923 tests before the Stage-0 measurement work
+- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1405 tests as of
+  2026-07-29, after the composed-deck and MADS merges).** Note the count grew
+  1273 → 1405 while the wall clock stayed ~100 s — these are unit tests, so
+  read the *time* as the budget and the count as drift.
+  It was ~69 s / 923 tests before the Stage-0 measurement work
   (cache, parallel sweep, checkpoint/resume, history, json_io, the
   control-block gate) and the audit fixes, and before that
   ~45 s until topology curation added a real-ngspice test of its own
