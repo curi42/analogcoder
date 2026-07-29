@@ -567,7 +567,13 @@ async def _run(args) -> dict:
         # 다시 뽑을 스윕이 없고(진입 스윕은 재사용될 뿐이다), 뽑는다 해도 이
         # 지점에서는 재진입이 자라게 한 코너들이 이미 반영된 뒤라 원래 실행이
         # 뽑았던 값과 달라질 수 있다.
-        corner_state = CornerState(checkpoint.corner_set)
+        # `last_judged_corners`도 같은 이유로 체크포인트에서 그대로 옮긴다(C1) -
+        # 다시 뽑지 않으면 재개된 실행은 corner_sim이 처음 한 번 돌 때까지
+        # judged=None이고, 재개 경계가 BOUNDARY_OPTIMIZATION이면 그 한 번조차
+        # run_orchestration이 통째로 건너뛰어져 영영 안 찍힌다.
+        corner_state = CornerState(
+            checkpoint.corner_set, last_judged_corners=checkpoint.last_judged_corners
+        )
         seed_record = checkpoint.corner_seed
         state.log_event(
             "corner_set_restored",
@@ -706,6 +712,10 @@ async def _run(args) -> dict:
         `corner_seed`는 `seed_record`를 그대로 옮긴다 - 이번 실행이 새로 뽑았든
         (elif 분기) 앞선 실행의 체크포인트에서 물려받았든(if 분기, 위 T2 주석)
         같은 변수이므로 다음 경계까지 그대로 이어진다.
+        `last_judged_corners`도 `corner_set`과 같은 곳(`corner_state`)에서 매번
+        다시 읽는다 - C1: 담지 않으면 재개된 실행은 판정자가 마지막으로 실제
+        본 코너 집합을 잃고, 특히 BOUNDARY_OPTIMIZATION에서 재개하면
+        run_orchestration을 통째로 건너뛰어 다시 찍을 기회도 없다.
         """
         write_checkpoint(
             run_dir,
@@ -720,6 +730,9 @@ async def _run(args) -> dict:
                 corner_set=corner_state.corner_set if corner_state is not None else None,
                 grown_labels=grown_labels,
                 corner_seed=seed_record,
+                last_judged_corners=(
+                    corner_state.last_judged_corners if corner_state is not None else None
+                ),
                 progress=progress,
                 orchestration_result=orchestration_result,
             ),
@@ -979,10 +992,19 @@ async def _run(args) -> dict:
                 # 마지막 판정 이후에 승격된 코너는 지금 집합에는 있어도 아직
                 # 한 번도 판정된 적이 없다 - 거기서 실패가 나는 것은 두 경로가
                 # 의견이 갈린 것이 아니라, 중간 루프가 그 코너를 판정 대상에
-                # 넣은 적이 없다는 것뿐이다. last_judged_corners가 None이면
-                # (corner_sim이 아예 한 번도 안 돌았다는 뜻은 오늘 이 자리에
-                # 도달하지 않지만) 판단할 근거가 없으므로 안전한 방향인 기존
-                # 경로 불일치로 접는다.
+                # 넣은 적이 없다는 것뿐이다.
+                #
+                # `last_judged_corners`가 None이면(corner_sim이 이 실행에서 아직
+                # 한 번도 안 돌았다는 뜻 - 축소가 꺼진 스펙, 또는 옛 체크포인트를
+                # 읽은 재개처럼 스냅샷 자체가 없는 경우) **재시도하지 않는 것은
+                # 그대로 안전하지만, "마지막으로 판정한 시점에 이미 집합 안에
+                # 있었다"고 주장할 근거는 없다.** 그 코너가 판정된 적이 있는지
+                # 자체를 모르기 때문이다 - "판정됐다"와 "안 됐다" 둘 다 데이터가
+                # 없는데 전자로 단정하면 `OPAMP2STAGE drives vdd,vss`와 같은
+                # 모양의 근거 없는 구조적 주장이 된다. 아래에서 `judged is None`과
+                # `judged is not None`을 갈라 문구를 다르게 쓰는 이유가 이것이다 -
+                # 재시도하지 않는다는 **결론**은 같아도(둘 다 안전한 방향), 그
+                # 결론을 뒷받침하는 근거는 다르다.
                 judged = corner_state.last_judged_corners
                 stale = [
                     (name, corner) for name, corner in attributed
@@ -1030,15 +1052,41 @@ async def _run(args) -> dict:
                     "criteria": [name for name, _ in attributed],
                     "corners": [corner for _, corner in attributed],
                 }
-                state.log_event("corner_path_disagreement", path_disagreement)
-                pairs = ", ".join(f"{name} at {corner}" for name, corner in attributed)
-                result["failure_reason"] += (
-                    f" - path disagreement: every failing corner was already in the "
-                    f"mid-loop corner set at the time it was last judged ({pairs}), "
-                    f"so the mid-loop and the verdict sweep judged the same deck at "
-                    f"the same corner differently; retrying would re-run identical "
-                    f"information"
+                # `judged_snapshot_available`은 이 이벤트에만 실린다 -
+                # `result["corner_reduction"]["path_disagreement"]`은
+                # `path_disagreement` 변수를 그대로 쓰므로 그 모양은 건드리지
+                # 않는다(기존 소비자·테스트가 `{"criteria", "corners"}` 두 키만
+                # 기대한다). 대신 history.jsonl 쪽에서 "진짜 불일치를 봤다"와
+                # "스냅샷이 없어 안전한 방향으로 접었다"를 구별할 수 있게 한다.
+                state.log_event(
+                    "corner_path_disagreement",
+                    {**path_disagreement, "judged_snapshot_available": judged is not None},
                 )
+                pairs = ", ".join(f"{name} at {corner}" for name, corner in attributed)
+                if judged is not None:
+                    result["failure_reason"] += (
+                        f" - path disagreement: every failing corner was already in the "
+                        f"mid-loop corner set at the time it was last judged ({pairs}), "
+                        f"so the mid-loop and the verdict sweep judged the same deck at "
+                        f"the same corner differently; retrying would re-run identical "
+                        f"information"
+                    )
+                else:
+                    # **주장을 낮춘다.** 스냅샷이 없으므로 "마지막으로 판정한
+                    # 시점에 이미 집합 안에 있었다"를 확인할 수 없다 - 아는 것은
+                    # "지금 집합 안에 있다"뿐이다. 재시도하지 않는 결론은 여전히
+                    # 안전한 방향이므로 바꾸지 않는다(모르는 상태에서 재시도해도
+                    # 근거가 늘지 않는다) - 하지만 그 결론을 "두 경로가 실제로
+                    # 다른 말을 했다"는 확인된 사실인 것처럼 적지 않는다.
+                    result["failure_reason"] += (
+                        f" - path disagreement (unconfirmed): every failing corner is "
+                        f"already in the mid-loop corner set ({pairs}), but this run has "
+                        f"no last-judged snapshot to compare against, so whether the "
+                        f"mid-loop actually judged that corner before is unknown rather "
+                        f"than confirmed; folding this into a path disagreement (no "
+                        f"retry) is the safe fallback, not a claim that the two paths "
+                        f"were observed to disagree"
+                    )
             else:
                 # 실패한 기준 어느 것에도 최악 코너가 붙지 않았다.
                 # worst_case_measurements는 어떤 코너에서도 측정값이 나오지 않은

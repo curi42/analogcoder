@@ -45,7 +45,17 @@ from analogcoder.state import RunState
 # null이 되어 이 수정이 고치려는 바로 그 침묵이 재개된 실행마다 재현된다.
 # 진행 중이던 실행은 처음부터 다시 돌아야 한다 - "재개는 최적화이지 정확성이
 # 아니다"라는 이 파일의 기존 규칙 그대로다.
-CHECKPOINT_SCHEMA_VERSION = 2
+#
+# 2 -> 3: `Checkpoint`에 `last_judged_corners`가 늘었다(C1, 전체-브랜치 리뷰).
+# **정확히 같은 이유로 올린다.** `corner_sim.CornerState.last_judged_corners`는
+# 판정자가 실제로 본 코너 집합의 승격 이전 스냅샷이고, cli.py의 재진입 분기가
+# 그것으로 (a) 경로 불일치 / (b) 탐침 승격 재진입 / (c) 판단 근거 없음을 가른다.
+# 옛 체크포인트는 이 필드를 몰라서 조용히 읽으면 재개된 실행은 항상
+# `judged=None`으로 시작하고, 재개 경계가 BOUNDARY_OPTIMIZATION이면
+# run_orchestration 전체가 건너뛰어져 스냅샷이 다시 찍힐 기회조차 없다 -
+# T10이 고친 거짓 `corner_path_disagreement` FAIL이 재개 실행에서만 되살아나는
+# 자리다. 조용히 읽어 주는 대신 재개를 거부해 처음부터 다시 돈다.
+CHECKPOINT_SCHEMA_VERSION = 3
 CHECKPOINT_FILENAME = "checkpoint.json"
 
 BOUNDARY_OUTER_ITERATION = "outer_iteration"
@@ -121,6 +131,14 @@ class Checkpoint:
     # (진입 스윕을 재사용할 뿐 다시 뽑을 스윕이 없다), 체크포인트가 이것을
     # 담지 않으면 재개된 실행에서 seed는 영원히 None이다.
     corner_seed: dict | None = None
+    # `corner_sim.CornerState.last_judged_corners`의 **스냅샷**(라벨 문자열의
+    # frozenset) - 판정자가 마지막으로 실제 본 코너 집합, 승격 이전. `corner_set`
+    # 에서 파생되지 **않는다**: 집합은 지금 코너들만 담고, 그중 어느 것이 아직
+    # 한 번도 판정된 적 없이 탐침 승격으로 들어왔는지는 거기서 되읽을 수 없다.
+    # cli.py의 재진입 분기는 이 구별로 (a) 경로 불일치(재시도 안 함)와 (b) 탐침
+    # 승격 재진입(재시도함)을 가른다 - 잃으면 (b)가 죽어 전부 (a)로 접히고,
+    # T10이 고친 거짓 FAIL이 되돌아온다(C1, 전체-브랜치 리뷰가 종단으로 재현).
+    last_judged_corners: "frozenset[str] | None" = None
     progress: LoopProgress | None = None
     orchestration_result: dict | None = None
     # `SimulatorBackend.identity()` - 이 실행이 무엇으로 시뮬레이션했는가.
@@ -175,6 +193,7 @@ def build_checkpoint(
     corner_set: CornerSet | None = None,
     grown_labels: list[list[str]] | None = None,
     corner_seed: dict | None = None,
+    last_judged_corners: "frozenset[str] | None" = None,
     progress: LoopProgress | None = None,
     orchestration_result: dict | None = None,
     simulator_identity: str | None = None,
@@ -193,6 +212,9 @@ def build_checkpoint(
         corner_set=corner_set,
         grown_labels=[list(g) for g in (grown_labels or [])],
         corner_seed=dict(corner_seed) if corner_seed is not None else None,
+        last_judged_corners=(
+            frozenset(last_judged_corners) if last_judged_corners is not None else None
+        ),
         progress=progress,
         orchestration_result=orchestration_result,
         simulator_identity=simulator_identity,
@@ -294,6 +316,21 @@ def _corner_set_from_payload(raw) -> CornerSet | None:
     )
 
 
+def _last_judged_payload(judged: "frozenset[str] | None"):
+    """정렬된 리스트로 - JSON에는 frozenset이 없고, 정렬은 같은 집합이 같은
+    바이트를 내게 하기 위해서다(다른 `corner_seed`/`grown_labels` 직렬화와 같은
+    이유)."""
+    if judged is None:
+        return None
+    return sorted(judged)
+
+
+def _last_judged_from_payload(raw) -> "frozenset[str] | None":
+    if raw is None:
+        return None
+    return frozenset(raw)
+
+
 def _progress_payload(progress: LoopProgress | None):
     if progress is None:
         return None
@@ -343,6 +380,10 @@ def to_payload(checkpoint: Checkpoint) -> dict:
         # "축소가 꺼져 있었다"와 "체크포인트가 이 필드를 잊었다"를 사후에
         # 구별할 수 없다.
         "corner_seed": dict(checkpoint.corner_seed) if checkpoint.corner_seed is not None else None,
+        # **무조건 나간다** - corner_seed와 같은 규칙. 조건부로 쓰면 `null`
+        # ("이번 회차에 아직 아무것도 판정하지 않았다")과 필드의 부재("체크포인트가
+        # 이 필드를 모른다")가 같아진다.
+        "last_judged_corners": _last_judged_payload(checkpoint.last_judged_corners),
         "progress": _progress_payload(checkpoint.progress),
         "orchestration_result": checkpoint.orchestration_result,
         # **무조건 나간다.** 조건부로 쓰면 `null` 과 "필드가 통째로 없다" 가
@@ -367,6 +408,7 @@ def from_payload(payload: dict) -> Checkpoint:
         corner_seed=(
             dict(payload["corner_seed"]) if payload.get("corner_seed") is not None else None
         ),
+        last_judged_corners=_last_judged_from_payload(payload.get("last_judged_corners")),
         progress=_progress_from_payload(payload.get("progress")),
         orchestration_result=payload.get("orchestration_result"),
         simulator_identity=payload.get("simulator_identity"),

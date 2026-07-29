@@ -326,7 +326,21 @@ def build_corner_simulate(
             # 탐침이 실패하면 `cs`가 승격되어 재배정되지만, 방금 계산한
             # measurements/corner_worst는 승격 이전 집합의 최악값이다 - 스냅샷은
             # 그 사실을 그대로 담아야 한다.
-            corner_state.last_judged_corners = frozenset(label(p) for p in cs.corners)
+            #
+            # **`probe_frozen`일 때는 찍지 않는다(I4, 전체-브랜치 리뷰).**
+            # `optimizer._search`도 이 콜러블을 부르지만(CornerState는 메인 루프와
+            # 일부러 공유되는 상자다), 얼려져 있는 동안은 탐침도 승격도 없다 -
+            # cli.py의 재진입 분기가 이 스냅샷으로 가르는 두 갈래(경로 불일치 대
+            # 탐침 승격 재진입) 자체가 발생할 수 없다. 그런데도 여기서 무조건
+            # 덮어쓰면, "last_judged"라는 이름이 약속하는 것("판정자가 본
+            # 코너")과 실제 동작("simulate_fn을 누가 부르든 마지막으로 부른 자가
+            # 기록")이 갈라진다 - 오늘은 `cs.corners`가 얼려진 동안 바뀌지 않으니
+            # 값이 같아 무해하지만, 그것은 이 필드의 계약이 지켜져서가 아니라
+            # 우연이다. cli.py는 최적화가 끝난 뒤에도 메인 루프가 남긴 스냅샷을
+            # 그대로 읽어야 하므로, 얼려진 동안은 건드리지 않는 편이 안전한
+            # 방향이다.
+            if not corner_state.probe_frozen:
+                corner_state.last_judged_corners = frozenset(label(p) for p in cs.corners)
 
             # 탐침의 판정·승격·기록은 테스트벤치 루프가 **끝난 뒤** 정확히 한 번이다.
             # 루프 안으로 들어가면 테스트벤치 하나 분량의 측정값으로 판정하게 되어

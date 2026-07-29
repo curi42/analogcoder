@@ -200,6 +200,33 @@ def test_a_corner_seed_of_none_round_trips_as_none_not_as_a_missing_key(tmp_path
     assert payload["corner_seed"] is None
 
 
+def test_the_last_judged_corners_snapshot_round_trips_through_json(tmp_path):
+    """C1: `corner_sim.CornerState.last_judged_corners`가 체크포인트에 안 실리면
+    재개된 실행은 `judged=None`으로 시작하고, cli.py의 재진입 분기가 (b) 탐침
+    승격 재진입을 (a) 경로 불일치로 오진한다 - T10이 고친 거짓 FAIL이 재개
+    실행에서만 되살아나는 자리였다(전체-브랜치 리뷰가 종단으로 재현)."""
+    spec_path, spec = make_spec(tmp_path)
+    judged = frozenset({"(deck)", "fs/1.98/125.0"})
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, last_judged_corners=judged)
+
+    back = from_payload(json.loads(json.dumps(to_payload(cp))))
+
+    assert back.last_judged_corners == judged
+
+
+def test_a_last_judged_corners_of_none_round_trips_as_none_not_as_a_missing_key(tmp_path):
+    """`corner_seed`와 같은 규칙 - 키가 조건부로 나가면 `null`("이번 회차에
+    아직 아무것도 판정하지 않았다")과 필드의 부재(체크포인트가 이 필드를
+    모른다)가 같아진다."""
+    spec_path, spec = make_spec(tmp_path)
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, last_judged_corners=None)
+
+    payload = to_payload(cp)
+
+    assert "last_judged_corners" in payload
+    assert payload["last_judged_corners"] is None
+
+
 def test_a_corner_set_payload_that_breaks_an_invariant_is_refused_on_load(tmp_path):
     """CornerSet.__post_init__을 통과시켜 되살린다 - 역직렬화가 불변식을 우회하는
     뒷문이 되면 next_probe가 이미 선택된 코너를 또 고른다."""

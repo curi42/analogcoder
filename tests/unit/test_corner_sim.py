@@ -385,6 +385,28 @@ async def test_a_failing_probe_is_promoted_into_the_selected_set(tmp_path):
     assert FS in holder.corner_set.corners
 
 
+async def test_the_judged_snapshot_is_taken_before_promotion_not_after(tmp_path):
+    """C1/I3: `last_judged_corners`는 판정자가 실제로 본 집합의 **승격 이전**
+    스냅샷이어야 한다 - cli.py의 재진입 분기가 경로 불일치와 탐침 승격 재진입을
+    그것으로 가른다. 여기서는 탐침(FS)이 실패해 승격되지만, 그 이터레이션의
+    판정자는 NOMINAL만 봤으므로 스냅샷에는 FS가 없어야 한다.
+
+    **반증 확인**: `corner_sim.py`의 스냅샷 줄을 승격 블록 뒤로 옮기면(전체-브랜치
+    리뷰가 실제로 이렇게 해서 결함을 되살렸다) 이 단언이 깨진다 - `last_judged_corners`에
+    FS가 들어가 버린다."""
+    state = _state(tmp_path)
+    holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)))
+    sim = build_corner_simulate(
+        _agent(), _backend([{"g": 50.0}, {"g": 10.0}]), state, holder, _noop_log
+    )
+
+    await sim({"tb": DECK}, _spec_ge_40())
+
+    assert FS in holder.corner_set.corners            # 승격은 실제로 일어났다
+    assert holder.last_judged_corners == frozenset({"(deck)"})
+    assert "fs/1.98/125.0" not in holder.last_judged_corners
+
+
 async def test_a_passing_probe_is_not_promoted(tmp_path):
     state = _state(tmp_path)
     holder = CornerState(CornerSet(corners=(NOMINAL,), probe_order=(FS,)))
@@ -746,6 +768,26 @@ async def test_a_frozen_box_runs_no_probe_and_promotes_nothing(tmp_path):
     assert FS not in holder.corner_set.corners
     assert holder.corner_set.probe_index == 0         # 회전도 진행되지 않는다
     assert [step for step, _ in events] == []
+
+
+async def test_a_frozen_box_does_not_touch_the_judged_snapshot(tmp_path):
+    """I4: `optimizer._search`가 이 콜러블을 부르는 동안(`probe_frozen=True`)은
+    탐침도 승격도 없으므로 `last_judged_corners`를 건드릴 이유가 없다 - 얼려진
+    동안 스냅샷이 계속 갱신되면 필드 이름("판정자가 마지막으로 본 집합")과
+    실제 동작("simulate_fn을 누가 부르든 마지막으로 부른 자가 기록")이 갈라진다.
+    메인 루프가 남긴 스냅샷을 미리 채워 두고, 얼려진 채로 한 번 더 불러도
+    그 값이 그대로인지 본다."""
+    state = _state(tmp_path)
+    holder = CornerState(
+        CornerSet(corners=(NOMINAL,), probe_order=(FS,)),
+        last_judged_corners=frozenset({"main-loop-snapshot"}),
+        probe_frozen=True,
+    )
+    sim = build_corner_simulate(_agent(), _backend([{"g": 50.0}]), state, holder, _noop_log)
+
+    await sim({"tb": DECK}, _spec_ge_40())
+
+    assert holder.last_judged_corners == frozenset({"main-loop-snapshot"})
 
 
 async def test_unfreezing_the_box_resumes_the_rotation(tmp_path):
