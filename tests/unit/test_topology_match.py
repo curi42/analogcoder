@@ -93,13 +93,32 @@ def _reasons(rejections, topology_id):
 
 
 def test_a_five_port_topology_is_rejected_for_a_nine_port_block():
+    """**거부되는 사유가 포트 규칙 자체는 아니다.** `bc53d9e` 이후 포트 규칙은
+    `topo_ports <= block_ports`(부분집합)이므로 5포트 본문은 9포트 블록의 포트
+    검사를 통과한다. 여기서 거부되는 실제 이유는 `DECK_9`가 `AMP`를 어디서도
+    인스턴스화하지 않아 남는 네 포트가 뜰지를 판정할 근거가 없기 때문이다
+    (실측 detail: "block 'AMP' has no instance anywhere in this testbench, so
+    whether leftover port(s) ['nbias','ncas','pbias','pcas'] would float cannot
+    be judged"). 같은 사실을 정면으로 다루는 것이
+    `test_a_definition_with_no_instance_and_leftover_ports_is_rejected`이고,
+    포트 부분집합이 실제로 통과하는 모양은
+    `test_a_candidate_whose_ports_are_a_subset_is_allowed`가 고정한다."""
     cands, rej = compatible_swaps({"tb": DECK_9}, LIB, set())
     assert cands == [SwapCandidate(block_path="AMP", topology_id="nine_port")]
     assert _reasons(rej, "five_port") == {"ports"}
 
 
 def test_a_nine_port_topology_is_rejected_for_a_five_port_block():
-    """양방향 확인 - 한 방향만 보는 구현은 여기서 걸린다."""
+    """포트 규칙이 **유지하는 한 방향**(`topo_ports <= block_ports`)을 고정한다.
+
+    이 독스트링은 원래 "양방향 확인"이라고 적혀 있었으나 그것은 `bc53d9e`
+    이전(완전 집합 동등) 규칙의 서술이고 오늘 코드는 단방향 부분집합이다 -
+    CLAUDE.md에 남아 있는 것과 같은 드리프트라서 여기서 정정한다. 이 테스트가
+    잡는 것은 남은 그 한 방향을 마저 지운 구현이다: 후보가 블록에 없는 포트를
+    요구하면(9포트 후보 vs 5포트 블록) 여전히 거부되어야 한다. 반대 방향
+    (블록이 후보보다 포트를 더 가짐)은 **의도적으로 허용**되며 그쪽을 고정하는
+    것은 `test_a_candidate_whose_ports_are_a_subset_is_allowed`와
+    `test_a_five_port_body_really_does_land_in_a_nine_port_block`이다."""
     cands, rej = compatible_swaps({"tb": DECK_5}, LIB, set())
     assert cands == [SwapCandidate(block_path="AMP", topology_id="five_port")]
     assert _reasons(rej, "nine_port") == {"ports"}
