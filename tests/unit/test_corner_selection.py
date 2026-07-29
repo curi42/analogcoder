@@ -6,6 +6,7 @@ from analogcoder.corner_selection import (
     NOMINAL,
     CornerSet,
     _as_point,
+    coverage_seed,
     grown_with,
     label,
     next_probe,
@@ -14,7 +15,7 @@ from analogcoder.corner_selection import (
     seed_from_sweep,
 )
 from analogcoder.pvt import CornerPoint, corner_fields as _corner_fields
-from analogcoder.spec import PVTCorners
+from analogcoder.spec import CoverageConfig, Criterion, PVTCorners
 
 FS = CornerPoint(process="fs", voltage=1.98, temperature=125.0)
 SF = CornerPoint(process="sf", voltage=1.62, temperature=-40.0)
@@ -280,3 +281,84 @@ def test_no_entry_at_all_is_no_name_at_all():
     """`None`은 "그 기준에 최악 코너 항목이 없다"이고 `(deck)`은 "항목은
     있는데 좌표가 없다"다. 서로 다른 사실이다."""
     assert raw_label(None) is None
+
+
+# --------------------------------------------- ε-근접 피복 씨앗 (coverage_seed)
+
+
+def _per_corner(rows):
+    """rows: [(CornerPoint, {measurement: value}), ...] -> per_corner 항목들."""
+    from analogcoder.pvt import corner_fields
+
+    return [{"corner": corner_fields(c), "measurements": m, "severity": 0.0}
+            for c, m in rows]
+
+
+_GAIN = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)
+_PM = Criterion(name="pm", measurement="p", operator=">=", threshold=60.0)
+
+
+def test_two_corners_within_epsilon_of_each_others_worst_collapse_to_one():
+    """이것이 이 함수의 존재 이유다. argmax 피복에서 집합은 서로소이므로
+    (기준마다 argmax 가 하나) 코너를 줄일 수 없다. ε-근접이 집합을 겹치게
+    만든다: FS 가 gain 의 최악이고 SS 가 pm 의 최악인데, SS 의 gain 이 FS 의
+    gain 에서 ε 이내이면 SS 하나가 둘 다 덮는다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 70.0}),
+        (SS, {"g": 41.02, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.01, tau=1.0))
+
+    assert chosen == [SS]
+    assert record["covered"] == 2 and record["total"] == 2
+    assert label(FS) in record["dropped"]
+
+
+def test_epsilon_zero_reproduces_the_argmax_union():
+    """ε=0 이면 각 기준의 최악값과 **정확히** 같은 코너만 덮으므로 오늘의
+    씨앗과 같은 집합이 나온다. 이것이 회귀 안전선이다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 70.0}),
+        (SS, {"g": 45.0, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.0, tau=1.0))
+
+    assert set(chosen) == {FS, SS}
+    assert record["dropped"] == []
+
+
+def test_a_corner_with_no_measurement_is_not_approximated_by_any_other():
+    """측정값이 없다는 것은 회로가 거기서 동작하지 않는다는 가장 강한 증거다.
+    값이 있는 코너가 그것을 ε 으로 덮으면 그 사실이 사라진다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0}),
+        (SS, {}),          # g 측정값 없음
+    ])}
+
+    chosen, _ = coverage_seed(sweep, [_GAIN], CoverageConfig(epsilon=0.9, tau=1.0))
+
+    assert SS in chosen
+
+
+def test_tau_below_one_stops_early():
+    """예산 k 는 τ 에서 유도된다 - 정수 상한을 따로 두지 않는 이유다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 99.0}),
+        (SS, {"g": 99.0, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.0, tau=0.5))
+
+    assert len(chosen) == 1
+    assert record["covered"] == 1 and record["total"] == 2
+
+
+def test_an_empty_per_corner_yields_an_empty_seed_rather_than_guessing():
+    sweep = {"per_corner": []}
+
+    chosen, record = coverage_seed(sweep, [_GAIN], CoverageConfig(epsilon=0.03, tau=1.0))
+
+    assert chosen == []
+    assert record["covered"] == 0 and record["total"] == 1

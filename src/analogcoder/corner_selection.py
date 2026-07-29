@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, replace
 
 from analogcoder.pvt import CornerPoint
@@ -150,6 +151,94 @@ def _probe_order(sweep: dict, corners: tuple) -> tuple[CornerPoint, ...]:
         entries.append((entry.get("severity"), point))
     entries.sort(key=lambda e: (e[0] is None, e[0]))
     return tuple(point for _, point in entries)
+
+
+def _worst_of(values: list[float], operator: str) -> float:
+    """이 연산자에서 '가장 나쁜' 값. `>=`/`>` 면 작을수록 나쁘다."""
+    return min(values) if operator in (">=", ">") else max(values)
+
+
+def _is_missing(value) -> bool:
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def coverage_seed(sweep: dict, criteria: list, coverage) -> tuple[list, dict]:
+    """ε-근접 피복 위의 탐욕으로 코너 씨앗을 고른다.
+
+    **왜 argmax 합집합이 아닌가.** `worst_case_corners`는 기준 -> 코너
+    **하나**의 매핑이므로, 각 코너가 덮는 집합은 그 매핑의 역상이고 어떤 두
+    코너도 같은 기준을 덮지 않는다. 서로소이면 피복 함수가 가법적이라 탐욕이
+    정확히 최적이고 - 즉 부분모듈성이 내용을 갖지 않고 - 무엇보다 **피복률을
+    유지한 채 코너를 줄이는 것이 불가능하다.**
+
+    ε-근접("이 코너에서의 값이 최악값으로부터 상대 ε 이내")은 집합을 겹치게
+    만들어 그 자리를 살린다. 목적에도 더 충실하다 - 중간 루프가 원하는 것은
+    argmax 그 자체가 아니라 **위반을 드러내는 코너**이고, 최악에서 아주 조금
+    떨어진 코너는 같은 위반을 드러낸다(실측: 위반 11건이 ε=10%에서도 전부
+    보존됐다. 위반은 칼날이 아니라 띠다).
+
+    **측정값이 없는 코너는 근사되지 않는다.** 그 기준의 최악이고, 값이 있는
+    어떤 코너도 그것을 덮지 못한다 - 회로가 거기서 동작하지 않는다는 사실을
+    ε 으로 뭉개지 않는다.
+
+    돌려주는 기록의 `dropped`가 이 게이트의 무력 상태를 보이게 한다: ε 이
+    겹침을 전혀 만들지 못하면 `[]`이고, 그것이 "줄일 것이 없었다"를 말한다."""
+    entries = sweep.get("per_corner", [])
+    points = [_as_point(entry["corner"]) for entry in entries]
+    measurements = [entry.get("measurements", {}) for entry in entries]
+
+    # 코너 index -> 이 코너가 덮는 기준 이름들
+    sets: dict[int, set] = {i: set() for i in range(len(points))}
+    for criterion in criteria:
+        values = [m.get(criterion.measurement) for m in measurements]
+        missing = [i for i, v in enumerate(values) if _is_missing(v)]
+        if missing:
+            for i in missing:
+                sets[i].add(criterion.name)
+            continue
+        if not values:
+            continue
+        worst = _worst_of(values, criterion.operator)
+        scale = abs(worst) if worst else 1.0
+        for i, value in enumerate(values):
+            if abs(value - worst) <= coverage.epsilon * scale:
+                sets[i].add(criterion.name)
+
+    total = len(criteria)
+    target = math.ceil(coverage.tau * total)
+    covered: set = set()
+    chosen: list = []
+    remaining = dict(sets)
+    while len(covered) < target:
+        best, gain = None, 0
+        for i in sorted(remaining):
+            new = len(remaining[i] - covered)
+            if new > gain:
+                best, gain = i, new
+        if best is None:
+            break
+        chosen.append(points[best])
+        covered |= remaining.pop(best)
+
+    argmax_points = _argmax_points(sweep, criteria, points, measurements)
+    dropped = [label(p) for p in argmax_points if p not in chosen]
+    return chosen, {"covered": len(covered), "total": total, "dropped": dropped}
+
+
+def _argmax_points(sweep: dict, criteria: list, points: list, measurements: list) -> list:
+    """오늘의 씨앗이 골랐을 코너들. `dropped`를 계산하기 위해서만 쓴다."""
+    chosen = []
+    for criterion in criteria:
+        values = [m.get(criterion.measurement) for m in measurements]
+        if not values:
+            continue
+        missing = [i for i, v in enumerate(values) if _is_missing(v)]
+        index = missing[0] if missing else values.index(
+            _worst_of(values, criterion.operator)
+        )
+        if points[index] not in chosen:
+            chosen.append(points[index])
+    return chosen
 
 
 def seed_from_sweep(sweep: dict, spec) -> CornerSet:
