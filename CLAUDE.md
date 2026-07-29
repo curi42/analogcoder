@@ -785,6 +785,77 @@ that number was measured.
   is no confidence interval to shrink, and re-sampling is pure waste. What
   remains is a covering problem over a known finite grid, which is what
   `seed_from_sweep` (union of argmaxes) plus a rotating probe already is.
+- **The union of argmaxes IS a covering problem — but a degenerate one, and the
+  roadmap's adoption rule for improving it could not be satisfied.**
+  `sweep["worst_case_corners"]` maps criterion → **one** corner, so the set each
+  corner covers is that map's preimage and **no two corners cover the same
+  criterion**. Disjoint sets make the coverage function *modular*, not merely
+  submodular: greedy is exactly optimal, the (1−1/e) guarantee has no gap to
+  close, and — decisively — **you cannot drop a corner without dropping every
+  criterion it covered**. The pre-registered rule was "fewer simulations at the
+  same coverage rate", which under disjointness has no satisfying case at all.
+  Same shape as D1's `0.000`; caught before running rather than after.
+- **ε-근접 피복 is what makes the sets overlap**, declared per spec:
+  `corner_reduction.coverage: {epsilon, tau}`. Corner `c` covers criterion `j`
+  iff `|value_j(c) − worst_j| ≤ ε·|worst_j|`. Absent block ⇒ today's argmax
+  union, and the selected `CornerSet` is **byte-identical** (verified over 603
+  cases: three real coverage-less specs × 200 randomised sweeps × three
+  missing-measurement densities, zero mismatches). **ε and τ have no code-side
+  default** — they are derived per deck, so moving to another deck is a
+  re-declaration rather than a code change. The budget `k` is derived from `τ`;
+  there is deliberately no `max_corners` integer cap.
+- **`scale = abs(worst)` with no fallback: a criterion whose worst is `0.0` is
+  covered only by an exact tie.** An `or 1.0` fallback silently turns ε from a
+  *relative* into an *absolute* tolerance for that criterion, in raw units, via
+  a constant derived from nothing. Failing closed here only ever grows the seed,
+  which is the safe direction. **A corner with no measurement is never
+  approximated** — "the circuit does not work here" is not smoothed away by ε.
+- **The cost this buys is small and measured: zero missed violations at every ε
+  up to 0.1, across 11 violation instances** (`benchmarks/bandgap/spec_pvt.yaml`
+  entry deck plus three perturbed decks, `scripts/coverage_feasibility.py`).
+  The reason is physical: **a violation is a band, not a knife edge** — a
+  criterion failing at its worst corner generally fails at neighbouring corners
+  too, so dropping the exact argmax rarely loses the violation. The first
+  attempt to measure this was **void** and that is recorded: on the entry deck
+  both corner-carrying specs pass everywhere, so "violations caught" was `0 of
+  22` and "missed" could only ever return 0. The mid loop runs on decks the
+  tuner *moved*; that is where the measurement belongs.
+- **`seed_from_sweep` now returns `(CornerSet, record)`** and `cli.py` logs the
+  record as `corner_seed` **unconditionally, including on the argmax path** —
+  otherwise "chose the old way" and "the logging code is gone" are the same
+  silence. `dropped` is the field that answers "what does this look like when
+  the gate does nothing?": empty means ε created no overlap. `by_criterion` is
+  **omitted** in coverage mode rather than emitted, because it is an argmax
+  attribution and in coverage mode it can name a corner that is not in the set —
+  the `OPAMP2STAGE drives vdd,vss` error shape. `points_per_tb` is the
+  algorithm's metric and mirrors `corner_sim._probe_enabled`; parallel-wave and
+  wall-clock numbers are **deployment facts tied to worker count** and are
+  deliberately not logged as if they were algorithmic.
+- **Where this actually pays is decided by criteria count, not corner count, and
+  the repo's benchmarks are mostly outside that regime.** The mid loop
+  parallelises corners but not testbenches, so cost is
+  `#testbenches × ceil(points_per_tb / workers)` — reducing corners buys nothing
+  once `points_per_tb` fits in one wave. Measured at 9 workers: `spec_pvt` 45
+  corners × 22 criteria → argmax seed 9, 11 pts/tb, **10 waves → 5 at ε=0.03**;
+  `spec_corner_reduction` 9 × 22 → seed 6, 8 pts/tb, **5 waves at every ε**
+  (nothing to buy); `two_stage_opamp/spec_pvt` 45 × **7** → seed 5, 7 pts/tb,
+  **4 waves at every ε** — the highest corner/criteria ratio in the repo and
+  still no room, because the seed tracks *criteria*. Exactly one shipped spec is
+  in the regime on this hardware, and **the regime boundary moves with
+  `cpu_count`** — which is why the adoption metric is `points_per_tb`, not waves.
+- **`scripts/search_ab.py` refuses a non-`argmax` corner regime, and that
+  refusal is the eleventh entry in this file's silently-inert ledger — caught in
+  review, not shipped.** The harness calls `run_optimization` directly; it never
+  enters the corner-reduced tuning loop, `optimizer.py` has zero
+  `corner_reduction` references, and `spec.corner_reduction.coverage` is read in
+  exactly one place (`seed_from_sweep`) reachable from exactly one caller
+  (`cli.py`). A `coverage:` regime therefore mutated a field nothing in that
+  call graph read **while the record named the regime** — two sides running the
+  same circuit and a comparison file asserting they differed. In the one file
+  whose only job is producing trustworthy comparisons. It now refuses at the
+  boundary and names what would have to change, the same shape as `5764abe`.
+  **A consequence worth stating plainly: the stage-1 × stage-3 factorial cannot
+  be run until that harness drives the reduced loop.**
 
 ### Deterministic netlist derivation, and what the tuner is shown
 
@@ -1354,6 +1425,16 @@ knob that decided the shipped proof case.
   `min(#criteria, #corners)` and this spec has 22 criteria (see "Corner
   reduction and re-entry" under Architecture). `spec_pvt.yaml`'s 45-corner grid
   is untouched.
+  `spec_corner_coverage.yaml` is that file plus a `coverage:` block
+  (`epsilon: 0.03`, `tau: 1.0`) and nothing else — the ε-근접 피복 counterpart,
+  and the pair is meant to be run against each other. **It is deliberately the
+  spec where ε-coverage buys no wall clock** (8 points/tb already fits one wave
+  of 9 workers, so both copies cost 5 waves), because the question it answers is
+  safety, not speed: does the locked asymmetry survive, and does re-entry behave
+  the same. ε = 0.03 is derived — measured, the largest ε holding missed
+  violations at zero is ≥ 0.1 — and on this grid it cuts the seed 6 → 2, so the
+  coverage path demonstrably fires; if it did not, the run would be void rather
+  than a verdict.
   `netlist_seed_topology.cir` / `spec_seed_topology.yaml` are the seed that
   **only a topology swap fixes**. The deck is `netlist_loops.cir` with `BUF_P`'s
   body replaced verbatim by `BUF_N`'s — an NMOS-input fold put where the
@@ -1696,10 +1777,10 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1405 tests as of
-  2026-07-29, after the composed-deck and MADS merges).** Note the count grew
-  1273 → 1405 while the wall clock stayed ~100 s — these are unit tests, so
-  read the *time* as the budget and the count as drift.
+- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1441 tests as of
+  2026-07-29, after the composed-deck, MADS and ε-coverage merges).** Note the
+  count grew 1273 → 1441 while the wall clock stayed ~100 s — these are unit
+  tests, so read the *time* as the budget and the count as drift.
   It was ~69 s / 923 tests before the Stage-0 measurement work
   (cache, parallel sweep, checkpoint/resume, history, json_io, the
   control-block gate) and the audit fixes, and before that

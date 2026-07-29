@@ -1,0 +1,275 @@
+# spec_corner_reduction.yaml 의 사본이고 차이는 **하나**다: corner_reduction 에
+# `coverage:` 블록을 더했다. 씨앗을 기준별 argmax 합집합 대신 ε-근접 피복 위의
+# 탐욕으로 고른다.
+#
+# **왜 하필 이 스펙인가 - 여기서는 벽시계가 바뀌지 않기 때문이다.** 중간 루프는
+# 코너를 병렬로 돌리되 테스트벤치는 병렬 바깥이므로 비용이
+# `테스트벤치 수 x ceil(테스트벤치당 점 / 워커)` 로 움직인다. 이 격자는
+# 테스트벤치당 점이 이미 워커 수 안에 들어가서(실측: argmax 씨앗 6 -> 8점/tb,
+# 워커 9) 씨앗을 줄여도 웨이브가 5 그대로다. 성능이 바뀌지 않는 자리이므로
+# **안전성만** 본다: 잠긴 비대칭(중간 FAIL 이 전체 스윕에서 재현되는가)과
+# 재진입 동작이 argmax 사본과 같은지.
+#
+# **ε 은 이 덱에서 유도된 값이다.** `scripts/coverage_feasibility.py` 실측으로
+# 놓친 위반이 0 을 유지하는 최대 ε 이 >= 0.1 이고, 0.03 은 그 아래로 3배 여유를
+# 둔 값이다. 그리고 이 격자에서 ε=0.03 은 씨앗을 6 -> 2 로 줄이므로 피복 경로가
+# 실제로 발화한다 - 줄지 않으면 이 실행은 판정이 아니라 무효다.
+# 코너 축소·재진입의 종단 테스트용 스펙. spec_pvt.yaml의 복사본이며 다른 점은
+# 셋뿐이다: pvt_corners를 45개에서 9개로 줄이고, corner_reduction 블록을 더하고,
+# optimize 블록을 뺐다. 기준과 임계값은 spec_pvt.yaml 그대로 - 이 격자에서도
+# 전부 통과한다(실측, 아래).
+#
+# **왜 코너를 줄이는가.** 축소·재진입 메커니즘은 코너 개수와 무관하다 -
+# seed_from_sweep은 기준별 최악 코너의 합집합을 뽑고, grown_with는 실패한
+# 기준의 최악 코너를 더할 뿐이며, 둘 다 전체 격자의 크기를 읽지 않는다. 45코너
+# 스윕은 한 번에 ~290초이고 그 비용은 test_optimizer_bandgap_ngspice.py가 이미
+# 치른다. spec_pvt.yaml의 45코너 격자는 손대지 않는다.
+#
+# **왜 3x3이고 3x1이 아닌가 - 실측으로 정해졌다.** 처음 계획은 process 축만
+# 3개(tt/ss/ff)로 두고 V/T를 고정하는 것이었다. 그렇게 재 봤더니 씨앗이
+# **3코너 전부**였다(vbgout/vbg0/vbg1/psrr/... 는 ff, tc/startup/droop 은 ss,
+# vbg1_residual 은 tt). 축소가 하나도 일어나지 않는다. 이유는 임계값이 아니라
+# 개수다: 씨앗은 기준별 argmax의 합집합이므로 크기가
+# min(기준 수, 코너 수)로 막히고, 이 스펙은 기준이 22개라 코너가 3개뿐이면
+# 합집합이 격자 전체가 되는 것이 정상이다. **기준 하나를 조여도 이건 바뀌지
+# 않는다** - seed_from_sweep은 overall_pass도 임계값도 읽지 않고 argmax만
+# 본다. 격자를 키우는 것이 유일한 레버라서 voltage 축(+-10%)을 되살렸다.
+# 실측 결과 9코너 중 씨앗은 6개(ff x 3, ss x 3), 밖에 남는 것은 tt 3개다.
+#
+# **optimize를 뺀 이유.** 이 스펙이 재는 것은 축소와 재진입이지 최적화가
+# 아니다. 최적화를 끼우면 탐색 길이만큼 실행 시간이 예측 불가능해진다.
+pvt_corners:
+  process: ["tt", "ss", "ff"]
+  voltage: [1.62, 1.8, 1.98]
+  temperature: [27]
+corner_reduction:
+  enabled: true
+  retry_budget: 2
+  probe: true
+  coverage:
+    epsilon: 0.03
+    tau: 1.0
+circuit_name: bandgap
+testbenches:
+  - name: dc_tc
+    netlist: netlist.cir
+    analyses: ["dc"]
+    control_block: |
+      .control
+      dc temp -40 125 1
+      meas dc vmax MAX v(vbgout)
+      meas dc vmin MIN v(vbgout)
+      meas dc vbgout_v FIND v(vbgout) AT=27
+      meas dc vbg0_v FIND v(vbg0) AT=27
+      meas dc vbg1_v FIND v(vbg1) AT=27
+      meas dc idd FIND i(Vdd) AT=27
+      let tc_ppm_per_c = (vmax-vmin)/(vbgout_v*165)*1e6
+      let iq_ua = -1e6*idd
+      print vbgout_v vbg0_v vbg1_v iq_ua tc_ppm_per_c
+      .endc
+    criteria:
+      # measured 1.2337 .. 1.2451 V
+      - name: vbgout_min
+        measurement: vbgout_v
+        operator: ">="
+        threshold: 1.20
+        unit: V
+      - name: vbgout_max
+        measurement: vbgout_v
+        operator: "<="
+        threshold: 1.28
+        unit: V
+      # measured 0.49772 .. 0.50374 V
+      - name: vbg0_min
+        measurement: vbg0_v
+        operator: ">="
+        threshold: 0.475
+        unit: V
+      - name: vbg0_max
+        measurement: vbg0_v
+        operator: "<="
+        threshold: 0.525
+        unit: V
+      # measured 1.1959 .. 1.2054 V
+      - name: vbg1_min
+        measurement: vbg1_v
+        operator: ">="
+        threshold: 1.14
+        unit: V
+      - name: vbg1_max
+        measurement: vbg1_v
+        operator: "<="
+        threshold: 1.26
+        unit: V
+      # measured 31.3 .. 53.9 ppm/C
+      - name: temperature_coefficient
+        measurement: tc_ppm_per_c
+        operator: "<="
+        threshold: 70.0
+        unit: ppm/C
+      # measured 193 .. 235 uA. Deliberately loose: this circuit is the input
+      # to the later area/current minimisation sub-project, so it should have
+      # room to be optimised rather than already sit against its limit.
+      - name: quiescent_current
+        measurement: iq_ua
+        operator: "<="
+        threshold: 300.0
+        unit: uA
+
+  - name: startup
+    netlist: netlist_startup.cir
+    analyses: ["tran"]
+    control_block: |
+      .control
+      tran 20n 100u uic
+      meas tran t_up WHEN v(vbgout)=1.15 RISE=1
+      let startup_time = t_up
+      print startup_time
+      .endc
+    criteria:
+      # measured 74.8ns .. 9.75us; the slow end is sf/1.62V/-40C
+      - name: startup_time
+        measurement: startup_time
+        operator: "<="
+        threshold: 0.00002
+        unit: s
+
+  - name: psrr
+    netlist: netlist_psrr.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 10meg
+      meas ac psrr_bg_db FIND vdb(vbgout) AT=1
+      .endc
+    criteria:
+      # measured -51.1 .. -31.0 dB
+      - name: psrr_dc
+        measurement: psrr_bg_db
+        operator: "<="
+        threshold: -25.0
+        unit: dB
+
+  - name: settling
+    netlist: netlist_settling.cir
+    analyses: ["tran"]
+    control_block: |
+      .control
+      tran 2n 5u
+      meas tran v0pre  FIND v(vbg0) AT=0.9u
+      meas tran v1pre  FIND v(vbg1) AT=0.9u
+      meas tran v0post FIND v(vbg0) AT=1.5u
+      meas tran v1post FIND v(vbg1) AT=1.5u
+      meas tran v0dip  MIN v(vbg0) FROM=1u TO=1.5u
+      meas tran v1dip  MIN v(vbg1) FROM=1u TO=1.5u
+      let vbg0_droop_mv = (v0pre-v0dip)*1e3
+      let vbg1_droop_mv = (v1pre-v1dip)*1e3
+      let vbg0_resid_mv = abs(v0post-v0pre)*1e3
+      let vbg1_resid_mv = abs(v1post-v1pre)*1e3
+      print vbg0_droop_mv vbg1_droop_mv vbg0_resid_mv vbg1_resid_mv
+      .endc
+    criteria:
+      # measured 17.0 .. 31.6 mV
+      - name: vbg0_droop
+        measurement: vbg0_droop_mv
+        operator: "<="
+        threshold: 50.0
+        unit: mV
+      # measured 19.6 .. 27.8 mV
+      - name: vbg1_droop
+        measurement: vbg1_droop_mv
+        operator: "<="
+        threshold: 50.0
+        unit: mV
+      # measured <1 mV everywhere: this is the "did it actually re-settle"
+      # guard rather than a discriminating criterion at baseline.
+      - name: vbg0_residual
+        measurement: vbg0_resid_mv
+        operator: "<="
+        threshold: 5.0
+        unit: mV
+      - name: vbg1_residual
+        measurement: vbg1_resid_mv
+        operator: "<="
+        threshold: 5.0
+        unit: mV
+
+  - name: amp_loops
+    netlist: netlist_loops.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      set units=degrees
+      alter @Vsc[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(ampout)-vdb(mpgate)
+      let tph  = vp(ampout)-vp(mpgate)
+      meas ac core_gain_db FIND tmag AT=1
+      meas ac core_pm_deg  FIND tph WHEN tmag=0
+      alter @Vsc[acmag] = 0
+      alter @Vst[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vfb)-vdb(trm_i)
+      let tph  = vp(vfb)-vp(trm_i)
+      meas ac trim_gain_db FIND tmag AT=1
+      meas ac trim_pm_deg  FIND tph WHEN tmag=0
+      alter @Vst[acmag] = 0
+      alter @Vs1[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vbg1)-vdb(b1_i)
+      let tph  = vp(vbg1)-vp(b1_i)
+      meas ac buf1_gain_db FIND tmag AT=1
+      meas ac buf1_pm_deg  FIND tph WHEN tmag=0
+      alter @Vs1[acmag] = 0
+      alter @Vs0[acmag] = 1
+      ac dec 20 1 100meg
+      let tmag = vdb(vbg0)-vdb(b0_i)
+      let tph  = vp(vbg0)-vp(b0_i)
+      meas ac buf0_gain_db FIND tmag AT=1
+      meas ac buf0_pm_deg  FIND tph WHEN tmag=0
+      .endc
+    criteria:
+      # measured 45.2 .. 65.1 dB / 58.3 .. 78.4 deg
+      - name: core_loop_gain
+        measurement: core_gain_db
+        operator: ">="
+        threshold: 40.0
+        unit: dB
+      - name: core_phase_margin
+        measurement: core_pm_deg
+        operator: ">="
+        threshold: 50.0
+        unit: deg
+      # measured 76.9 .. 95.9 dB / 78.8 .. 86.2 deg
+      - name: trim_loop_gain
+        measurement: trim_gain_db
+        operator: ">="
+        threshold: 60.0
+        unit: dB
+      - name: trim_phase_margin
+        measurement: trim_pm_deg
+        operator: ">="
+        threshold: 70.0
+        unit: deg
+      # measured 88.4 .. 105.9 dB / 94.0 .. 111.9 deg
+      - name: buf1_loop_gain
+        measurement: buf1_gain_db
+        operator: ">="
+        threshold: 70.0
+        unit: dB
+      - name: buf1_phase_margin
+        measurement: buf1_pm_deg
+        operator: ">="
+        threshold: 80.0
+        unit: deg
+      # measured 74.9 .. 104.9 dB / 91.4 .. 112.1 deg
+      - name: buf0_loop_gain
+        measurement: buf0_gain_db
+        operator: ">="
+        threshold: 60.0
+        unit: dB
+      - name: buf0_phase_margin
+        measurement: buf0_pm_deg
+        operator: ">="
+        threshold: 80.0
+        unit: deg
