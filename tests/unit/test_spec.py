@@ -1,5 +1,7 @@
 import textwrap
 
+import pytest
+
 from analogcoder.spec import load_spec
 
 SPEC_YAML = textwrap.dedent("""\
@@ -557,3 +559,126 @@ def test_the_axis_check_does_not_constrain_process_label_content(tmp_path):
         """))
 
     assert spec.pvt_corners.process == ["worst_speed", "worst_power"]
+
+
+# --------------------------- 코너를 **열거로** 선언한다
+
+# 대상 흐름에서 사인오프가 요구하는 것은 데카르트 곱 전체가 아니라 **사람이
+# 고른 서명 코너 N개**이고, 그 선택은 analogcoder 밖의 코드가 한다(사용자 확인,
+# 2026-07-29). 그러면 이 저장소가 받아야 하는 것은 곱이 아니라 목록이다.
+#
+# **목록은 곱을 표현할 수 있지만(전개해서 나열) 곱은 임의의 목록을 표현할 수
+# 없다.** 부분 격자 - 금지 조합이 빠진 집합 - 는 어떤 축 선언으로도 못 만든다.
+# 그래서 열거형이 두 세계의 정확한 공통 표현이고, 내부 표현을 그쪽으로 통일한다.
+# 축 선언은 로더에서 그 자리에 전개되는 **설탕**으로 남는다.
+#
+# 그래서 이후에 "곱으로 되돌리는 최적화"를 하면 안 된다 - 표현력이 줄어든다.
+
+
+def _spec_yaml(tmp_path, pvt_block):
+    deck = tmp_path / "n.cir"
+    deck.write_text("* t\n.end\n")
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "circuit_name: c\n"
+        "testbenches:\n"
+        "  - name: tb\n"
+        f"    netlist: {deck.name}\n"
+        "    analyses: ['ac']\n"
+        "    control_block: \".control\\nop\\n.endc\\n\"\n"
+        "    criteria:\n"
+        "      - name: gain\n"
+        "        measurement: gain\n"
+        "        operator: '>='\n"
+        "        threshold: 1.0\n"
+        f"{pvt_block}"
+    )
+    return str(path)
+
+
+def test_an_axis_declaration_is_expanded_into_an_enumeration(tmp_path):
+    path = _spec_yaml(
+        tmp_path,
+        "pvt_corners:\n  process: [tt, ss]\n  voltage: [1.62, 1.8]\n  temperature: [27]\n",
+    )
+
+    corners = load_spec(path).pvt_corners.corners
+
+    assert [(c.process, c.voltage, c.temperature) for c in corners] == [
+        ("tt", 1.62, 27.0),
+        ("tt", 1.8, 27.0),
+        ("ss", 1.62, 27.0),
+        ("ss", 1.8, 27.0),
+    ]
+
+
+def test_an_explicit_corner_list_is_taken_as_declared(tmp_path):
+    """사인오프 집합은 사람이 고른 것이므로 곱이 아니다. 이 셋은 어떤 축
+    선언으로도 만들 수 없다 - (tt,1.8) 과 (ss,1.62) 를 함께 담으면서
+    (tt,1.62) 와 (ss,1.8) 은 빼는 곱이 없다."""
+    path = _spec_yaml(
+        tmp_path,
+        "pvt_corners:\n"
+        "  corners:\n"
+        "    - {process: tt, voltage: 1.8, temperature: 27}\n"
+        "    - {process: ss, voltage: 1.62, temperature: 125}\n"
+        "    - {process: ff, voltage: 1.98, temperature: -40}\n",
+    )
+
+    corners = load_spec(path).pvt_corners.corners
+
+    assert [(c.process, c.voltage, c.temperature) for c in corners] == [
+        ("tt", 1.8, 27.0),
+        ("ss", 1.62, 125.0),
+        ("ff", 1.98, -40.0),
+    ]
+
+
+def test_declaring_both_shapes_is_refused(tmp_path):
+    """둘 다 있으면 어느 쪽이 이기는지 추측해야 한다. 이 저장소는 그런 자리에서
+    조용히 한쪽을 고르지 않는다."""
+    path = _spec_yaml(
+        tmp_path,
+        "pvt_corners:\n"
+        "  process: [tt]\n  voltage: [1.8]\n  temperature: [27]\n"
+        "  corners:\n    - {process: ss, voltage: 1.62, temperature: 125}\n",
+    )
+
+    with pytest.raises(ValueError, match="corners"):
+        load_spec(path)
+
+
+def test_an_empty_corner_list_is_refused(tmp_path):
+    """빈 목록은 "코너 없음"이 아니라 선언 실수다 - 코너가 없다는 뜻이라면
+    `pvt_corners` 블록 자체를 안 쓰면 된다(그 경우가 이미 있고 다르게 로그된다)."""
+    path = _spec_yaml(tmp_path, "pvt_corners:\n  corners: []\n")
+
+    with pytest.raises(ValueError, match="corners"):
+        load_spec(path)
+
+
+def test_a_duplicated_corner_in_the_list_is_refused(tmp_path):
+    """`CornerSet`이 중복을 불변식으로 거부하므로 여기서 통과시키면 나중에
+    진단이 ValueError로 바뀐다. 선언 자리에서 거부하는 편이 사유가 분명하다."""
+    path = _spec_yaml(
+        tmp_path,
+        "pvt_corners:\n"
+        "  corners:\n"
+        "    - {process: tt, voltage: 1.8, temperature: 27}\n"
+        "    - {process: tt, voltage: 1.8, temperature: 27}\n",
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_spec(path)
+
+
+def test_a_corner_entry_missing_a_coordinate_is_refused(tmp_path):
+    """오늘의 렌더러는 세 좌표를 전부 읽는다. 빠진 것을 기본값으로 채우면
+    N개 코너가 조용히 같은 조건을 돌 수 있다."""
+    path = _spec_yaml(
+        tmp_path,
+        "pvt_corners:\n  corners:\n    - {process: tt, voltage: 1.8}\n",
+    )
+
+    with pytest.raises(ValueError, match="temperature"):
+        load_spec(path)

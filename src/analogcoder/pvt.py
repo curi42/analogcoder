@@ -8,7 +8,7 @@ from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import parse_spice_value
 from analogcoder.simulators.cache import attach_log_event
 from analogcoder.simulators.parallel import map_points
-from analogcoder.spec import Criterion, PVTCorners
+from analogcoder.spec import CornerPoint, Criterion, PVTCorners
 
 
 class CornerRenderError(ValueError):
@@ -218,20 +218,12 @@ def render_corner_netlist(
     ).text
 
 
-@dataclass(frozen=True)
-class CornerPoint:
-    process: str
-    voltage: float
-    temperature: float
-
-
 def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
-    return [
-        CornerPoint(process=p, voltage=v, temperature=t)
-        for p in pvt.process
-        for v in pvt.voltage
-        for t in pvt.temperature
-    ]
+    """이제 **항등 함수**다. 곱의 전개는 `spec._load_pvt_corners`에서 한 번만
+    일어나고, 여기서 다시 곱을 만들면 명시 목록으로 선언된 부분 격자를
+    표현할 수 없다. 호출부를 그대로 두는 이유는 그 이름이 "스펙이 선언한
+    코너 전부"라는 뜻을 계속 말해 주기 때문이다."""
+    return list(pvt.corners)
 
 
 def _corner_fields(corner: CornerPoint | None) -> dict:

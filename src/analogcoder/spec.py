@@ -1,7 +1,28 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
+
+
+@dataclass(frozen=True)
+class CornerPoint:
+    """스윕할 한 점. **불변이며 필드로 비교·해시된다** - `CornerSet`의 집합
+    연산 전부가 그 위에 서 있다.
+
+    여기(스펙 모듈)에 사는 이유: 코너는 스펙이 **선언**하는 것이고, `pvt.py`는
+    그것을 렌더링하고 도는 쪽이다. 방향도 그렇게만 성립한다 - `pvt.py`가
+    `spec.py`를 import하므로 반대는 순환이다. `pvt`가 이 이름을 그대로
+    재수출하므로 `from analogcoder.pvt import CornerPoint`는 계속 동작한다.
+
+    **여기에 NaN을 절대 넣지 마라.** `NaN != NaN`이므로 그런 값은 자기
+    자신과도 같지 않고, 그러면 `point not in cs.corners`가 이미 있는 코너에
+    대해 참이 된다 - `grown_with`가 다시 추가하고 중복 검사가 진단을
+    `ValueError`로 바꾼다. 오늘 이것을 만드는 코드는 없다(좌표는 스펙에서
+    온다). 코너를 **측정**에서 유도하는 첫 사람을 위한 규칙이다."""
+
+    process: str
+    voltage: float
+    temperature: float
 
 
 @dataclass
@@ -15,9 +36,44 @@ class Criterion:
 
 @dataclass
 class PVTCorners:
-    process: list[str]
-    voltage: list[float]
-    temperature: list[float]
+    """스윕할 코너의 **열거**. 축 선언은 로더에서 여기로 전개되는 설탕이다.
+
+    **왜 곱이 아니라 목록인가.** 대상 흐름에서 사인오프가 요구하는 것은
+    데카르트 곱 전체가 아니라 **사람이 고른 서명 코너 N개**이고, 그 선택은
+    이 저장소 밖의 코드가 한다(2026-07-29 확인). 그런 부분 격자 - 금지 조합이
+    빠진 집합 - 는 **어떤 축 선언으로도 만들 수 없다.** 목록은 곱을 표현할 수
+    있지만(전개해서 나열) 곱은 임의의 목록을 표현할 수 없으므로, 열거형이 두
+    세계의 정확한 공통 표현이다.
+
+    그래서 **나중에 "곱으로 되돌리는 최적화"를 하면 안 된다** - 표현력이
+    줄어들고, 곱으로 코너를 생성하면 존재하지 않는 조합을 가리키게 된다.
+
+    `process`/`voltage`/`temperature`는 축 선언으로 만들어진 경우에만 채워지는
+    **원본 기록**이다. 명시 목록으로 선언되면 비어 있다 - 그 경우 축이라는
+    것이 존재하지 않기 때문이고, 없는 축을 열거에서 역산해 채우는 것은 이
+    저장소가 금지한 추측이다(파일명에서 축 정체성을 읽는 것과 같은 부류).
+    코너를 소비하는 코드는 `corners`만 읽는다.
+    """
+
+    corners: list[CornerPoint] | None = None
+    process: list[str] = field(default_factory=list)
+    voltage: list[float] = field(default_factory=list)
+    temperature: list[float] = field(default_factory=list)
+
+    def __post_init__(self):
+        """축만 주고 만들면 **여기서 한 번** 전개된다 - 곱은 생성 시점의
+        설탕이고, 그 뒤로는 아무도 곱을 다시 만들지 않는다.
+
+        전개를 생성자에 두는 이유는 `corners`가 유일한 진실이 되게 하기
+        위해서다. 소비자가 축을 읽어 곱을 다시 만들 수 있으면 명시 목록으로
+        선언된 부분 격자에서 그 경로가 조용히 틀린 코너 집합을 만든다."""
+        if self.corners is None:
+            self.corners = [
+                CornerPoint(process=p, voltage=v, temperature=t)
+                for p in self.process
+                for v in self.voltage
+                for t in self.temperature
+            ]
 
 
 @dataclass
@@ -129,6 +185,17 @@ def _load_pvt_corners(raw: dict) -> PVTCorners | None:
             f"{type(raw_pvt).__name__}: {raw_pvt!r}"
         )
 
+    if "corners" in raw_pvt:
+        # 축 선언과 명시 목록이 함께 있으면 어느 쪽이 이기는지 **추측해야**
+        # 한다. 이 저장소는 그런 자리에서 조용히 한쪽을 고르지 않는다.
+        axes_present = [k for k in ("process", "voltage", "temperature") if k in raw_pvt]
+        if axes_present:
+            raise ValueError(
+                f"pvt_corners declares both an explicit 'corners' list and the axis "
+                f"key(s) {axes_present} - declare one or the other, never both"
+            )
+        return _explicit_corners(raw_pvt["corners"])
+
     process = _axis(raw_pvt, "process")
     for entry in process:
         # 코너 이름은 include 파일 이름의 조각이 되므로 문자열이어야 한다.
@@ -152,11 +219,75 @@ def _load_pvt_corners(raw: dict) -> PVTCorners | None:
                 ) from None
         return out
 
+    # 전개는 PVTCorners.__post_init__ 이 한다 - 곱을 만드는 자리를 하나로 둔다.
     return PVTCorners(
         process=process,
         voltage=numbers("voltage"),
         temperature=numbers("temperature"),
     )
+
+
+def _explicit_corners(raw_corners) -> PVTCorners:
+    """사람이 고른 서명 코너 목록. 축 선언으로는 표현할 수 없는 부분 격자다.
+
+    `process`/`voltage`/`temperature`는 **비워 둔다**. 열거에서 축을 역산해
+    채우면 선언되지 않은 조합이 축 목록에 나타나고, 그것을 읽는 다음 사람이
+    "이 스펙은 곱을 돈다"고 읽는다. 없는 사실을 만들지 않는다.
+    """
+    if not isinstance(raw_corners, list):
+        raise ValueError(
+            f"pvt_corners.corners must be a list of corner mappings, not "
+            f"{type(raw_corners).__name__}: {raw_corners!r}"
+        )
+    if not raw_corners:
+        # 빈 목록은 "코너 없음"이 아니라 선언 실수다 - 코너를 안 돌 생각이면
+        # `pvt_corners` 블록을 안 쓰면 되고, 그 경우는 이미 따로 로그된다.
+        raise ValueError("pvt_corners.corners is empty - omit the pvt_corners block instead")
+
+    points: list[CornerPoint] = []
+    for index, entry in enumerate(raw_corners):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"pvt_corners.corners[{index}] must be a mapping with process/voltage/"
+                f"temperature, not {type(entry).__name__}: {entry!r}"
+            )
+        for key in ("process", "voltage", "temperature"):
+            if key not in entry:
+                # 빠진 좌표를 기본값으로 채우면 N개 코너가 조용히 같은 조건을
+                # 돌면서 코너별 값으로 보고된다.
+                raise ValueError(f"pvt_corners.corners[{index}] has no '{key}': {entry!r}")
+        if not isinstance(entry["process"], str):
+            raise ValueError(
+                f"pvt_corners.corners[{index}].process must be a string, not "
+                f"{type(entry['process']).__name__}: {entry['process']!r}"
+            )
+        numbers = {}
+        for key in ("voltage", "temperature"):
+            try:
+                numbers[key] = float(entry[key])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"pvt_corners.corners[{index}].{key} must be a number, not {entry[key]!r}"
+                ) from None
+        points.append(
+            CornerPoint(
+                process=entry["process"],
+                voltage=numbers["voltage"],
+                temperature=numbers["temperature"],
+            )
+        )
+
+    # `CornerSet`이 중복을 불변식으로 거부하므로, 통과시키면 나중에 진단이
+    # `ValueError`로 바뀌어 사유가 흐려진다. 선언 자리에서 거부한다.
+    seen: set[CornerPoint] = set()
+    for point in points:
+        if point in seen:
+            raise ValueError(
+                f"pvt_corners.corners has a duplicate corner: "
+                f"{point.process}/{point.voltage}/{point.temperature}"
+            )
+        seen.add(point)
+    return PVTCorners(corners=points)
 
 
 def _load_optimize(raw: dict) -> OptimizeSpec | None:
