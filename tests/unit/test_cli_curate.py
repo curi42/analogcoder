@@ -717,7 +717,7 @@ testbenches:
       .endc
     criteria:
       - name: r1_value_2
-        measurement: r1v
+        measurement: r1v_2
         operator: ">="
         threshold: 100.0
 """
