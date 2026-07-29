@@ -156,6 +156,23 @@ class OptimizeSpec:
     guard_band: float
 
 
+@dataclass(frozen=True)
+class CoverageConfig:
+    """ε-근접 피복으로 코너 씨앗을 고를 때의 두 값.
+
+    **둘 다 스펙이 선언해야 하고 기본값이 없다.** `epsilon`은 이 덱에서
+    유도되는 값이지 상수가 아니다 - 코드가 하나 골라 두면 근거 없는 숫자가
+    다른 덱까지 따라간다. 이 저장소가 가드 밴드와
+    `COMPARISON_REL_TOLERANCE`를 정한 방식과 같은 규율이다.
+
+    `tau`는 목표 피복률이고 예산 k는 여기서 **유도**된다. 정수 상한
+    (`max_corners`)을 두지 않는 이유는 사람이 고르는 것이 숫자가 아니라
+    "기준의 몇 %를 보겠는가"라는 뜻이 있는 값이어야 하기 때문이다."""
+
+    epsilon: float
+    tau: float
+
+
 @dataclass
 class CornerReduction:
     """중간 반복의 코너 축소 설정.
@@ -167,6 +184,10 @@ class CornerReduction:
     enabled: bool = True
     retry_budget: int = 2
     probe: bool = True
+    coverage: CoverageConfig | None = None
+    """`None`이면 오늘의 argmax 합집합 - 씨앗이 바이트 동일하다. 기본값
+    객체를 넣지 않는 것은 '선언하지 않았다'와 '기본값으로 선언했다'를
+    구별하기 위해서다."""
 
 
 @dataclass(frozen=True)
@@ -489,10 +510,49 @@ def _load_corner_reduction(raw: dict) -> CornerReduction | None:
             f"negative budget silently behaves as 0 (no re-entry at all)"
         )
 
+    raw_coverage = block.get("coverage")
+    coverage = None
+    if raw_coverage is not None:
+        if not isinstance(raw_coverage, dict):
+            raise ValueError(
+                f"corner_reduction.coverage must be a mapping with 'epsilon' and 'tau', "
+                f"not {type(raw_coverage).__name__}: {raw_coverage!r}"
+            )
+        for key in ("epsilon", "tau"):
+            if key not in raw_coverage:
+                raise ValueError(
+                    f"corner_reduction.coverage.{key} is required - it is derived from "
+                    f"this deck's own measurements, so a code-side default would carry "
+                    f"an ungrounded number to every other deck"
+                )
+            if isinstance(raw_coverage[key], bool) or not isinstance(
+                raw_coverage[key], (int, float)
+            ):
+                raise ValueError(
+                    f"corner_reduction.coverage.{key} must be a number, not "
+                    f"{type(raw_coverage[key]).__name__}: {raw_coverage[key]!r}"
+                )
+        epsilon = float(raw_coverage["epsilon"])
+        tau = float(raw_coverage["tau"])
+        if not 0.0 <= epsilon <= 1.0:
+            raise ValueError(
+                f"corner_reduction.coverage.epsilon must be in [0, 1], got {epsilon}: "
+                f"a negative tolerance has no meaning, and above 1.0 every corner covers "
+                f"every criterion, collapsing the seed to one corner while the log still "
+                f"reads normal"
+            )
+        if not 0.0 < tau <= 1.0:
+            raise ValueError(
+                f"corner_reduction.coverage.tau must be in (0, 1], got {tau}: "
+                f"tau is the fraction of criteria the seed must cover, and 0 covers none"
+            )
+        coverage = CoverageConfig(epsilon=epsilon, tau=tau)
+
     return CornerReduction(
         enabled=get_bool("enabled", True),
         retry_budget=retry_budget,
         probe=get_bool("probe", True),
+        coverage=coverage,
     )
 
 
