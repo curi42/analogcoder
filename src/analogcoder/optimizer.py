@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area import total_area
@@ -38,6 +38,19 @@ class OptimizerAgents:
     #
     # frozen이 아닌 것은 의도다: 테스트가 구성 후에 대입한다.
     verify_corners: Callable | None = None
+    # 탐색 전략. None이면 coordinate_descent - 오늘까지의 동작 그대로다.
+    # 이름으로 고르는 쪽은 SEARCH_STRATEGIES를 쓴다(scripts/search_ab.py).
+    search_strategy: "SearchStrategy | None" = None
+    # 노브 순위를 **고정**으로 주입한다. 주지 않으면(None) propose를 부른다 -
+    # 기본 경로는 바뀌지 않는다.
+    #
+    # 이것이 있는 이유는 하나다: 탐색기를 비교할 때 실행에서 LLM을 통째로
+    # 빼기 위해서다. SPICE는 결정론적이므로 LLM만 빠지면 실행 전체가
+    # 결정론적이 되고, 두 전략의 차이를 표본 몇 개로 판정할 수 있다 -
+    # 그것이 로드맵 단계 3·4의 판정 방식이다. LLM이 남아 있으면 같은 입력에
+    # 다른 순위가 나오고(이 저장소는 한 넷리스트에서 93/26/1개의 역할을 받은
+    # 전례가 있다), 그 분산이 탐색기 차이보다 커진다.
+    knob_ranking: list[dict] | None = None
 
 
 def _next_value(current: float, integer: bool, direction: str) -> float | None:
@@ -340,6 +353,559 @@ def _bisect_last_passing(
     return lo, passing[lo]
 
 
+# ---------------------------------------------------------------------------
+# 탐색 이음매 - 오라클 / 전략 / 수락 규칙
+#
+# 셋은 한 함수(_search) 안에 뭉쳐 있었다. 그 상태에서는 다른 탐색기를 꽂아
+# 비교할 자리가 없다 - 로드맵 단계 3(신뢰영역 DFO)도 단계 4(제약 베이지안
+# 최적화)도 "현행보다 나은가"를 물어야 하는데, 현행을 떼어낼 수 없으면 그
+# 질문 자체가 성립하지 않는다. 그래서 나눈다. 나누는 선은 **비용과 권한**이다:
+#
+#   - **오라클**은 비싼 쪽이다. 후보를 덱에 적용하고, 시뮬레이션을 돌리고,
+#     기준 판정·목적값·면적이라는 **사실**을 모아 온다. 아무것도 판정하지 않는다.
+#   - **전략**은 싼 쪽이다. 어떤 후보를 어떤 순서로 시도할지만 정한다. 오늘의
+#     전략은 좌표 하강(coordinate_descent)이다: 순위대로 한 번에 한 노브,
+#     기하는 ×STEP_RATIO, 개수는 ±1.
+#   - **수락 규칙**(accept_step)은 결정론적이고 전략 **밖**에 있다. 전략은
+#     제안할 뿐 수락을 정하지 못한다.
+#
+# 마지막 줄이 이 분리의 전부다. 이 저장소의 전제는 "판정하는 층은 교체 가능하지
+# 않다"이고(오케스트레이터가 자유 텍스트를 파싱하지 않는 것도, 튜너에게 구조
+# 저작을 금하는 것도 같은 규칙이다), 전략은 언젠가 LLM이 될 수도 있는 자리다.
+# 전략에게 "이 후보는 좋다"고 말할 권한을 주면 - 예컨대 전략이 스스로 목적값을
+# 비교해 push/rollback을 부르게 하면 - 그 경계가 사라지고, 마진을 다 태운 덱이나
+# 면적 예산을 넘긴 덱이 아무 게이트도 거치지 않고 실행의 결과가 될 수 있다.
+# **다시 합치지 말 것.** 합칠 때 사라지는 것은 코드 몇 줄이 아니라 그 경계다.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Knob:
+    """전략이 움직일 수 있는 노브 하나. **값이 없다** - OPTIMIZER_SCHEMA가
+    후보에 값을 싣는 것을 구조적으로 금하고, 얼마나 움직일지는 전략이 덱의
+    현재 값에서 정한다."""
+
+    refdes: str
+    param: str
+    direction: str
+
+
+@dataclass(frozen=True)
+class KnobState:
+    """덱에서 읽은 그 노브의 현재 상태. 오라클만 만든다 - 전략이 넷리스트를
+    직접 파싱하기 시작하면 주소 지정 게이트를 우회하는 경로가 생긴다."""
+
+    # 덱에 **실제로 적힌 철자**다(_deck_token 참고). 제안의 철자를 그대로 쓰면
+    # 대소문자가 섞인 덱에서 apply_changes가 토큰을 하나 더 붙인다.
+    token: str
+    value: float
+    # 개수 파라미터인가(m/nf에 도달하는가). 이름이 아니라 도달하는 토큰에서
+    # 나온다 - area_limits와 같은 함수를 쓰므로 갈라질 수 없다.
+    integer: bool
+
+
+@dataclass(frozen=True)
+class ProposedStep:
+    """전략이 오라클에게 재 달라고 내미는 한 조각. 여러 개를 한 번에 낼 수
+    있다 - 오늘의 전략은 언제나 하나지만, 노브 간 결합을 보는 탐색기(단계 3·4)는
+    한 후보가 여러 노브를 동시에 옮긴다. check_area_growth와 apply_changes가
+    이미 목록을 받으므로 이쪽만 목록이면 된다."""
+
+    knob: Knob
+    state: KnobState
+    value: float
+
+
+@dataclass
+class Evaluation:
+    """후보 하나를 재고 나온 **사실들**. 판정은 하나도 들어 있지 않다.
+
+    blocked만 예외처럼 보이지만 그것도 사실이다 - "여기까지밖에 못 쟀고 이유는
+    이것"이다. 수락 규칙이 그 사유를 거절 사유로 읽는다."""
+
+    # 버전을 밀었는가. 거절되면 되돌려야 하므로 호출자가 알아야 한다.
+    pushed: bool = False
+    changes: list[dict] = field(default_factory=list)
+    area: float | None = None
+    objective: float | None = None
+    measurements: dict | None = None
+    verdict: dict | None = None
+    violations: list[str] = field(default_factory=list)
+    gate: str | None = None
+    # 끝까지 재지 못한 사유: 에어리어 게이트, 면적 예산, 시뮬레이션 실패.
+    blocked: str | None = None
+
+
+@dataclass(frozen=True)
+class StepOutcome:
+    """전략이 한 단계를 시도하고 돌려받는 것. 수락 **여부**만 알려 준다 -
+    전략이 그것을 정하지 않았다는 사실이 반환값의 방향에 드러난다."""
+
+    accepted: bool
+    reason: str | None
+    objective: float | None
+
+
+def area_within_budget(area: float, area_before: float, budget: float) -> tuple[bool, str | None]:
+    """면적 예산 검사. 수락 규칙의 일부이지만 **오라클이 앞당겨** 부른다.
+
+    앞당기는 이유는 비용이다: 면적은 파생이라 공짜고 목적값은 재야 아는데,
+    예산을 넘긴 후보에 시뮬레이션을 쓸 이유가 없다. 그래도 규칙 자체는 이
+    함수 하나에만 있으므로 오라클이 판정을 **하는** 것은 아니다 - 규칙을
+    부르고 그 답을 사실로 들고 올 뿐이다.
+
+    area_before가 0이면 비율이 정의되지 않아 예산이 통째로 꺼진다. 실제로
+    도달하는 경우이고(래퍼 셀 덱), _optimize가 area_coverage로 그 사실을
+    이력과 결과에 남긴다."""
+    if area_before > 0 and area / area_before > budget:
+        return False, (
+            f"area {area:g} is {area / area_before:.3f}x the starting area, "
+            f"over the {budget:g}x budget"
+        )
+    return True, None
+
+
+def accept_step(
+    evaluation: Evaluation, best_objective: float, objective_name: str
+) -> tuple[bool, str | None]:
+    """수락 규칙. (수락할까, 아니면 왜 안 되는가).
+
+    **결정론적이고 전략 밖에 있다.** 전략을 바꿔도 이 함수는 바뀌지 않는다.
+
+    기존 루프의 verify_post를 쓰지 않는 이유도 그대로다: 그쪽 계약은
+    "나빠졌으면 롤백"인데 좋은 최적화 단계는 **의도적으로** 마진을 소비하므로,
+    재사용하면 성공한 축소마다 롤백이 난다.
+
+    순서가 규칙의 일부다. 오라클이 끝까지 재지 못한 사유가 가장 먼저다 -
+    그때는 verdict도 objective도 없어서 뒤의 검사가 성립하지 않는다."""
+    if evaluation.blocked is not None:
+        return False, evaluation.blocked
+    if not evaluation.verdict["overall_pass"]:
+        return False, f"criteria no longer pass: {evaluation.verdict['summary']}"
+    if evaluation.violations:
+        # 통과했더라도 여유분을 다 태웠으면 수락하지 않는다. 임계값에 바짝
+        # 붙은 채로 멈추면 코너와 모델 변동에서 무너진다.
+        return False, "; ".join(evaluation.violations)
+    if evaluation.objective is None:
+        return False, f"objective {objective_name!r} is not among the measurements"
+    if evaluation.objective >= best_objective:
+        return False, (
+            f"objective {evaluation.objective:g} is not below the current best {best_objective:g}"
+        )
+    return True, None
+
+
+class SearchOracle:
+    """후보를 **재는** 쪽. 비싼 부분이고, 아무것도 판정하지 않는다.
+
+    전략이 넷리스트에 닿는 유일한 통로다. 네 개의 주소 지정 게이트가 전부
+    여기서 도는 이유가 그것이다 - 전략이 직접 apply_changes를 부를 수 있으면
+    게이트를 우회하는 경로가 생기고, 그 우회는 탐색기를 하나 새로 쓸 때마다
+    다시 열린다."""
+
+    def __init__(
+        self,
+        spec,
+        state,
+        agents: OptimizerAgents,
+        canonical_name: str,
+        baseline_components: dict,
+        area_before: float,
+        allowances: dict[str, float],
+    ) -> None:
+        self._spec = spec
+        self._state = state
+        self._agents = agents
+        self._canonical_name = canonical_name
+        self._baseline_components = baseline_components
+        self._area_before = area_before
+        self._allowances = allowances
+        self._simulations = 0
+
+    @property
+    def simulations(self) -> int:
+        """이 오라클이 실제로 쓴 시뮬레이션 수. 두 전략을 같은 예산에서
+        비교하려면 "몇 번 쟀는가"가 결과에 들어와야 한다."""
+        return self._simulations
+
+    def knob_state(self, refdes: str, param: str) -> tuple[KnobState | None, str | None, str | None]:
+        """(상태, 막은 게이트, 사유). 시뮬레이션을 쓰지 않는다.
+
+        게이트가 값 읽기보다 **앞**에 온다. 뒤에 두면 해석 불가능한 refdes가
+        "현재 값을 못 읽었다"로 보고되어, 실제 원인(그런 소자가 없다/모호하다)을
+        자기 게이트가 말하지 못한다."""
+        current_text = self._state.current_netlist_texts()[self._canonical_name]
+        gate, feedback = _gate_addressing(current_text, {"refdes": refdes, "param": param})
+        if gate is not None:
+            return None, gate, feedback
+
+        # 값 읽기와 정수 판정 둘 다 index_baseline_components의 색인을 쓴다.
+        # 같은 표를 쓰지 않으면 "어느 소자의 값을 읽어 한 단계 옮기는가"와
+        # "어느 소자가 편집되는가"가 갈라질 수 있다 - 이 저장소가 이미 두 번
+        # 닫은 넷리스트 해소 이중화 결함의 더 나쁜 판본이다.
+        component = index_baseline_components(current_text).get(refdes)
+        token = _deck_token(component, param) if component is not None else None
+        if token is None:
+            # 게이트는 통과했는데 그 소자 줄에는 이 이름이 없다. 실재하는
+            # 경로다: check_param_applicability의 **동료 규칙**이 bandgap의
+            # `Xq1.m`을 admit 한다(Xq1은 m=을 안 쓰지만 같은 모델의 Xq8이
+            # m=8을 쓰고, m이 이미터 면적비를 정하는 유일한 노브다). 적용
+            # 가능한 것은 맞지만 **출발 값이 없다** - 여기서 기본값을 지어내는
+            # 것이 이 프로젝트가 금하는 추측이다. "값을 못 읽었다"와 한 문장으로
+            # 뭉치면, 해소 불가능한 표현식(`W='wn*2'`)과 같은 사유로 보여
+            # 진단이 갈라진다.
+            return None, None, (
+                f"{refdes} does not write {param!r} on its own line, so there is no "
+                f"current value to step from (a same-model peer writes it, which is why "
+                f"the applicability gate admits it - but the starting value is not "
+                f"something to invent)"
+            )
+        value = _current_value(component, token)
+        if value is None:
+            return None, None, (
+                f"cannot read a numeric current value for {refdes}.{param} in the netlist"
+            )
+        return KnobState(token=token, value=value, integer=is_count_param(component, token)), None, None
+
+    async def evaluate(self, steps: list[ProposedStep]) -> Evaluation:
+        """후보 하나를 끝까지 재고 사실만 돌려준다. 수락도 롤백도 하지 않는다.
+
+        롤백을 여기서 하지 않는 것은 의도다 - 수락 규칙이 아직 안 돌았으므로
+        되돌릴지 말지를 이 자리에서는 알 수 없다. Evaluation.pushed가 호출자에게
+        그 책임을 넘긴다."""
+        evaluation = Evaluation()
+        current_texts = self._state.current_netlist_texts()
+        # param이 아니라 **덱에 적힌 철자**(token)로 쓴다 - _deck_token 참고.
+        evaluation.changes = [
+            {
+                "refdes": step.knob.refdes,
+                "param": step.state.token,
+                "new_value": _format_value(step.value, step.state.integer),
+            }
+            for step in steps
+        ]
+
+        # 에어리어 게이트만 new_value를 읽으므로 값이 정해진 뒤에 온다.
+        area_ok, area_feedback = check_area_growth(self._baseline_components, evaluation.changes)
+        if not area_ok:
+            evaluation.gate = "area"
+            evaluation.blocked = area_feedback
+            return evaluation
+
+        new_texts = {
+            name: apply_changes(text, evaluation.changes) for name, text in current_texts.items()
+        }
+        self._state.push_netlist_version(new_texts)
+        evaluation.pushed = True
+
+        # 에어리어는 파생이라 공짜지만 목적값은 재야 안다. 그 비대칭이 이
+        # 루프를 감당 가능하게 만드는 전부다 - 예산 초과는 시뮬레이션 앞에서
+        # 걸러진다.
+        evaluation.area = total_area(new_texts[self._canonical_name]).area
+        within, budget_reason = area_within_budget(
+            evaluation.area, self._area_before, self._spec.optimize.area_budget
+        )
+        if not within:
+            evaluation.blocked = budget_reason
+            return evaluation
+
+        self._simulations += 1
+        step_sim, sim_failure = await _run_simulation(self._agents.simulate, new_texts, self._spec)
+        if step_sim is None:
+            # 회로가 시뮬레이터를 통과하지 못하는 지점까지 갔다는 뜻이다
+            # (예: sky130 소자 bin을 벗어난 폭). 여기서 예외가 새어 나가면
+            # 통과한 실행이 크래시가 된다.
+            evaluation.blocked = sim_failure
+            return evaluation
+
+        evaluation.measurements = step_sim["measurements"]
+        evaluation.verdict = evaluate_criteria(evaluation.measurements, self._spec.all_criteria)
+        evaluation.violations = guard_band_violations(
+            evaluation.measurements, self._spec.all_criteria, self._allowances
+        )
+        evaluation.objective = evaluation.measurements.get(self._spec.optimize.objective)
+        return evaluation
+
+
+class SearchRun:
+    """전략이 보는 세계 전부. 노브 목록, 남은 예산, 그리고 후보를 시도하는 문.
+
+    전략은 여기서 수락 **결과**를 읽을 수 있지만 수락을 **정할** 수는 없다 -
+    attempt가 accept_step을 부르고, 롤백과 버전 기록과 이력 이벤트까지 전부
+    이 클래스가 한다. 전략이 할 수 있는 일은 "다음에 무엇을 시도할까"뿐이다."""
+
+    def __init__(
+        self,
+        spec,
+        state,
+        oracle: SearchOracle,
+        knobs: list[Knob],
+        canonical_name: str,
+        objective_before: float,
+        records: dict,
+        max_steps: int,
+    ) -> None:
+        self.knobs = list(knobs)
+        self._records = records
+        self._accepted = 0
+        self._rejected = 0
+        self._best_objective = objective_before
+        self._spec = spec
+        self._state = state
+        self._oracle = oracle
+        self._canonical_name = canonical_name
+        self._max_steps = max_steps
+        self._steps = 0
+
+    # 아래 넷은 **읽기 전용**이다. 전략이 대입할 수 있으면 "제안만 한다"는
+    # 계약이 문서상의 약속으로 내려앉는다 - best_objective를 올려 두면 더
+    # 나쁜 후보가 수락되고, accepted를 조작하면 실행이 보고하는 수락 수가
+    # 돌려주는 넷리스트를 설명하지 못한다(이 저장소가 final_criteria에서
+    # 이미 한 번 겪은 모양이다). 파이썬에서 완전한 봉인은 불가능하지만,
+    # 대입이 AttributeError로 즉시 터지는 것과 조용히 먹히는 것은 다르다.
+    @property
+    def accepted(self) -> int:
+        return self._accepted
+
+    @property
+    def rejected(self) -> int:
+        return self._rejected
+
+    @property
+    def best_objective(self) -> float:
+        """지금까지 수락된 가장 낮은 목적값. 수락 규칙의 기준점이다."""
+        return self._best_objective
+
+    @property
+    def records(self) -> dict:
+        """버전 인덱스 → 그 버전에서 잰 값. 이분 탐색이 착지한 버전을 보고할
+        때 읽는다."""
+        return self._records
+
+    @property
+    def steps_taken(self) -> int:
+        return self._steps
+
+    @property
+    def remaining_steps(self) -> int:
+        """남은 시도 횟수. 예산은 **전역**이다 - 노브마다가 아니다."""
+        return self._max_steps - self._steps
+
+    @property
+    def simulations(self) -> int:
+        return self._oracle.simulations
+
+    def spend_step(self, knob: Knob) -> bool:
+        """한 단계를 쓸 수 있으면 True. 없으면 사유를 남기고 False.
+
+        전략은 False를 받으면 **통째로** 멈춰야 한다. 예산이 전역이므로 다음
+        노브로 넘어가도 달라지는 것이 없다.
+
+        "예산이 떨어졌다"와 "후보를 전부 소진했다"는 다른 사실인데 이력에서는
+        둘 다 그냥 optimize_step이 멈추는 모양이라 구별되지 않았다 - 그래서
+        자기 이벤트를 가진다."""
+        if self._steps >= self._max_steps:
+            self._state.log_event(
+                "optimize_budget_exhausted",
+                {
+                    "steps": self._steps,
+                    "limit": self._max_steps,
+                    "refdes": knob.refdes,
+                    "param": knob.param,
+                },
+            )
+            return False
+        self._steps += 1
+        return True
+
+    def knob_state(self, knob: Knob) -> KnobState | None:
+        """게이트를 통과한 현재 상태. 막히면 사유를 남기고 None.
+
+        전략은 None을 받으면 그 노브를 버려야 한다 - 게이트가 막은 것은 값이
+        아니라 주소이므로, 다른 값으로 다시 시도해도 같은 자리에서 막힌다."""
+        state, gate, reason = self._oracle.knob_state(knob.refdes, knob.param)
+        if state is None:
+            self._reject(self._event(knob, gate=gate, reason=reason))
+        return state
+
+    def exhausted(self, knob: Knob, state: KnobState, reason: str) -> None:
+        """전략이 "이 노브는 더 갈 곳이 없다"고 판단한 경우. 사실이 사유와
+        함께 이력에 남아야 하므로 전략이 조용히 넘어가지 못하게 문을 준다."""
+        self._reject(self._event(knob, state=state, reason=reason))
+
+    async def attempt(self, steps: list[ProposedStep]) -> StepOutcome:
+        """후보 하나를 재고, **수락 규칙에 물어보고**, 그 결과를 실행에 반영한다.
+
+        전략이 부를 수 있는 유일한 비싼 문이다. 수락되면 버전이 남고 목적값
+        기준선이 내려가며, 거절되면 되돌린다."""
+        evaluation = await self._oracle.evaluate(steps)
+        accepted, reason = accept_step(
+            evaluation, self._best_objective, self._spec.optimize.objective
+        )
+
+        head = steps[0]
+        event = self._event(
+            head.knob,
+            state=head.state,
+            gate=evaluation.gate,
+            reason=reason,
+            accepted=accepted,
+            after=parse_spice_value(evaluation.changes[0]["new_value"]),
+            objective=evaluation.objective,
+            area=evaluation.area,
+        )
+        if len(steps) > 1:
+            # 오늘의 전략은 절대 여기 오지 않는다. 여러 노브를 한 후보로 미는
+            # 탐색기가 붙었을 때, 이벤트의 스칼라 필드만 보면 나머지 변경이
+            # 통째로 안 보이므로 목록을 함께 남긴다.
+            event["changes"] = evaluation.changes
+        self._state.log_event("optimize_step", event)
+
+        if accepted:
+            self._accepted += 1
+            self._best_objective = evaluation.objective
+            self._records[_version_index(self._state, self._canonical_name)] = {
+                "objective": evaluation.objective,
+                "area": evaluation.area,
+                # 이 버전에서 실제로 잰 기준 판정. 이분 탐색이 여기 착지하면
+                # 리포트가 쓰는 것이 이것이다.
+                "criteria": evaluation.verdict["criteria"],
+            }
+        else:
+            if evaluation.pushed:
+                self._state.rollback()
+            self._rejected += 1
+
+        return StepOutcome(accepted=accepted, reason=reason, objective=evaluation.objective)
+
+    def _event(
+        self,
+        knob: Knob,
+        state: KnobState | None = None,
+        gate: str | None = None,
+        reason: str | None = None,
+        accepted: bool = False,
+        after: float | None = None,
+        objective: float | None = None,
+        area: float | None = None,
+    ) -> dict:
+        return {
+            "refdes": knob.refdes,
+            # 실제로 편집한 철자를 기록한다. 제안의 철자를 남기면 대소문자가
+            # 섞인 덱에서 이력은 `w`라고 하는데 넷리스트는 `W`를 든다.
+            "param": state.token if state is not None else knob.param,
+            "direction": knob.direction,
+            "before": state.value if state is not None else None,
+            # 넷리스트에 **실제로 적힌** 값이어야 한다. 원시 float를 남기면
+            # 다음 단계의 before(덱에서 다시 읽은 값)와 미세하게 어긋나 이력이
+            # 연결되지 않는다.
+            "after": after,
+            "objective": objective,
+            "area": area,
+            "accepted": accepted,
+            "gate": gate,
+            "reason": reason,
+        }
+
+    def _reject(self, event: dict) -> None:
+        self._state.log_event("optimize_step", event)
+        self._rejected += 1
+
+
+# 전략의 계약: SearchRun 하나를 받아 돌고, 아무것도 돌려주지 않는다. 결과는
+# run에 쌓인다(accepted/rejected/records) - 전략이 집계를 직접 만들면 그
+# 숫자가 실행이 돌려주는 넷리스트와 갈라질 수 있다.
+SearchStrategy = Callable[["SearchRun"], Awaitable[None]]
+
+
+async def coordinate_descent(run: SearchRun) -> None:
+    """오늘까지의 탐색 그대로. 이름이 곧 정체다 - 좌표 하강이다.
+
+    순위대로 한 번에 한 노브, 기하는 ×STEP_RATIO, 개수는 ±1. 노브 간 결합을
+    보지 못하고, 스텝이 고정 비율이며, 코너에 눈이 멀어 있다 - 실측으로
+    nominal에서 10단계를 수락하고 코너 확인에서 6개 기준이 깨져 4단계만
+    살아남았다. 그것이 로드맵 단계 3이 겨냥하는 약점이고, **여기서 고치지
+    않는다**: 지금 필요한 것은 비교 대상이 될 기준선이다."""
+    for knob in run.knobs:
+        while True:
+            if not run.spend_step(knob):
+                # 예산은 전역이다 - 다음 노브로 넘어가도 달라지지 않는다.
+                return
+            state = run.knob_state(knob)
+            if state is None:
+                break
+            value = _next_value(state.value, state.integer, knob.direction)
+            if value is None:
+                run.exhausted(
+                    knob,
+                    state,
+                    f"{knob.refdes}.{knob.param} cannot move further in "
+                    f"direction {knob.direction!r}",
+                )
+                break
+            outcome = await run.attempt([ProposedStep(knob, state, value)])
+            if not outcome.accepted:
+                # 한 번 거절된 방향은 그 후보에서 더 밀지 않는다. 같은 노브를
+                # 같은 방향으로 계속 미는 것은 방금 얻은 증거를 무시하는
+                # 것이고, 보수적인 쪽(후보 소진)이 예산도 아낀다.
+                break
+
+
+# 이름으로 전략을 고르는 표. scripts/search_ab.py가 이것을 읽는다 - 하니스가
+# 모듈 내부를 뒤지게 하면 전략을 하나 더 붙일 때마다 하니스도 고쳐야 한다.
+SEARCH_STRATEGIES: dict[str, SearchStrategy] = {
+    "coordinate_descent": coordinate_descent,
+}
+DEFAULT_STRATEGY = "coordinate_descent"
+
+
+async def _knob_ranking(
+    spec,
+    state,
+    agents: OptimizerAgents,
+    start_text: str,
+    baseline_verdict: dict,
+    allowances: dict[str, float],
+    objective_name: str,
+) -> list[dict]:
+    """노브 순위. 주입된 것이 있으면 그것, 없으면 에이전트를 부른다.
+
+    **주입된 경우 에이전트는 부르지 않는다** - 프롬프트에 쓰이는 구조 뷰와
+    넷리스트 뷰도 만들지 않는다. 그것이 이 갈래의 목적이다: 탐색기 비교
+    실행에는 LLM이 하나도 없어야 한다(OptimizerAgents.knob_ranking 참고).
+    이 함수가 반환한 뒤에는 두 갈래가 구별되지 않으므로, 출처는 이력에
+    남긴다 - 남기지 않으면 "고정 순위로 돈 실행"과 "에이전트가 마침 같은
+    순위를 낸 실행"이 history.jsonl에서 같은 모양이 된다."""
+    if agents.knob_ranking is not None:
+        state.log_event(
+            "optimize_proposal",
+            {
+                "objective": objective_name,
+                "source": "fixed",
+                "candidates": list(agents.knob_ranking),
+                "overall_reasoning": "fixed knob ranking supplied by the caller (no agent call)",
+            },
+        )
+        return list(agents.knob_ranking)
+
+    structure = derive_structure(start_text, spec.circuit_name)
+    paths = build_signal_paths(structure)
+    # 실패한 기준이 없으므로 초점 씨앗도 없다. select_focus의 전 블록 폴백이
+    # 여기서는 정상 동작이다 - 최적화는 특정 실패를 쫓는 것이 아니다.
+    focus = select_focus(structure, paths, set(), set(), start_text)
+    structure_view = render_structure(structure, paths, find_patterns(structure), focus)
+    netlist_view = render_netlist(start_text, focus)
+    margins = [
+        {**entry, "allowance": allowances.get(entry["name"], 0.0)}
+        for entry in baseline_verdict["criteria"]
+    ]
+    proposal = await agents.propose(structure_view, margins, objective_name, netlist_view)
+    state.log_event(
+        "optimize_proposal", {"objective": objective_name, "source": "agent", **proposal}
+    )
+    return list(proposal.get("candidates", []))
+
+
 async def _search(
     spec,
     state,
@@ -351,7 +917,14 @@ async def _search(
     area_before: float,
     allowances: dict[str, float],
 ) -> dict:
-    """탐색 루프. 코너 **선택**은 하지 않는다 - 여유분을 인자로 받는다.
+    """탐색을 **조립**한다. 어떤 후보를 시도할지는 여기서 정하지 않는다.
+
+    순위(에이전트 또는 주입) → 오라클 → SearchRun → 전략, 이 네 조각을 잇는
+    것이 이 함수의 전부다. 실제 탐색은 전략(기본값 coordinate_descent)이 하고,
+    수락은 accept_step이 한다 - 왜 셋이 나뉘어 있는지는 위의 "탐색 이음매"
+    주석에 있다.
+
+    코너 **선택**은 하지 않는다 - 여유분을 인자로 받는다.
 
     한때 "nominal 한 점에서 돈다"고 적혀 있었고 지금은 틀린 말이다. 코너 축소가
     켜진 실행에서 `agents.simulate`는 선택 집합의 **최악값**을 돌려준다. 이
@@ -379,202 +952,28 @@ async def _search(
     # 할 것은 최적화 자신이 만든 성장이다.
     baseline_components = index_baseline_components(start_text)
 
-    structure = derive_structure(start_text, spec.circuit_name)
-    paths = build_signal_paths(structure)
-    # 실패한 기준이 없으므로 초점 씨앗도 없다. select_focus의 전 블록 폴백이
-    # 여기서는 정상 동작이다 - 최적화는 특정 실패를 쫓는 것이 아니다.
-    focus = select_focus(structure, paths, set(), set(), start_text)
-    structure_view = render_structure(structure, paths, find_patterns(structure), focus)
-    netlist_view = render_netlist(start_text, focus)
+    ranking = await _knob_ranking(
+        spec, state, agents, start_text, baseline_verdict, allowances, objective_name
+    )
+    oracle = SearchOracle(
+        spec, state, agents, canonical_name, baseline_components, area_before, allowances
+    )
+    run = SearchRun(
+        spec,
+        state,
+        oracle,
+        [Knob(c["refdes"], c["param"], c["direction"]) for c in ranking],
+        canonical_name,
+        objective_before,
+        records,
+        # 모듈 전역을 **여기서** 읽는다 - 테스트가 monkeypatch로 낮춰 예산
+        # 소진 경로를 고정한다. 클래스 기본값으로 굳히면 그 경로가 사라진다.
+        MAX_OPTIMIZE_STEPS,
+    )
+    strategy = agents.search_strategy or coordinate_descent
+    await strategy(run)
 
-    margins = [
-        {**entry, "allowance": allowances.get(entry["name"], 0.0)}
-        for entry in baseline_verdict["criteria"]
-    ]
-    proposal = await agents.propose(structure_view, margins, objective_name, netlist_view)
-    state.log_event("optimize_proposal", {"objective": objective_name, **proposal})
-
-    best_objective = objective_before
-    accepted_count = 0
-    rejected_count = 0
-    steps = 0
-
-    for candidate in proposal.get("candidates", []):
-        refdes = candidate["refdes"]
-        param = candidate["param"]
-        direction = candidate["direction"]
-
-        while steps < MAX_OPTIMIZE_STEPS:
-            steps += 1
-            current_texts = state.current_netlist_texts()
-            current_text = current_texts[canonical_name]
-
-            event = {
-                "refdes": refdes, "param": param, "direction": direction,
-                "before": None, "after": None,
-                "objective": None, "area": None, "accepted": False,
-                "gate": None, "reason": None,
-            }
-
-            gate, feedback = _gate_addressing(current_text, {"refdes": refdes, "param": param})
-            if gate is not None:
-                event["gate"] = gate
-                event["reason"] = feedback
-                state.log_event("optimize_step", event)
-                rejected_count += 1
-                break
-
-            # 값 읽기와 정수 판정 둘 다 index_baseline_components의 색인을 쓴다.
-            # 같은 표를 쓰지 않으면 "어느 소자의 값을 읽어 한 단계 옮기는가"와
-            # "어느 소자가 편집되는가"가 갈라질 수 있다 - 이 저장소가 이미 두 번
-            # 닫은 넷리스트 해소 이중화 결함의 더 나쁜 판본이다.
-            component = index_baseline_components(current_text).get(refdes)
-            token = _deck_token(component, param) if component is not None else None
-            if token is None:
-                # 게이트는 통과했는데 그 소자 줄에는 이 이름이 없다. 실재하는
-                # 경로다: check_param_applicability의 **동료 규칙**이
-                # bandgap의 `Xq1.m`을 admit 한다(Xq1은 m=을 안 쓰지만 같은
-                # 모델의 Xq8이 m=8을 쓰고, m이 이미터 면적비를 정하는 유일한
-                # 노브다). 적용 가능한 것은 맞지만 **출발 값이 없다** - 여기서
-                # 기본값을 지어내는 것이 이 프로젝트가 금하는 추측이다.
-                # "값을 못 읽었다"와 한 문장으로 뭉치면, 해소 불가능한
-                # 표현식(`W='wn*2'`)과 같은 사유로 보여 진단이 갈라진다.
-                event["reason"] = (
-                    f"{refdes} does not write {param!r} on its own line, so there is no "
-                    f"current value to step from (a same-model peer writes it, which is why "
-                    f"the applicability gate admits it - but the starting value is not "
-                    f"something to invent)"
-                )
-                state.log_event("optimize_step", event)
-                rejected_count += 1
-                break
-            before = _current_value(component, token)
-            if before is None:
-                event["reason"] = (
-                    f"cannot read a numeric current value for {refdes}.{param} in the netlist"
-                )
-                state.log_event("optimize_step", event)
-                rejected_count += 1
-                break
-            # 실제로 편집한 철자를 기록한다. 제안의 철자를 남기면 대소문자가
-            # 섞인 덱에서 이력은 `w`라고 하는데 넷리스트는 `W`를 든다.
-            event["param"] = token
-            event["before"] = before
-
-            # 정수성은 이름이 아니라 param이 **도달하는 토큰**에서 나온다.
-            # `Xa ... mult=4`가 본문 `m='mult'`에 도달하면 이름은 mult지만
-            # 개수다 - 이름만 보면 3.6을 만들고 에어리어 게이트가 정수 위반으로
-            # 되받는다. area_limits와 같은 함수를 쓰므로 갈라질 수 없다.
-            integer = is_count_param(component, token)
-            after = _next_value(before, integer, direction)
-            if after is None:
-                event["reason"] = f"{refdes}.{param} cannot move further in direction {direction!r}"
-                state.log_event("optimize_step", event)
-                rejected_count += 1
-                break
-            new_value = _format_value(after, integer)
-            # 로그의 after는 넷리스트에 실제로 적힌 값이어야 한다. 원시 float를
-            # 남기면 다음 단계의 before(덱에서 다시 읽은 값)와 미세하게
-            # 어긋나 이력이 연결되지 않는다.
-            event["after"] = parse_spice_value(new_value)
-
-            # param이 아니라 **덱에 적힌 철자**(token)로 쓴다 - _deck_token 참고.
-            change = {"refdes": refdes, "param": token, "new_value": new_value}
-            # 에어리어 게이트만 new_value를 읽으므로 값이 정해진 뒤에 온다.
-            area_ok, area_feedback = check_area_growth(baseline_components, [change])
-            if not area_ok:
-                event["gate"] = "area"
-                event["reason"] = area_feedback
-                state.log_event("optimize_step", event)
-                rejected_count += 1
-                break
-
-            new_texts = {name: apply_changes(text, [change]) for name, text in current_texts.items()}
-            state.push_netlist_version(new_texts)
-
-            # 에어리어는 파생이라 공짜지만 목적값은 재야 안다. 그 비대칭이
-            # 이 루프를 감당 가능하게 만드는 전부다 - 예산 초과는 시뮬레이션
-            # 앞에서 걸러진다.
-            area = total_area(new_texts[canonical_name]).area
-            event["area"] = area
-            # area_before가 0이면 비율이 정의되지 않아 예산이 통째로 꺼진다.
-            # 그것이 실제로 도달하는 경우라, 껐다는 사실을 _optimize가
-            # area_coverage로 이력과 결과에 적어 둔다 - 조용히 사라지지 않게.
-            if area_before > 0 and area / area_before > spec.optimize.area_budget:
-                event["reason"] = (
-                    f"area {area:g} is {area / area_before:.3f}x the starting area, "
-                    f"over the {spec.optimize.area_budget:g}x budget"
-                )
-                state.log_event("optimize_step", event)
-                state.rollback()
-                rejected_count += 1
-                break
-
-            step_sim, sim_failure = await _run_simulation(agents.simulate, new_texts, spec)
-            if step_sim is None:
-                # 회로가 시뮬레이터를 통과하지 못하는 지점까지 갔다는 뜻이다
-                # (예: sky130 소자 bin을 벗어난 폭). 되돌리고 후보를 소진한다 -
-                # 여기서 예외가 새어 나가면 통과한 실행이 크래시가 된다.
-                event["reason"] = sim_failure
-                state.log_event("optimize_step", event)
-                state.rollback()
-                rejected_count += 1
-                break
-
-            measurements = step_sim["measurements"]
-            verdict = evaluate_criteria(measurements, spec.all_criteria)
-            violations = guard_band_violations(measurements, spec.all_criteria, allowances)
-            objective = measurements.get(objective_name)
-            event["objective"] = objective
-
-            if not verdict["overall_pass"]:
-                event["reason"] = f"criteria no longer pass: {verdict['summary']}"
-            elif violations:
-                # 통과했더라도 여유분을 다 태웠으면 수락하지 않는다. 임계값에
-                # 바짝 붙은 채로 멈추면 코너와 모델 변동에서 무너진다.
-                event["reason"] = "; ".join(violations)
-            elif objective is None:
-                event["reason"] = f"objective {objective_name!r} is not among the measurements"
-            elif objective >= best_objective:
-                event["reason"] = (
-                    f"objective {objective:g} is not below the current best {best_objective:g}"
-                )
-            else:
-                event["accepted"] = True
-
-            state.log_event("optimize_step", event)
-
-            if event["accepted"]:
-                best_objective = objective
-                accepted_count += 1
-                records[_version_index(state, canonical_name)] = {
-                    "objective": objective, "area": area,
-                    # 이 버전에서 실제로 잰 기준 판정. 이분 탐색이 여기 착지하면
-                    # 리포트가 쓰는 것이 이것이다.
-                    "criteria": verdict["criteria"],
-                }
-                continue
-
-            state.rollback()
-            rejected_count += 1
-            # 한 번 거절된 방향은 그 후보에서 더 밀지 않는다. 같은 노브를 같은
-            # 방향으로 계속 미는 것은 방금 얻은 증거를 무시하는 것이고, 보수적인
-            # 쪽(후보 소진)이 예산도 아낀다.
-            break
-        else:
-            # while/else: **break 없이** 조건이 거짓이 되어 끝났을 때만 온다 -
-            # 이 루프에서 그것은 steps >= MAX_OPTIMIZE_STEPS 하나뿐이다.
-            # "예산이 떨어졌다"와 "후보를 전부 소진했다"는 다른 사실인데,
-            # 이력에서는 둘 다 그냥 optimize_step이 멈추는 모양이라 구별되지
-            # 않았다. 예산은 전역이므로 후보 루프도 여기서 끝난다.
-            state.log_event(
-                "optimize_budget_exhausted",
-                {"steps": steps, "limit": MAX_OPTIMIZE_STEPS,
-                 "refdes": refdes, "param": param},
-            )
-            break
-
-    return {"accepted": accepted_count, "rejected": rejected_count, "records": records}
+    return {"accepted": run.accepted, "rejected": run.rejected, "records": run.records}
 
 
 async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
