@@ -535,11 +535,20 @@ def _load_corner_reduction(raw: dict) -> CornerReduction | None:
         epsilon = float(raw_coverage["epsilon"])
         tau = float(raw_coverage["tau"])
         if not 0.0 <= epsilon <= 1.0:
+            # 이 메시지는 조건과 어긋나면 안 된다: epsilon==1.0은 이 조건에서
+            # **허용된다**(0.0 <= epsilon <= 1.0의 등호). 예전 문구("above 1.0
+            # every corner covers every criterion")는 1.0 자체가 안전한 것처럼
+            # 읽히는데, 1.0에서 이미 허용오차가 |worst| 그 자체와 같아져
+            # (0에서 2*worst까지가 덮인다) 대부분의 판별력을 잃는다 - "1.0
+            # 초과부터 위험하다"는 주장은 방어할 수 없다. 조건은 그대로 두고
+            # 문구만 실제 경계(허용오차가 커질수록 판별력이 줄고, 범위 밖은
+            # 아예 거부한다)를 말하도록 고친다.
             raise ValueError(
                 f"corner_reduction.coverage.epsilon must be in [0, 1], got {epsilon}: "
-                f"a negative tolerance has no meaning, and above 1.0 every corner covers "
-                f"every criterion, collapsing the seed to one corner while the log still "
-                f"reads normal"
+                f"a negative tolerance has no meaning, and epsilon scales the tolerance "
+                f"band as a fraction of the worst-case magnitude - already at 1.0 the band "
+                f"spans back to zero, so values outside [0, 1] only widen it further and "
+                f"stop the seed from discriminating near-worst corners from unrelated ones"
             )
         if not 0.0 < tau <= 1.0:
             raise ValueError(
