@@ -237,7 +237,9 @@ if __name__ == "__main__":
     spec_path = sys.argv[1]
     widths = [float(w) for w in sys.argv[2:]] or [None]
     out = [analyse(spec_path, workers, _perturbation(w) if w else None) for w in widths]
-    dest = os.path.join(os.path.dirname(__file__), "coverage_feasibility.json")
+    # 산출물은 **cwd** 에 쓴다. `os.path.dirname(__file__)` 로 쓰면 저장소의
+    # `scripts/` 안에 결과 파일이 쌓인다.
+    dest = os.environ.get("COVERAGE_FEASIBILITY_OUT", "coverage_feasibility.json")
     with open(dest, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nwrote {dest}")
