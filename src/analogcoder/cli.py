@@ -318,6 +318,33 @@ def _build_agent_backends(args) -> dict[str, AgentBackend]:
 
 async def _run(args) -> dict:
     spec = load_spec(args.spec)
+
+    # **조합형 테스트벤치는 아직 튜닝 루프에 배선되지 않았다 - 그래서 여기서
+    # 시작 전에 거부한다.**
+    #
+    # 조용히 도는 쪽이 훨씬 나쁘다: 튜닝 루프의 `simulate_fn`은 시뮬레이터
+    # 에이전트에게 `state.current_netlist_paths()`를 넘기는데, 조합형
+    # 테스트벤치에서 그 파일은 **tunable 조각 하나**이고 회로가 아니다. 신호
+    # 선언부도 코너도 없는 덱이므로 자극 없는 회로가 돌고, 그 결과가 판정에
+    # 들어간다. 게다가 분석 3이 실측으로 보인 것처럼 조각 뷰에서는
+    # `check_stimulus_untouched`가 자극 변경을 **approved=True로 통과**시키고
+    # (게이트가 열린 채 실패한다), `signal_path`는 `AMP drives vdd`라는 거짓
+    # 구조 주장을 되살리며, `.option scale`이 다른 조각에 실려 있으면 면적
+    # 게이트의 판정이 뒤집힌다(같은 제안이 approved=True <-> False).
+    #
+    # 전체 코너 스윕(`run_full_pvt_sweep`)과 코너 축소 경로는 배선되어 있다 -
+    # 그쪽은 덱을 텍스트로 만들어 임시 파일에 쓰므로 조합이 그 자리에 정확히
+    # 들어간다. 남은 것은 에이전트에게 **경로**를 넘기는 이 경로 하나다.
+    composed = [tb.name for tb in spec.testbenches if tb.fragments is not None]
+    if composed:
+        raise ValueError(
+            f"composed testbench(es) {composed} are not wired into the tuning loop yet: "
+            f"the simulator agent is handed the versioned fragment's path, which for a "
+            f"composed testbench is not a runnable deck. The corner sweep path does "
+            f"compose - see pvt.deck_for_corner - so this refusal is the boundary, not "
+            f"the feature's limit."
+        )
+
     # Includes are absolutized here, at the one point netlist text enters the
     # system, because everything downstream relocates that text away from the
     # directory it was read from (RunState stages it into the run dir, then

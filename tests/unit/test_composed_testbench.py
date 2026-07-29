@@ -228,3 +228,33 @@ def test_a_composed_deck_carries_the_compose_records_and_report(tmp_path):
     deck = deck_for(spec.canonical, CORE, spec.pvt_corners.corners[0])
     assert deck.records["title_inserted"] == 1
     assert "shared_nets" in deck.report
+
+
+# --- 아직 배선되지 않은 경계 -------------------------------------------------
+
+
+def test_the_tuning_loop_refuses_a_composed_spec_instead_of_simulating_a_fragment(tmp_path):
+    """조각만 넘기면 자극도 코너도 없는 덱이 돌고 그 결과가 판정에 들어간다.
+    게다가 조각 뷰에서는 `check_stimulus_untouched`가 자극 변경을
+    approved=True로 통과시킨다(게이트가 열린 채 실패한다)."""
+    import types
+
+    from analogcoder.cli import _run
+
+    spec_path = _write(
+        tmp_path, compose_block=DEFAULT_COMPOSE, corners=DEFAULT_CORNERS, nominal="sign_off_a"
+    )
+    args = types.SimpleNamespace(
+        spec=spec_path,
+        run_dir=str(tmp_path / "run"),
+        max_iterations=1,
+        agent_backend="claude",
+        llm_base_url=None,
+        llm_model=None,
+        llm_api_key_env=None,
+        resume=False,
+    )
+    with pytest.raises(ValueError, match="not wired into the tuning loop"):
+        import asyncio
+
+        asyncio.run(_run(args))
