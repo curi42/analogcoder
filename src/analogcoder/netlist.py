@@ -12,10 +12,16 @@ _INCLUDE_RE = re.compile(
 #   호출: `.lib '<파일>' <섹션>`   - 인자 둘. 파일과 그 파일 안의 항목 이름.
 #   정의: `.lib <섹션>` … `.endl`  - 인자 하나. 파일을 가리키지 않는다.
 #
-# 구별 규칙은 **인자 개수**다. 이것은 추측이 아니라 관측이다: 독점 PDK 의
-# 코너 파일이 `.lib '../../corner_library/PROCESS.LIB' SF6_HTTT` 형태임이
-# 확인됐다(2026-07-29). 정의 형태를 호출로 오인하면 섹션 이름이 경로로
-# 절대화되어 존재하지 않는 파일을 가리키고, 그 지문은 `None` 이 된다.
+# 구별 규칙은 **인자 개수**다. 이것은 추측이 아니라 관측이다: 프로덕션 PDK 의
+# 코너 지정 파일이 `.lib '<경로>' <섹션>` 두 인자 형태이고 축마다 한 줄씩
+# 놓인다는 것을 실제 덱으로 확인했다(2026-07-29). 정의 형태를 호출로 오인하면
+# 섹션 이름이 경로로 절대화되어 존재하지 않는 파일을 가리키고, 그 지문은
+# `None` 이 된다.
+#
+# **여기에도, 테스트 픽스처에도 실제 이름을 쓰지 않는다.** 독점 PDK 에서
+# 유래한 문자열(경로, 모델 파일명, 라이브러리 파일명, 스큐/코너 섹션명, 공급
+# 파라미터 이름, 공정 노드·제품 식별자)은 이 저장소에 들어가지 않는다.
+# 확인한 사실은 "형식이 이러이러하다"로 적고 리터럴은 인용하지 않는다.
 #
 # **알려진 한계(닫힌 방향)**: 인자가 하나뿐인 `.lib '파일.lib'` 형태를 쓰는
 # 방언이 있다면 그것은 정의로 읽혀 파일 참조로 잡히지 않는다. 파일인지
@@ -71,13 +77,16 @@ def resolve_includes(text: str, base_dir: str) -> str:
     - A `.lib` **definition** (`.lib <section>` … `.endl`) is left alone - see
       `_LIB_CALL_RE`.
 
-    **This is top-level only, and the company's real corner form is nested.**
-    Its `.lib` lines live inside a `corner_sig01.inc` that the deck itself
-    `.include`s, so teaching this function about `.lib` does not by itself
-    cover that shape - the nested file's text never passes through here. That
-    boundary is deliberate (see `simulators/cache.INCLUDE_FINGERPRINT_DEPTH`
-    for the fingerprint side of the same decision) and is pinned by
-    `test_the_company_corner_file_is_nested_and_the_fingerprint_stops_at_the_deck`."""
+    **This is top-level only, and the production corner form is nested at
+    least three levels deep** (deck -> corner-selection file, whose `.lib`
+    calls name one library per axis -> an axis library section, which itself
+    holds about ten further references -> model/skew files). So teaching this
+    function about `.lib` does not by itself cover that shape: only the
+    deck's own line passes through here. That boundary is deliberate (see
+    `simulators/cache.INCLUDE_FINGERPRINT_DEPTH` for the fingerprint side of
+    the same decision, and why one extra level would not close it either) and
+    is pinned by
+    `test_the_corner_chain_is_three_deep_and_the_fingerprint_stops_at_the_deck`."""
 
     def _absolutize_include(match: re.Match) -> str:
         prefix = match.group(1)

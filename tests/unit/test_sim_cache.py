@@ -323,24 +323,25 @@ def test_an_empty_worker_env_var_falls_back_to_the_default(monkeypatch, bad):
 
 # ------------------------------------------------------- `.lib` 과 지문 깊이
 
-# 독점 PDK 의 코너 파일 내용(사용자 진술, 2026-07-29). 축 정체성은 여기서
-# 읽지 않는다 - `test_netlist_dialect.py` 의 같은 픽스처 주석을 볼 것.
+# 코너 지정 파일 **형식**의 합성 재현. 이름은 전부 합성이고 그 이유 둘
+# (독점 PDK 유래 문자열은 저장소에 넣지 않는다 / 축 정체성을 이름에서 읽지
+# 않는다)은 `test_netlist_dialect.py` 의 같은 픽스처 주석에 있다.
 _CORNER_INC_BODY = (
-    "*Process\n"
-    ".lib '{lib_dir}/PROCESS.LIB' SF6_HTTT\n"
+    "*Axis A\n"
+    ".lib '{lib_dir}/LIB_A.LIB' SEC_A1\n"
     "\n"
-    "*Voltage\n"
-    ".lib '{lib_dir}/VOLTAGE.LIB' MV\n"
+    "*Axis B\n"
+    ".lib '{lib_dir}/LIB_B.LIB' SEC_B1\n"
     "\n"
-    "*Temperature\n"
-    ".lib '{lib_dir}/TEMP.LIB' RT\n"
+    "*Axis C\n"
+    ".lib '{lib_dir}/LIB_C.LIB' SEC_C1\n"
 )
 
 
-def _corner_library(tmp_path):
-    lib_dir = tmp_path / "corner_library"
+def _corner_libs(tmp_path):
+    lib_dir = tmp_path / "corner_libs"
     lib_dir.mkdir()
-    for name in ("PROCESS.LIB", "VOLTAGE.LIB", "TEMP.LIB"):
+    for name in ("LIB_A.LIB", "LIB_B.LIB", "LIB_C.LIB"):
         (lib_dir / name).write_text(f"* {name}\n.lib TT\n.model nch nmos\n.endl TT\n")
     return lib_dir
 
@@ -352,25 +353,25 @@ def test_a_lib_call_lands_in_the_cache_fingerprint(tmp_path):
     고 적은 자리가 정확히 이것이다."""
     from analogcoder.simulators.cache import include_fingerprints
 
-    lib_dir = _corner_library(tmp_path)
+    lib_dir = _corner_libs(tmp_path)
     text = _CORNER_INC_BODY.format(lib_dir=lib_dir)
 
     fingerprints = include_fingerprints(text, str(tmp_path))
 
     paths = [fp[0] for fp in fingerprints]
-    assert paths == sorted(str(lib_dir / n) for n in ("PROCESS.LIB", "TEMP.LIB", "VOLTAGE.LIB"))
+    assert paths == sorted(str(lib_dir / n) for n in ("LIB_A.LIB", "LIB_C.LIB", "LIB_B.LIB"))
     assert all(fp[1] is not None and fp[2] is not None for fp in fingerprints)
 
 
 def test_changing_a_lib_target_changes_the_cache_key(tmp_path):
     from analogcoder.simulators.cache import simulation_key
 
-    lib_dir = _corner_library(tmp_path)
+    lib_dir = _corner_libs(tmp_path)
     text = _CORNER_INC_BODY.format(lib_dir=lib_dir)
     config = {"control_block": "op"}
 
     before = simulation_key(text, str(tmp_path), config, "sim-v1")
-    (lib_dir / "PROCESS.LIB").write_text("* PROCESS.LIB - 다른 내용\n.lib TT\n.endl TT\n")
+    (lib_dir / "LIB_A.LIB").write_text("* LIB_A.LIB - 다른 내용\n.lib TT\n.endl TT\n")
     after = simulation_key(text, str(tmp_path), config, "sim-v1")
 
     assert before != after
@@ -379,49 +380,92 @@ def test_changing_a_lib_target_changes_the_cache_key(tmp_path):
 def test_a_lib_definition_does_not_land_in_the_fingerprint(tmp_path):
     from analogcoder.simulators.cache import include_fingerprints
 
-    text = "* t\n.lib SF6_HTTT\n.model nch nmos level=54\n.endl SF6_HTTT\n.end\n"
+    text = "* t\n.lib SEC_A1\n.model nch nmos level=54\n.endl SEC_A1\n.end\n"
 
     assert include_fingerprints(text, str(tmp_path)) == []
 
 
-def test_the_company_corner_file_is_nested_and_the_fingerprint_stops_at_the_deck(tmp_path):
-    """**이 계층이 어디까지 보는지를 못박는 테스트다.**
+def test_the_corner_chain_is_three_deep_and_the_fingerprint_stops_at_the_deck(tmp_path):
+    """**이 계층이 어디까지 보는지를 숫자로 못박는 테스트다.**
 
-    생산 덱의 실제 모양은 `덱 -> corner_sig01.inc -> PROCESS.LIB` 두 단계다.
-    `include_fingerprints` 는 **최상위 덱만** 훑으므로 지문에 들어가는 것은
-    `corner_sig01.inc` 하나이고 `PROCESS.LIB` 은 들어가지 않는다. 즉 코너
-    파일의 내용이 바뀌면 캐시가 미적중이 되지만, **PROCESS.LIB 만 바뀌면
-    적중한다.**
+    확인된 구조는 **최소 3단**이다:
 
-    한 겹 더 따라가지 않기로 한 근거는 보고서에 있고 요약하면 셋이다:
-    (1) 그러려면 중간 파일을 **읽어야** 하는데 최상위 include 가 수십 MB
-    모델 파일을 직접 가리키는 경우가 있고 `simulation_key` 는 시뮬레이션마다
-    돈다, (2) 깊이 1 은 대상 환경체인이 정확히 2단이라는 **미확인 가정**이다,
-    (3) 벤치마크 20개 덱의 캐시 키가 바뀐다.
+        덱 (깊이 0)
+          -> 코너 지정 파일        (깊이 1)  - `.lib` 호출 세 줄, 축마다 하나
+             -> 축 라이브러리 섹션  (깊이 2)  - 그 안에 다시 약 10줄의 참조
+                -> 모델/스큐 파일   (깊이 3)
+
+    그래서 **코너 하나가 닿는 파일이 10개를 넘는데 지문에는 1개만 들어간다.**
+    코너 지정 파일이 바뀌면 미적중이지만, 축 라이브러리나 모델 파일만 바뀌면
+    **적중한다.**
+
+    **깊이를 1에서 2로 늘려도 이 구멍은 안 닫힌다** - 3단의 약 10개 파일이
+    여전히 빠지고, 그러면 "지문이 PDK를 본다"는 인상만 생긴다. 그것이 이
+    저장소가 아홉 번 값을 치른 모양이다. 나머지 근거 셋:
+    (1) 깊이 2 의 대상을 찾으려면 깊이 1 의 파일을 **읽어야** 하는데 최상위
+    include 가 수십 MB 모델 파일을 직접 가리키는 덱이 있고 `simulation_key`
+    는 `run()` 마다 돈다, (2) 어느 깊이를 고르든 그 수는 체인이 거기서 끝난다는
+    미확인 가정이다, (3) 벤치마크 20개 덱의 캐시 키가 바뀐다.
 
     보이지 않는다는 사실 자체는 조용하지 않다 - `sim_cache` 이벤트가
     `INCLUDE_FINGERPRINT_DEPTH` 를 매번 싣는다(아래 테스트).
 
     **중첩을 따라가게 만드는 사람은 이 테스트를 갱신해야 한다.**"""
     from analogcoder.netlist import resolve_includes
-    from analogcoder.simulators.cache import include_fingerprints
+    from analogcoder.simulators.cache import include_fingerprints, include_summary
 
-    lib_dir = _corner_library(tmp_path)
+    # 깊이 3: 모델/스큐 파일들
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    models = [model_dir / f"MODEL_{i}.inc" for i in range(10)]
+    for m in models:
+        m.write_text("* model\n")
+
+    # 깊이 2: 축 라이브러리. 섹션 하나가 다시 10줄을 담고, 그 경로는 이미
+    # 절대 경로다(확인된 사실). 공급 축은 소스 줄이 아니라 `.param` 여러
+    # 개를, 온도 축은 `.param` + `.temp <이름>` 을 쓴다 - 우리 계층은 그
+    # 내용을 보지 않으므로 인식에는 영향이 없다.
+    lib_dir = tmp_path / "corner_libs"
+    lib_dir.mkdir()
+    (lib_dir / "LIB_A.LIB").write_text(
+        ".lib SEC_A1\n" + "".join(f".inc '{m}'\n" for m in models) + ".endl SEC_A1\n"
+    )
+    (lib_dir / "LIB_B.LIB").write_text(
+        ".lib SEC_B1\n.param vd1=1.8\n.param vd2=1.2\n.param vd3=3.3\n.endl SEC_B1\n"
+    )
+    (lib_dir / "LIB_C.LIB").write_text(".lib SEC_C1\n.param tnom_c=25\n.temp tnom_c\n.endl SEC_C1\n")
+
+    # 깊이 1: 코너 지정 파일
     corner_dir = tmp_path / "corners"
     corner_dir.mkdir()
-    corner_inc = corner_dir / "corner_sig01.inc"
+    corner_inc = corner_dir / "corner_case_1.inc"
     corner_inc.write_text(_CORNER_INC_BODY.format(lib_dir=lib_dir))
-    deck = "* company deck\n.include '{}'\nR1 a b 1k\n.end\n".format(corner_inc)
+
+    deck = "* deck\n.include '{}'\nR1 a b 1k\n.end\n".format(corner_inc)
 
     fingerprints = include_fingerprints(deck, str(tmp_path))
 
+    # 깊이 1 만: 코너 지정 파일 하나.
     assert [fp[0] for fp in fingerprints] == [str(corner_inc)]
-    assert not any("PROCESS.LIB" in fp[0] for fp in fingerprints)
+    assert include_summary(deck, str(tmp_path))["depth"] == 1
+    # 깊이 2 도 깊이 3 도 지문에 없다.
+    assert not any("LIB_" in fp[0] or "MODEL_" in fp[0] for fp in fingerprints)
     # 덱 텍스트에도 안 나타난다 - 중간 파일을 열지조차 않는다.
-    assert "PROCESS.LIB" not in resolve_includes(deck, str(tmp_path))
-    # 정규식 자체는 그 파일 안의 세 줄을 전부 본다. 막힌 것은 **순회**이지
-    # 인식이 아니다.
+    assert "LIB_A" not in resolve_includes(deck, str(tmp_path))
+
+    # 정규식 자체는 각 단계를 전부 본다. 막힌 것은 **순회**이지 인식이 아니다.
     assert len(include_fingerprints(corner_inc.read_text(), str(corner_dir))) == 3
+    assert len(include_fingerprints((lib_dir / "LIB_A.LIB").read_text(), str(lib_dir))) == 10
+
+    # 이 코너 하나가 닿는 파일을 손으로 세어 지문이 덮는 비율을 못박는다.
+    reachable = {str(corner_inc)}
+    reachable |= {fp[0] for fp in include_fingerprints(corner_inc.read_text(), str(corner_dir))}
+    reachable |= {
+        fp[0] for fp in include_fingerprints((lib_dir / "LIB_A.LIB").read_text(), str(lib_dir))
+    }
+    assert len(reachable) == 14  # 코너 1 + 축 3 + 모델 10
+    assert len(fingerprints) == 1  # 그중 지문에 든 것
+    # 깊이를 2로 늘리면 4개가 되고 10개가 여전히 빠진다 - 구멍이 닫히지 않는다.
 
 
 def test_a_relative_corner_include_is_anchored_and_a_missing_one_is_counted(tmp_path):
@@ -433,16 +477,16 @@ def test_a_relative_corner_include_is_anchored_and_a_missing_one_is_counted(tmp_
     없으면 `None` 지문 + `unresolved` 계량으로 남는다."""
     from analogcoder.simulators.cache import include_fingerprints, include_summary
 
-    lib_dir = _corner_library(tmp_path)
+    lib_dir = _corner_libs(tmp_path)
     deck_dir = tmp_path / "tb"
     deck_dir.mkdir()
-    text = "* t\n.lib '../corner_library/PROCESS.LIB' SF6_HTTT\n.lib 'nowhere/X.LIB' TT\n.end\n"
+    text = "* t\n.lib '../corner_libs/LIB_A.LIB' SEC_A1\n.lib 'nowhere/X.LIB' TT\n.end\n"
 
     fingerprints = include_fingerprints(text, str(deck_dir))
     summary = include_summary(text, str(deck_dir))
 
     resolved = [fp for fp in fingerprints if fp[1] is not None]
-    assert [fp[0] for fp in resolved] == [str(lib_dir / "PROCESS.LIB")]
+    assert [fp[0] for fp in resolved] == [str(lib_dir / "LIB_A.LIB")]
     assert summary["relative"] == 2
     assert summary["unresolved"] == 1
     assert summary["lib"] == 2

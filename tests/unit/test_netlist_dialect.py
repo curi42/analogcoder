@@ -147,34 +147,45 @@ def test_a_subckt_line_default_may_be_a_spaced_quoted_expression():
 
 # ----------------------------------------------------------------- `.lib`
 
-# 독점 PDK 가 코너를 지정하는 실제 파일 내용(사용자 진술, 2026-07-29).
+# 코너 지정 파일의 **형식**을 재현한 합성 픽스처다: `.lib '<경로>' <섹션>`
+# 호출이 축마다 한 줄씩, 각 줄 위에 `*` 주석 한 줄. 이 구조는 실제 덱으로
+# 확인했다(2026-07-29).
 #
-# **축 정체성을 여기서 읽지 않는다.** `PROCESS.LIB` 이 process 축이라는 것을
-# 알아내는 길은 셋(파일명 / 순서 / 위의 `*` 주석)뿐이고 전부 추측이다 -
-# 넷 이름 `vdd` 를 보고 전원 레일이라고 단정하는 것과 같은 부류이며, 사용자가
-# 경로는 바뀔 수 있다고 예고했다. 이 픽스처가 고정하는 사실은 하나뿐이다:
+# **이름은 전부 합성이다. 두 가지 이유가 있고 둘 다 구속력이 있다.**
+#
+# 1. **비밀유지**: 독점 PDK 에서 유래한 문자열은 이 저장소에 들어가지 않는다 -
+#    경로, 모델 파일명, 라이브러리 파일명, 스큐/코너 섹션명, 공급 파라미터
+#    이름, 공정 노드·제품 식별자. 픽스처는 형식의 구조만 재현하고, 실제 덱으로
+#    확인한 사실은 "형식이 이러이러하다"로 기술하되 리터럴을 인용하지 않는다.
+# 2. **축 정체성을 이름에서 읽지 않는다**(이 저장소의 잠긴 규칙). 픽스처의
+#    파일명이나 섹션명이 그 축의 역할을 말해 주면 나중에 읽는 사람이 "코드가
+#    어느 줄이 어느 축인지 안다"고 착각한다. 실제로 코드는 모른다 - 파일명도
+#    순서도 `*` 주석도 전부 추측이고, 넷 이름으로 전원 레일을 알아보는 것과
+#    같은 부류다. **중립 이름이 그 규칙을 구조적으로 강제한다.**
+#
+# 그래서 이 픽스처가 고정하는 사실은 하나뿐이다:
 # **`.lib` 호출 줄은 파일을 가리킨다.**
-COMPANY_CORNER_INC = (
-    "*Process\n"
-    ".lib '../../corner_library/PROCESS.LIB' SF6_HTTT\n"
+CORNER_INC_FIXTURE = (
+    "*Axis A\n"
+    ".lib '../../corner_libs/LIB_A.LIB' SEC_A1\n"
     "\n"
-    "*Voltage\n"
-    ".lib '../../corner_library/VOLTAGE.LIB' MV\n"
+    "*Axis B\n"
+    ".lib '../../corner_libs/LIB_B.LIB' SEC_B1\n"
     "\n"
-    "*Temperature\n"
-    ".lib '../../corner_library/TEMP.LIB' RT\n"
+    "*Axis C\n"
+    ".lib '../../corner_libs/LIB_C.LIB' SEC_C1\n"
 )
 
 
 def test_a_lib_call_is_absolutised_and_keeps_its_section_name():
-    out = resolve_includes(COMPANY_CORNER_INC, "/BASE/tb/corner")
+    out = resolve_includes(CORNER_INC_FIXTURE, "/BASE/tb/corner")
 
-    assert ".lib '/BASE/tb/corner/../../corner_library/PROCESS.LIB' SF6_HTTT" in out
-    assert ".lib '/BASE/tb/corner/../../corner_library/VOLTAGE.LIB' MV" in out
-    assert ".lib '/BASE/tb/corner/../../corner_library/TEMP.LIB' RT" in out
-    # 주석 줄은 손대지 않는다. `*Process` 는 자유 텍스트이고 파서가 읽는
+    assert ".lib '/BASE/tb/corner/../../corner_libs/LIB_A.LIB' SEC_A1" in out
+    assert ".lib '/BASE/tb/corner/../../corner_libs/LIB_B.LIB' SEC_B1" in out
+    assert ".lib '/BASE/tb/corner/../../corner_libs/LIB_C.LIB' SEC_C1" in out
+    # 주석 줄은 손대지 않는다. `*Axis A` 는 자유 텍스트이고 파서가 읽는
     # 대상이 아니다.
-    assert "*Process" in out
+    assert "*Axis A" in out
 
 
 def test_a_lib_definition_is_not_a_file_reference():
@@ -186,7 +197,7 @@ def test_a_lib_definition_is_not_a_file_reference():
     구별은 **인자 개수**이고 이것은 추측이 아니다 - 생산 덱의 실제 호출 형태가
     `.lib '<경로>' <섹션>` 두 인자임이 확인됐다. 정의 형태를 호출로 오인하면
     섹션 이름이 경로로 절대화되어 존재하지 않는 파일을 가리킨다."""
-    deck = "* t\n.lib SF6_HTTT\n.model nch nmos level=54\n.endl SF6_HTTT\n.end\n"
+    deck = "* t\n.lib SEC_A1\n.model nch nmos level=54\n.endl SEC_A1\n.end\n"
 
     assert resolve_includes(deck, "/BASE") == deck
 
@@ -201,7 +212,7 @@ def test_a_lib_call_keeps_the_quoting_style_it_arrived_with():
 
 
 def test_an_absolute_lib_path_is_left_alone():
-    line = ".lib '/pdk/corner_library/PROCESS.LIB' SF6_HTTT\n"
+    line = ".lib '/pdk/corner_libs/LIB_A.LIB' SEC_A1\n"
 
     assert resolve_includes(line, "/BASE") == line
 
