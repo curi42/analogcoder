@@ -55,9 +55,15 @@ that number was measured.
   **candidate generator, not a gate**, so the agent is offered only pairs that
   can actually be applied. `tried` is a set of *pairs* — trying an entry on
   `BUF_N` says nothing about `BUF_P`.
-  The rules are ports (**bidirectional** set equality, order ignored — a
-  one-directional check lets a 5-port body into a 9-port block and leaves four
-  bias ports as silently floating internal nodes), models (the body's model
+  The rules are ports (**one-directional subset**, order ignored: the body's
+  ports must all exist on the block, and the block's *leftover* ports are then
+  judged separately by `_leftover_ports_float_reason`. This entry used to say
+  "bidirectional set equality" and call the subset check a defect — that was
+  backwards and stale. `bc53d9e` relaxed equality to a subset **on purpose**,
+  because equality rejects a body that is a legitimate drop-in for a block
+  carrying extra bias ports; the floating-node danger the old text described is
+  real but is handled by the leftover guard, not by the port rule. Do not
+  "restore" equality), models (the body's model
   names must already appear somewhere in the deck — decidable without
   following `.include`, because a deck that instantiates a model has whatever
   provides it), `.option scale`, and `identical_body`. A candidate must be
@@ -682,7 +688,11 @@ that number was measured.
   testbench, not two. It compounds with criteria count: the seed is bounded by
   `min(#criteria, #corners)`, so enabling this block on `spec_pvt.yaml` (45
   corners, 22 criteria) projects to ~125 direct sims per iteration — which can
-  cost *more* than the 286 s full sweep it is meant to pre-empt. A `max_corners`
+  cost *more* than the full sweep it is meant to pre-empt. (**That sweep is no
+  longer 286 s.** 286 s was the sequential double loop; with the parallel
+  backend the same 45-corner × 5-testbench sweep measures **52.6 s — 225
+  simulations at 0.234 s each**, 5.4×. Every cost argument in this file that
+  multiplies 1.271 s/sim is quoting the pre-parallel number.) A `max_corners`
   ceiling is out of scope here and is a prerequisite for that spec. The 3 corners
   left outside the set are all `tt`. Re-entry fired **zero** times. argmax drift
   between the entry sweep and the verdict sweep of a moved deck
@@ -968,7 +978,22 @@ that number was measured.
   `history.jsonl` should learn that here rather than assume the mechanism was
   demonstrated.** Tasks 1-4 prove the record *reaches the prompt* (code and
   tests). Whether it changes behaviour was measured in task 5 and **the
-  measurement failed to answer it**. Measured on
+  measurement failed to answer it**.
+  **The re-measurement is a paired probe, not another pair of runs**
+  (`scripts/paired_tuner_probe.py`, design in
+  `docs/superpowers/specs/2026-07-29-d1-remeasurement-design.md`): it replays a
+  recorded run's `history.jsonl` to each proposal point and calls the tuner
+  **twice from the identical state**, differing in `tuning_history` alone
+  (arm A empty, arm B the real history), k=5 per point, McNemar exact on the
+  paired outcomes. That design exists because the first measurement's two arms
+  saw *different states* — and because the metric only fires where a
+  `(refdes, param)` already failed, so timepoints are selected on
+  `failed ≠ ∅`, which makes defect 1 structurally unrepeatable. The verdict
+  rule was fixed before running: **effective** = B's `R_exact` rate lower than
+  A with `p < 0.05`; `p ≥ 0.05` = no measured effect (and D1 is then a feature
+  with a cost and no measured benefit, not a neutral one). Do not read a
+  partial sweep's verdict — the script computes one at any n, and a run stopped
+  by an outage rather than by the plan is the same error again. Measured on
   `benchmarks/two_stage_opamp/spec.yaml` (a full 10-iteration run of this spec
   costs ~103 min — 6161 s; the 1348 s run only looks cheaper because it died
   at iteration 3 on an agent execution error, `iterations_used: 2`, not
@@ -1012,6 +1037,73 @@ that number was measured.
   changes, and only then widen. Full argument in
   `docs/superpowers/specs/2026-07-28-tuning-attempt-record-design.md` and its
   predecessor `2026-07-28-cross-run-experience-design.md`.
+
+### Measurement apparatus (Stage 0), and the corners a spec declares
+
+- `simulators/cache.py` / `simulators/parallel.py` — a simulation is a **pure
+  function of `(deck text, control block, corner, simulator identity)`**, which
+  is the same determinism premise the whole corner argument rests on, so it is
+  content-addressed and cached. All four determinants are in the key: drop one
+  and the cache **manufactures a fact**, which is worse than any inert gate
+  (an inert gate only ever passes something through). Hits and misses are
+  logged, because "the cache never hit" and "there is no cache" must not look
+  the same. Corner × testbench points are independent, so they run in a pool
+  (`ANALOGCODER_SIM_WORKERS`, default `cpu_count-1`); the merge is
+  order-independent and results are re-read in declaration order, so
+  completion order touches no value. Measured: the 45-corner × 5-testbench
+  bandgap sweep went **286 s → 52.6 s**.
+- `checkpoint.py` / `history.py` — resume at **boundaries only** (outer
+  iteration, corner-reduction attempt, entry to optimization). Mid-iteration
+  resume would mean replaying LLM calls. The sharp edge is **not** the state
+  snapshot but the event log: a crash leaves *partial* events for the
+  iteration, the resumed run writes the same kinds again, and both
+  `scripts/measure_repeat_rate.py` and `scripts/paired_tuner_probe.py` read
+  `history.jsonl`. Do **not** truncate the log — destroying evidence is not
+  the answer. The checkpoint records the line count, the `resume` event
+  records the abandoned range, and `history.read_events` drops those ranges
+  (several, for several resumes). `resumed_from` is **always** in
+  `result.json` (`null` when not resumed) — a partial run entering a mean as
+  if it were whole is half of why the first D1 measurement was void.
+- `json_io.py` is the one place that writes this repo's JSON, and
+  `checkpoint.py` reads back through `restore_non_finite` — see the JSON entry
+  under "The optimization phase". Checkpoints differ from `result.json` in one
+  way that matters: they are **read back into a running run**, so a marker
+  string reaching `judge_result` would `TypeError` in `deltas_between`.
+- `control_block_gate.py` — the simulator agent may return a control block, and
+  it is executed. The gate allows a fixed command vocabulary and requires every
+  non-`.option` line to be preserved in order. **An allow list narrows the
+  command vocabulary, not the argument surface**, and that gap was a live
+  arbitrary-command-execution hole: `option`/`options` (non-dot) lines are the
+  one class inside the allow list *and* excluded from the line-preservation
+  comparison, and ngspice's `cp` shell performs backtick substitution on them.
+  Demonstrated end to end — gate `accepted=True`, file created. Two layers
+  close it: the allow list is now dot-form only (what the prompt always said;
+  cost zero, 42 shipped blocks contain no option line of any form), and shell
+  substitution markers in the free surface are refused with their own reason
+  code. Narrowing alone would rest on "today's ngspice does not substitute in
+  dot form", and the three vectors tested are not an exhaustive survey.
+- **A spec declares corners as an *enumeration*, and axes are sugar.**
+  Sign-off in the production flow is a **human-picked set of N signature corners**,
+  chosen by code outside this repo (confirmed 2026-07-29) — a partial grid,
+  which **no axis declaration can express**. A list can express a product (by
+  enumerating it); a product cannot express an arbitrary list. So
+  `PVTCorners.corners` is the single truth, `__post_init__` expands an
+  axis-only construction once, and `all_corners` is the **identity function**.
+  Do not "optimize" it back into a product — that loses expressiveness and
+  points at combinations that may have no corner file. When declared as an
+  explicit list, `process`/`voltage`/`temperature` stay **empty** rather than
+  being back-derived, so nobody reads a partial grid as a product.
+  This is also what keeps the locked constraint alive at company scale: with
+  `M := N`, "the full sweep is the verdict" survives verbatim. **That rule is
+  this repo's own convention, not an external requirement** — `report.py` and
+  `cli.py` declare it and CLAUDE.md calls it locked; it was written when a full
+  sweep cost 286 s, and that price is what made it free.
+  Still ahead, deliberately not done: sign-off corners are **opaque include
+  files**, not coordinates. The design fixes the order as *label-only first,
+  axes only after physical confirmation*, because deriving axis identity from a
+  filename would be the third instance of a mistake this repo has already
+  shipped twice (matching the literal basename `pdk_corner.inc`; recognising
+  the rail by `^Vdd`).
 
 Design docs (with full rationale) live in `docs/superpowers/specs/`, implementation
 plans in `docs/superpowers/plans/`.
@@ -1496,7 +1588,10 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~69 s, 923 tests).** It was
+- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1273 tests as of
+  2026-07-29).** It was ~69 s / 923 tests before the Stage-0 measurement work
+  (cache, parallel sweep, checkpoint/resume, history, json_io, the
+  control-block gate) and the audit fixes, and before that
   ~45 s until topology curation added a real-ngspice test of its own
   (`test_curation_ngspice.py`, ~18 s); that one stays unmarked because the
   marker here means minutes, not seconds. Both files below carry the `slow`
