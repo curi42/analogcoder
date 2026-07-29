@@ -1422,6 +1422,31 @@ knob that decided the shipped proof case.
 
 - `benchmarks/inverting_amp/` — ideal op-amp (VCVS), single criterion (gain),
   passes immediately with no tuning needed. The "golden path" smoke test.
+- **`benchmarks/two_stage_opamp/`'s bias chain has TWO stable DC solutions, and
+  which one the solver lands on flips chaotically with device size and with
+  corner (measured 2026-07-30).** `Xn2`+`Rdeg` is a self-biased
+  beta-multiplier, `Rstart` is its start-up element, and **both** solutions
+  carry current — so this is not the zero-current degenerate case the bandgap
+  fixed with a trickle. State A: `degn` 0.0119 V (~0.6 µA). State B: `degn`
+  0.0626 V (~3.1 µA), **5.3×**, which raises `gm1` and takes `ugbw_hz` from
+  2.08e6 to **2.70e7 — 13×**. `vout` is 0.55 V in both (feedback holds it), so
+  **the DC output cannot tell them apart; only the AC response can.**
+  Isolated single widths flip it — `X6.W` 5.999999 fine, **6.0 flips**,
+  6.000001 fine — so it is neither a model bin (bins are intervals) nor
+  non-determinism (five fresh processes agree). **The shipped 45-corner data is
+  already affected at the shipped `X6.W=8`: 127 measurements change under a
+  `.nodeset` that steers to state A**, `t_lo_last` by 2.7×, while
+  `overall_pass` stays False on both. So every number this file and the two
+  op-amp design docs quote from this deck — the `Cc` sweep table, the PSR
+  baselines, the "`Cc`+`M6.W` in 2 iterations" run that **moved `M6.W`** — has
+  an unverified operating state behind it. **The tuner changes device sizes,
+  so it can flip the state mid-run and the judge sees a different circuit with
+  no record of it.** A `.nodeset` fixes every anomalous width and leaves every
+  correct one byte-identical (verified), but applying it changes 127 documented
+  measurements and "which state was intended" is a design question — so it is
+  **not applied**. Full diagnosis, the three excluded hypotheses, and the four
+  decisions this needs:
+  `docs/superpowers/specs/2026-07-30-two-stage-opamp-bistable-bias.md`.
 - `benchmarks/two_stage_opamp/` — real transistor-level 2-stage CMOS op-amp
   (**sky130**, `.option scale=1.0u` plus `pdk_corner.inc`; it was generic
   level-1 before the 2026-07-26 PDK migration and this line said so until
