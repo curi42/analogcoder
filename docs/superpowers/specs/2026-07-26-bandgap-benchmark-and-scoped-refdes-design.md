@@ -838,9 +838,13 @@ work; it does not bound what works.
 Every `X6` row already carries the `Xcl.W = 50` from iteration 1, because
 kept changes accumulate in the deck. Re-measured 2026-07-29: `X6.W = 55` with
 `Xcl` back at its baseline gives **17.4892 mV**, not 14.79 — it fails. What the
-run found was a *combination*, `{Xcl.W = 50, X6.W = 55}`, and that is the third
-time this repo has recorded the same reading error (F2's declared `addresses`,
-the 3-change proposal's shared delta, and now this). The finding above survives
+run found was a *combination*, `{Xcl.W = 50, X6.W = 55}`, and that is the
+**fourth** time this repo has recorded the same reading error — a joint fact
+read as a per-knob one (F2's agent-declared `addresses`, the zero-tolerance
+Pareto turning solver noise into a measured claim, the 3-change proposal's
+shared delta, and now this). The transferable rule: **a row of a trace in which
+kept changes accumulate is not an independent measurement of that row's knob.**
+The finding above survives
 unchanged in the form that matters — the gate's feedback moved the tuner off a
 saturating knob onto a productive one — but "X6 is a reachable knob" was too
 strong and should read "X6 is half of a reachable pair".
