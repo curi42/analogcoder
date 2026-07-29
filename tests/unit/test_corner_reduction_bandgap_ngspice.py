@@ -79,7 +79,7 @@ def verdict_sweep():
 
 def _seeded(entry_sweep):
     spec = _spec()
-    return spec, seed_from_sweep(entry_sweep, spec)
+    return spec, seed_from_sweep(entry_sweep, spec)[0]
 
 
 def test_the_mid_loop_sees_corners_and_the_set_is_smaller_than_the_full_sweep(entry_sweep):

@@ -682,3 +682,59 @@ def test_a_corner_entry_missing_a_coordinate_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="temperature"):
         load_spec(path)
+
+
+def test_a_corner_reduction_without_a_coverage_block_declares_no_coverage(tmp_path):
+    """블록이 없으면 `None`이다. 기본값 객체를 넣으면 '선언하지 않았다'와
+    '기본값으로 선언했다'가 구별되지 않고, 이 설계의 전제(블록이 없으면 오늘
+    동작과 바이트 동일)가 코드에서 보이지 않게 된다."""
+    from analogcoder.spec import _load_corner_reduction
+
+    cr = _load_corner_reduction({"corner_reduction": {"enabled": True}})
+
+    assert cr is not None
+    assert cr.coverage is None
+
+
+def test_a_coverage_block_carries_epsilon_and_tau(tmp_path):
+    from analogcoder.spec import _load_corner_reduction
+
+    cr = _load_corner_reduction(
+        {"corner_reduction": {"enabled": True, "coverage": {"epsilon": 0.03, "tau": 1.0}}}
+    )
+
+    assert cr.coverage.epsilon == 0.03
+    assert cr.coverage.tau == 1.0
+
+
+def test_a_coverage_block_needs_both_epsilon_and_tau():
+    """기본값을 주지 않는다. epsilon 은 이 덱에서 **유도**해야 하는 값이고,
+    코드가 하나 골라 두면 그 숫자가 근거 없이 생산 덱까지 따라간다."""
+    from analogcoder.spec import _load_corner_reduction
+
+    for block in ({"epsilon": 0.03}, {"tau": 1.0}, {}):
+        with pytest.raises(ValueError, match="epsilon|tau"):
+            _load_corner_reduction({"corner_reduction": {"coverage": block}})
+
+
+@pytest.mark.parametrize("epsilon", [-0.1, 1.5])
+def test_an_epsilon_outside_zero_to_one_is_refused(epsilon):
+    """음수는 뜻이 없고, 1.0 초과는 '최악값의 100% 이상 떨어져도 덮는다'는
+    뜻이라 사실상 전 코너가 전 기준을 덮는다 - 씨앗이 1개로 붕괴하면서
+    로그는 정상으로 읽힌다."""
+    from analogcoder.spec import _load_corner_reduction
+
+    with pytest.raises(ValueError, match="epsilon"):
+        _load_corner_reduction(
+            {"corner_reduction": {"coverage": {"epsilon": epsilon, "tau": 1.0}}}
+        )
+
+
+@pytest.mark.parametrize("tau", [0.0, -0.5, 1.5])
+def test_a_tau_outside_zero_exclusive_to_one_is_refused(tau):
+    from analogcoder.spec import _load_corner_reduction
+
+    with pytest.raises(ValueError, match="tau"):
+        _load_corner_reduction(
+            {"corner_reduction": {"coverage": {"epsilon": 0.03, "tau": tau}}}
+        )

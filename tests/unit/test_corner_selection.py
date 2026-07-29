@@ -6,6 +6,7 @@ from analogcoder.corner_selection import (
     NOMINAL,
     CornerSet,
     _as_point,
+    coverage_seed,
     grown_with,
     label,
     next_probe,
@@ -14,7 +15,7 @@ from analogcoder.corner_selection import (
     seed_from_sweep,
 )
 from analogcoder.pvt import CornerPoint, corner_fields as _corner_fields
-from analogcoder.spec import PVTCorners
+from analogcoder.spec import CoverageConfig, Criterion, PVTCorners
 
 FS = CornerPoint(process="fs", voltage=1.98, temperature=125.0)
 SF = CornerPoint(process="sf", voltage=1.62, temperature=-40.0)
@@ -25,7 +26,10 @@ SS = CornerPoint(process="ss", voltage=1.62, temperature=125.0)
 def _spec():
     # seed_from_sweep only needs a spec that carries pvt_corners, matching
     # tests/unit/test_pvt.py's SimpleNamespace pattern. testbenches/canonical/
-    # all_criteria are left minimal since this module never reads them.
+    # all_criteria are left minimal here (this fixture has no coverage config
+    # and no criteria to cover) - but seed_from_sweep does read testbenches,
+    # all_criteria and corner_reduction.coverage off spec now; this fixture is
+    # just a case where those reads see empty/absent values.
     return types.SimpleNamespace(
         testbenches=[],
         canonical=None,
@@ -44,19 +48,19 @@ def _wc(corner, value):
 
 
 def test_the_seed_is_the_union_of_every_criterion_s_worst_corner(_spec):
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "psr": _wc(SF, -9.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "psr": _wc(SF, -9.0)}), _spec)
     assert set(cs.corners) == {NOMINAL, FS, SF}
 
 
 def test_two_criteria_sharing_a_worst_corner_do_not_duplicate_it(_spec):
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)}), _spec)
     assert list(cs.corners).count(FS) == 1
 
 
 def test_nominal_is_always_first_even_when_no_criterion_names_it(_spec):
     # 임계값이 덱 그대로의 상태에서 정해졌다. 최악 코너 목록에 안 나온다고
     # 빼면 기존 동작의 기준점이 사라진다.
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
     assert cs.corners[0] is NOMINAL
 
 
@@ -64,7 +68,7 @@ def test_a_corner_with_no_measurement_is_that_criterion_s_worst(_spec):
     # value=None은 그 코너에서 측정값이 아예 안 나왔다는 뜻이고,
     # worst_case_corners가 이미 그 코너를 지목하고 있다. 값이 없다고
     # 건너뛰는 변형은 회로가 동작하지 않는 코너를 집합에서 빠뜨린다.
-    cs = seed_from_sweep(_sweep({"gain": _wc(SS, None)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(SS, None)}), _spec)
     assert SS in cs.corners
 
 
@@ -75,7 +79,7 @@ def test_a_failing_entry_sweep_still_seeds(_spec):
     # 시작한 실행에서 축소를 통째로 꺼 버린다.
     failing = {"worst_case_corners": {"gain": _wc(FS, 12.0)},
                "per_corner": [], "overall_pass": False}
-    cs = seed_from_sweep(failing, _spec)
+    cs, _ = seed_from_sweep(failing, _spec)
     assert FS in cs.corners
 
 
@@ -89,7 +93,8 @@ def test_the_probe_order_is_most_severe_first(_spec):
             {"corner": {"process": "sf", "voltage": 1.62, "temperature": -40.0}, "severity": 0.01},
         ],
     }
-    assert seed_from_sweep(sweep, _spec).probe_order[0] == SF
+    cs, _ = seed_from_sweep(sweep, _spec)
+    assert cs.probe_order[0] == SF
 
 
 def test_a_corner_already_in_the_set_is_not_also_a_probe(_spec):
@@ -101,7 +106,7 @@ def test_a_corner_already_in_the_set_is_not_also_a_probe(_spec):
             {"corner": {"process": "sf", "voltage": 1.62, "temperature": -40.0}, "severity": 0.5},
         ],
     }
-    cs = seed_from_sweep(sweep, _spec)
+    cs, _ = seed_from_sweep(sweep, _spec)
     assert FS not in cs.probe_order and SF in cs.probe_order
 
 
@@ -280,3 +285,229 @@ def test_no_entry_at_all_is_no_name_at_all():
     """`None`은 "그 기준에 최악 코너 항목이 없다"이고 `(deck)`은 "항목은
     있는데 좌표가 없다"다. 서로 다른 사실이다."""
     assert raw_label(None) is None
+
+
+# --------------------------------------------- ε-근접 피복 씨앗 (coverage_seed)
+
+
+def _per_corner(rows):
+    """rows: [(CornerPoint, {measurement: value}), ...] -> per_corner 항목들."""
+    from analogcoder.pvt import corner_fields
+
+    return [{"corner": corner_fields(c), "measurements": m, "severity": 0.0}
+            for c, m in rows]
+
+
+_GAIN = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)
+_PM = Criterion(name="pm", measurement="p", operator=">=", threshold=60.0)
+
+
+def test_two_corners_within_epsilon_of_each_others_worst_collapse_to_one():
+    """이것이 이 함수의 존재 이유다. argmax 피복에서 집합은 서로소이므로
+    (기준마다 argmax 가 하나) 코너를 줄일 수 없다. ε-근접이 집합을 겹치게
+    만든다: FS 가 gain 의 최악이고 SS 가 pm 의 최악인데, SS 의 gain 이 FS 의
+    gain 에서 ε 이내이면 SS 하나가 둘 다 덮는다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 70.0}),
+        (SS, {"g": 41.02, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.01, tau=1.0))
+
+    assert chosen == [SS]
+    assert record["covered"] == 2 and record["total"] == 2
+    assert label(FS) in record["dropped"]
+
+
+def test_epsilon_zero_reproduces_the_argmax_union():
+    """ε=0 이면 각 기준의 최악값과 **정확히** 같은 코너만 덮으므로 오늘의
+    씨앗과 같은 집합이 나온다. 이것이 회귀 안전선이다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 70.0}),
+        (SS, {"g": 45.0, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.0, tau=1.0))
+
+    assert set(chosen) == {FS, SS}
+    assert record["dropped"] == []
+
+
+def test_a_corner_with_no_measurement_is_not_approximated_by_any_other():
+    """측정값이 없다는 것은 회로가 거기서 동작하지 않는다는 가장 강한 증거다.
+    값이 있는 코너가 그것을 ε 으로 덮으면 그 사실이 사라진다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0}),
+        (SS, {}),          # g 측정값 없음
+    ])}
+
+    chosen, _ = coverage_seed(sweep, [_GAIN], CoverageConfig(epsilon=0.9, tau=1.0))
+
+    assert SS in chosen
+
+
+def test_tau_below_one_stops_early():
+    """예산 k 는 τ 에서 유도된다 - 정수 상한을 따로 두지 않는 이유다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 41.0, "p": 99.0}),
+        (SS, {"g": 99.0, "p": 65.0}),
+    ])}
+
+    chosen, record = coverage_seed(sweep, [_GAIN, _PM], CoverageConfig(epsilon=0.0, tau=0.5))
+
+    assert len(chosen) == 1
+    assert record["covered"] == 1 and record["total"] == 2
+
+
+def test_an_empty_per_corner_yields_an_empty_seed_rather_than_guessing():
+    sweep = {"per_corner": []}
+
+    chosen, record = coverage_seed(sweep, [_GAIN], CoverageConfig(epsilon=0.03, tau=1.0))
+
+    assert chosen == []
+    assert record["covered"] == 0 and record["total"] == 1
+    # MINOR 7: 이 상태는 `dropped: []`의 독스트링 정의("ε이 겹침을 전혀 만들지
+    # 못해 줄일 것이 없었다")와 정반대다 - 아무것도 못 고른 완전한 실패다.
+    # target/reached_target이 없으면 이 둘이 같은 dropped==[] 로 구별되지
+    # 않는다.
+    assert record["target"] == 1
+    assert record["reached_target"] is False
+
+
+def test_a_criterion_whose_worst_is_zero_is_covered_only_by_an_exact_tie():
+    """최악값이 0 인 기준은 허용오차도 0 이라 정확히 같은 값만 덮는다.
+
+    **기준이 둘이어야 이 테스트가 발화한다.** 하나짜리로는 탐욕이 어차피
+    첫 코너를 고르므로 옛 코드(`abs(worst) if worst else 1.0`)에서도 같은
+    답이 나온다 - 실패할 수 없는 테스트가 된다. 기준을 둘로 두면 옛 코드는
+    SS 가 z 까지 덮는다고 잘못 판단해 **FS 를 버리고**, 그 FS 가 resid 의
+    최악을 유일하게 들고 있던 코너다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"z": 0.0, "g": 50.0}),
+        (SS, {"z": -0.002, "g": 42.0}),
+    ])}
+    resid = Criterion(name="resid", measurement="z", operator="<=", threshold=1.0)
+    other = Criterion(name="other", measurement="g", operator=">=", threshold=1.0)
+
+    chosen, record = coverage_seed(sweep, [resid, other], CoverageConfig(epsilon=0.01, tau=1.0))
+
+    assert set(chosen) == {FS, SS}
+    assert record["dropped"] == []
+
+
+def test_a_measurement_absent_from_every_corner_names_no_dropped_corner():
+    """`dropped` 는 '오늘의 씨앗이 골랐을 코너'와 비교한 결과다. 오늘의 씨앗은
+    `worst_case_corners` 에서 오고, `pvt.worst_case_measurements` 는 어느 코너에도
+    측정값이 없는 기준을 **통째로 건너뛴다**. `_argmax_points` 가 그것을
+    `missing[0]` 에 귀속시키면 실재하지 않는 이유로 코너 하나가 dropped 에
+    실린다 - 이 게이트의 무력 상태를 보이게 하는 바로 그 칸이 거짓이 된다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 45.0}),
+        (SS, {"g": 41.0}),
+    ])}
+    ghost = Criterion(name="ghost", measurement="nowhere", operator=">=", threshold=1.0)
+
+    _chosen, record = coverage_seed(sweep, [_GAIN, ghost], CoverageConfig(epsilon=0.0, tau=1.0))
+
+    assert record["dropped"] == []
+
+
+# --------------------------------- seed_from_sweep 배선 (corner_seed 기록)
+
+
+def test_seed_from_sweep_reports_argmax_mode_when_no_coverage_is_declared(_spec):
+    """기록은 **무조건** 나온다. 피복을 쓸 때만 적으면 '오늘 방식으로 골랐다'와
+    '기록하는 코드가 사라졌다'가 같은 침묵이 된다 - 이 저장소가 열 번 센
+    실패 모양이다."""
+    cs, record = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
+
+    assert record["mode"] == "argmax"
+    assert record["epsilon"] is None and record["tau"] is None
+    assert record["dropped"] == []
+    assert record["seed_size"] == 1
+    assert cs.corners[0] is NOMINAL
+
+
+def test_argmax_covered_total_are_criteria_counts_not_corner_counts():
+    """review finding #4: 코너 개수로 covered/total을 적으면 여기서 항상
+    covered==total(언제나 100%)이 나오고, coverage 모드(기준 단위)와 나란히
+    놓으면 코너를 기준과 비교하는 셈이 된다. 기준 셋 중 둘이 같은 최악 코너를
+    가리키면(worst_case_corners 항목 2개, 서로 다른 코너는 1개) 옛 코드는
+    covered=1, total=1을 냈다 - 세 번째 기준은 안 보였고 covered==total이 그
+    사실을 숨겼다."""
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs"], voltage=[1.62, 1.98], temperature=[27, 125]),
+        testbenches=[object()],
+        all_criteria=[
+            _GAIN, _PM, Criterion(name="tc", measurement="tc_ppm", operator="<=", threshold=1.0),
+        ],
+        corner_reduction=None,
+    )
+    sweep = _sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)})
+
+    _cs, record = seed_from_sweep(sweep, spec)
+
+    assert record["total"] == 3   # len(spec.all_criteria) - 코너 개수가 아니다
+    assert record["covered"] == 2  # worst_case_corners 항목 개수(gain, pm) - 서로 다른 코너 수(1)가 아니다
+
+
+def test_argmax_covered_total_are_omitted_when_spec_carries_no_all_criteria():
+    """all_criteria가 없는 호출자(테스트 더블)에서는 잘못된 단위를 적느니 두
+    키를 아예 비운다."""
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs"], voltage=[1.62, 1.98], temperature=[27, 125]),
+    )
+    sweep = _sweep({"gain": _wc(FS, 41.0)})
+
+    _cs, record = seed_from_sweep(sweep, spec)
+
+    assert "total" not in record and "covered" not in record
+
+
+def test_points_per_tb_excludes_the_probe_when_probe_is_disabled():
+    """review finding #5: 탐침이 꺼져 있으면(`probe: false`) 중간 루프는 이
+    점을 절대 시뮬레이션하지 않는다(`corner_sim._probe_enabled`). 옛 코드는
+    probe_order가 비어 있지만 않으면 무조건 +1을 더해, probe=False인 스펙에서도
+    실제 ngspice 실행 수보다 1 큰 상수를 영구히 보고했다."""
+    from analogcoder.spec import CornerReduction
+
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs", "ss"], voltage=[1.62, 1.98], temperature=[27, 125]),
+        testbenches=[object()],
+        all_criteria=[_GAIN],
+        corner_reduction=CornerReduction(probe=False),
+    )
+    sweep = {
+        "worst_case_corners": {"gain": _wc(FS, 41.0)},
+        "per_corner": _per_corner([(FS, {"g": 41.0}), (SS, {"g": 45.0})]),
+    }
+
+    cs, record = seed_from_sweep(sweep, spec)
+
+    assert cs.probe_order  # 집합 밖에 실제로 탐침 후보가 있다
+    assert record["points_per_tb"] == len(cs.corners)  # 탐침 없이
+
+
+def test_seed_from_sweep_uses_coverage_when_the_spec_declares_it():
+    from analogcoder.spec import CornerReduction
+
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs", "sf", "ss"], voltage=[1.62, 1.8, 1.98], temperature=[-40, 27, 125]),
+        all_criteria=[_GAIN, _PM],
+        testbenches=[object(), object()],
+        corner_reduction=CornerReduction(coverage=CoverageConfig(epsilon=0.01, tau=1.0)),
+    )
+    sweep = {
+        "per_corner": _per_corner([(FS, {"g": 41.0, "p": 70.0}),
+                                   (SS, {"g": 41.02, "p": 65.0})]),
+        "worst_case_corners": {},
+    }
+
+    cs, record = seed_from_sweep(sweep, spec)
+
+    assert record["mode"] == "coverage"
+    assert record["epsilon"] == 0.01
+    assert cs.corners == (NOMINAL, SS)
+    # NOMINAL + 씨앗 + 탐침 1
+    assert record["points_per_tb"] == 3
+    assert label(FS) in record["dropped"]

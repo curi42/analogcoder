@@ -101,6 +101,22 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
     )
     lines.append(f"**Re-entry attempts:** {reduction.get('attempts')}")
 
+    # **씨앗을 무엇으로 골랐는지.** history.jsonl의 `corner_seed`에만 있던 사실을
+    # 여기로 끌어온다 - result.json/report.md만 보는 사람은 argmax와 ε-coverage
+    # 중 무엇이 돌았는지 알 방법이 없었다. 없을 때(재개 회차에 다시 안 뽑았거나
+    # 축소 자체가 꺼졌을 때)는 줄을 그리지 않는다 - 뽑지 않은 것을 뽑은 것처럼
+    # 적지 않는다.
+    seed = reduction.get("seed")
+    if seed:
+        line = f"**Corner seed:** {seed.get('mode')}"
+        if seed.get("mode") == "coverage":
+            dropped = seed.get("dropped") or []
+            line += (
+                f" (epsilon={seed.get('epsilon')}, tau={seed.get('tau')}, "
+                f"dropped {len(dropped)} argmax corner(s))"
+            )
+        lines.append(line)
+
     baselines = reduction.get("area_baselines")
     line = f"**Area-gate baselines:** {baselines}"
     if isinstance(baselines, int) and baselines > 1:

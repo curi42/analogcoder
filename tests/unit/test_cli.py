@@ -1447,6 +1447,145 @@ async def test_the_run_records_whether_each_criterion_s_worst_corner_moved(tmp_p
     assert _one_history_event(run_dir, "corner_argmax_drift")["moved_count"] == 1
 
 
+CORNER_REDUCTION_COVERAGE_SPEC_YAML = CORNER_REDUCTION_SPEC_YAML.replace(
+    "  probe: true\n",
+    "  probe: true\n"
+    "  coverage:\n"
+    "    epsilon: 0.05\n"
+    "    tau: 1.0\n",
+)
+
+
+@pytest.mark.asyncio
+async def test_corner_seed_event_is_logged_unconditionally_in_argmax_mode(tmp_path):
+    """`corner_seed`는 coverage가 선언되지 않아도 남는다 - **무조건** 남는다는
+    계약을 이 테스트가 지킨다. 이 단언이 없으면 cli.py의 로그 호출을 조건부로
+    바꾸거나 통째로 지워도 스위트 전체가 초록으로 남는다 - "오늘 방식으로
+    골랐다"와 "기록하는 코드가 사라졌다"가 같은 침묵이 되는 바로 그 모양."""
+    run_dir = str(tmp_path / "runs" / "cseed1")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep({"gain": _wc("fs", 41.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    event = _one_history_event(run_dir, "corner_seed")
+    assert event["mode"] == "argmax"
+    assert event["epsilon"] is None and event["tau"] is None
+    assert event["dropped"] == []
+
+
+@pytest.mark.asyncio
+async def test_corner_seed_event_reflects_coverage_when_the_spec_declares_it(tmp_path):
+    """coverage가 선언되면 `corner_seed`의 mode/epsilon/tau가 그것을 그대로
+    반영한다 - argmax 테스트와 짝을 이루어 두 갈래 모두 검증한다."""
+    run_dir = str(tmp_path / "runs" / "cseed2")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+    entry["per_corner"] = [
+        {"corner": {"process": "fs", "voltage": 1.98, "temperature": 125.0},
+         "measurements": {"gain_db": 41.0, "phase_margin": 55.0}, "severity": 0.0},
+    ]
+    verdict = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_COVERAGE_SPEC_YAML, run_dir))
+
+    event = _one_history_event(run_dir, "corner_seed")
+    assert event["mode"] == "coverage"
+    assert event["epsilon"] == 0.05
+    assert event["tau"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_corner_set_seeded_carries_by_criterion_in_argmax_mode(tmp_path):
+    """IMPORTANT 3: argmax 모드의 선택 집합은 `worst_case_corners`의 상(image)
+    그 자체이므로 by_criterion은 참인 진술이다 - argmax 쪽은 계속 실어야 한다."""
+    run_dir = str(tmp_path / "runs" / "byc1")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+    verdict = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    event = _one_history_event(run_dir, "corner_set_seeded")
+    assert event["by_criterion"] == {"gain": "fs/1.98/125.0", "pm": "fs/1.98/125.0"}
+
+
+@pytest.mark.asyncio
+async def test_corner_set_seeded_omits_by_criterion_in_coverage_mode(tmp_path):
+    """IMPORTANT 3: coverage 모드의 선택 집합은 탐욕 피복이 고르므로
+    `worst_case_corners`의 상이 아니다 - 측정된 사례에서 이 매핑이 가리키는
+    코너가 선택 집합 밖에 있었다(corners=['(deck)', 'ss/1.62/125.0']인데
+    by_criterion={'gain': 'fs/...'}). 거짓 구조 주장을 싣느니 키를 아예
+    비운다."""
+    run_dir = str(tmp_path / "runs" / "byc2")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+    entry["per_corner"] = [
+        {"corner": {"process": "fs", "voltage": 1.98, "temperature": 125.0},
+         "measurements": {"gain_db": 41.0, "phase_margin": 55.0}, "severity": 0.0},
+    ]
+    verdict = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_COVERAGE_SPEC_YAML, run_dir))
+
+    event = _one_history_event(run_dir, "corner_set_seeded")
+    assert "by_criterion" not in event
+
+
+@pytest.mark.asyncio
+async def test_result_json_carries_the_seed_record_under_corner_reduction(tmp_path):
+    """IMPORTANT 6: result.json/report.md만 보는 사람은 지금까지 argmax와
+    ε-coverage 중 무엇이 돌았는지 알 방법이 없었다 - `corner_seed`는
+    history.jsonl에만 남았다. `result["corner_reduction"]["seed"]`가 그
+    간극을 메운다."""
+    run_dir = str(tmp_path / "runs" / "seedresult1")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    verdict = _sweep({"gain": _wc("fs", 41.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    seed = result["corner_reduction"]["seed"]
+    assert seed is not None
+    assert seed["mode"] == "argmax"
+
+
 @pytest.mark.asyncio
 async def test_only_the_failing_criteria_s_corners_join_the_set(tmp_path):
     # 성장은 **실패한 기준들의** 최악 코너만 더한다. 통과한 기준의 최악 코너를

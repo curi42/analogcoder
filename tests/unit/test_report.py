@@ -185,6 +185,56 @@ def test_write_report_md_says_nothing_about_corner_reduction_when_the_key_is_abs
     assert "Corner reduction" not in content
 
 
+def test_write_report_md_names_the_argmax_seeding_mode(tmp_path):
+    """IMPORTANT 6: result.json/report.md만 보는 사람이 지금까지 argmax와
+    ε-coverage 중 무엇이 돌았는지 알 방법이 없었다 - `corner_seed`는
+    history.jsonl에만 남았다."""
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {"mode": "argmax", "epsilon": None, "tau": None, "dropped": []},
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "**Corner seed:** argmax" in content
+
+
+def test_write_report_md_names_epsilon_tau_and_dropped_count_in_coverage_mode(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {
+                "mode": "coverage", "epsilon": 0.05, "tau": 1.0,
+                "dropped": ["fs/1.98/125.0", "ss/1.62/27.0"],
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "**Corner seed:** coverage" in content
+    assert "epsilon=0.05" in content
+    assert "tau=1.0" in content
+    assert "dropped 2 argmax corner(s)" in content
+
+
+def test_write_report_md_says_nothing_about_the_seed_when_the_key_is_absent(tmp_path):
+    # 재개 회차에 다시 안 뽑았거나 축소 자체가 꺼진 경우 - 뽑지 않은 것을 뽑은
+    # 것처럼 적지 않는다(최적화/토폴로지/재개 섹션과 같은 규칙).
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {**CORNER_REDUCTION_RESULT["corner_reduction"], "seed": None},
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "Corner seed" not in content
+
+
 def test_write_report_md_reports_an_inactive_corner_reduction_with_its_reason(tmp_path):
     result = {
         **SAMPLE_RESULT,

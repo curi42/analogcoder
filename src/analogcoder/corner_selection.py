@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, replace
 
 from analogcoder.pvt import CornerPoint
@@ -152,7 +153,127 @@ def _probe_order(sweep: dict, corners: tuple) -> tuple[CornerPoint, ...]:
     return tuple(point for _, point in entries)
 
 
-def seed_from_sweep(sweep: dict, spec) -> CornerSet:
+def _worst_of(values: list[float], operator: str) -> float:
+    """이 연산자에서 '가장 나쁜' 값. `>=`/`>` 면 작을수록 나쁘다."""
+    return min(values) if operator in (">=", ">") else max(values)
+
+
+def _is_missing(value) -> bool:
+    # NaN을 결측으로 다루는 것은 `pvt.worst_case_measurements`(키의 존재로만
+    # "측정됨"을 판단하고 NaN 여부는 보지 않는다)와 어긋난다. 오늘은 무해하다 -
+    # `result.measurements`에 NaN을 싣는 경로가 없다(json_io의 NaN 마커는
+    # 직렬화 형식이지 이 함수가 보는 실행 중 dict의 값이 아니다). 두 함수가
+    # 실제로 NaN이 실린 같은 dict를 보게 되는 날, 이 불일치가 살아난다.
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def coverage_seed(sweep: dict, criteria: list, coverage) -> tuple[list, dict]:
+    """ε-근접 피복 위의 탐욕으로 코너 씨앗을 고른다.
+
+    **왜 argmax 합집합이 아닌가.** `worst_case_corners`는 기준 -> 코너
+    **하나**의 매핑이므로, 각 코너가 덮는 집합은 그 매핑의 역상이고 어떤 두
+    코너도 같은 기준을 덮지 않는다. 서로소이면 피복 함수가 가법적이라 탐욕이
+    정확히 최적이고 - 즉 부분모듈성이 내용을 갖지 않고 - 무엇보다 **피복률을
+    유지한 채 코너를 줄이는 것이 불가능하다.**
+
+    ε-근접("이 코너에서의 값이 최악값으로부터 상대 ε 이내")은 집합을 겹치게
+    만들어 그 자리를 살린다. 목적에도 더 충실하다 - 중간 루프가 원하는 것은
+    argmax 그 자체가 아니라 **위반을 드러내는 코너**이고, 최악에서 아주 조금
+    떨어진 코너는 같은 위반을 드러낸다(실측: 위반 11건이 ε=10%에서도 전부
+    보존됐다. 위반은 칼날이 아니라 띠다).
+
+    **측정값이 없는 코너는 근사되지 않는다.** 그 기준의 최악이고, 값이 있는
+    어떤 코너도 그것을 덮지 못한다 - 회로가 거기서 동작하지 않는다는 사실을
+    ε 으로 뭉개지 않는다.
+
+    돌려주는 기록의 `dropped`가 이 게이트의 무력 상태를 보이게 한다: ε 이
+    겹침을 전혀 만들지 못하면 `[]`이고, 그것이 "줄일 것이 없었다"를 말한다."""
+    entries = sweep.get("per_corner", [])
+    points = [_as_point(entry["corner"]) for entry in entries]
+    measurements = [entry.get("measurements", {}) for entry in entries]
+
+    # 코너 index -> 이 코너가 덮는 기준 이름들
+    sets: dict[int, set] = {i: set() for i in range(len(points))}
+    for criterion in criteria:
+        values = [m.get(criterion.measurement) for m in measurements]
+        missing = [i for i, v in enumerate(values) if _is_missing(v)]
+        if missing:
+            for i in missing:
+                sets[i].add(criterion.name)
+            continue
+        if not values:
+            continue
+        worst = _worst_of(values, criterion.operator)
+        # scale에 `or 1.0` 같은 대체 상수를 두지 않는다 - 최악값이 정확히
+        # 0.0이면 scale도 0.0이 되어, 그 값과 정확히 같은 코너만 덮인다
+        # (ε * 0.0 == 0.0). 대체 상수를 넣으면 그 기준에서만 ε이 상대
+        # 허용오차에서 절대 허용오차로 조용히 바뀌고, 그 상수는 어떤 실측에서도
+        # 유도되지 않은 추측이 된다 - 이 저장소가 COMPARISON_REL_TOLERANCE에서
+        # 이미 거부한 패턴이다. 닫히는 방향으로 실패한다: 씨앗이 커질 뿐이고,
+        # 빠져야 할 코너가 빠지는 일은 없다 - 잠긴 제약이 요구하는 바로 그 방향.
+        scale = abs(worst)
+        for i, value in enumerate(values):
+            if abs(value - worst) <= coverage.epsilon * scale:
+                sets[i].add(criterion.name)
+
+    total = len(criteria)
+    target = math.ceil(coverage.tau * total)
+    covered: set = set()
+    chosen: list = []
+    remaining = dict(sets)
+    while len(covered) < target:
+        best, gain = None, 0
+        for i in sorted(remaining):
+            new = len(remaining[i] - covered)
+            if new > gain:
+                best, gain = i, new
+        if best is None:
+            break
+        chosen.append(points[best])
+        covered |= remaining.pop(best)
+
+    argmax_points = _argmax_points(sweep, criteria, points, measurements)
+    dropped = [label(p) for p in argmax_points if p not in chosen]
+    # **`target`/`reached_target`가 짧은 탈출을 보이게 한다.** `per_corner`가
+    # 비어 있으면(오늘은 `run_full_pvt_sweep`이 항상 채우므로 도달하지 않지만,
+    # 이 함수는 그 가정에 기대지 않는다) `remaining`도 처음부터 비어 위
+    # while이 첫 반복에서 바로 break하고, `covered=0, dropped=[]`이 나온다.
+    # `dropped: []`의 독스트링 정의("ε이 겹침을 전혀 만들지 못해 줄일 것이
+    # 없었다")를 그대로 읽으면 이 상태는 정반대(아무것도 못 골랐다)인데도
+    # "다 됐다"로 읽힌다. target/reached_target을 항상 함께 실어 그 둘을
+    # 구별한다.
+    return chosen, {
+        "covered": len(covered), "total": total, "dropped": dropped,
+        "target": target, "reached_target": len(covered) >= target,
+    }
+
+
+def _argmax_points(sweep: dict, criteria: list, points: list, measurements: list) -> list:
+    """오늘의 씨앗이 골랐을 코너들. `dropped`를 계산하기 위해서만 쓴다.
+
+    `pvt.worst_case_measurements`가 정하는 규칙을 그대로 따라야 한다 - 오늘의
+    씨앗(`seed_from_sweep`)은 그 함수가 만든 `worst_case_corners`에서 오기
+    때문이다. 그 함수는 측정값이 **어느 코너에도** 없는 기준을 `continue`로
+    통째로 건너뛴다(`worst_corners`에 항목 자체를 남기지 않는다) - "모든
+    코너에 없다"와 "일부 코너에만 없다"(`missing[0]`으로 그 코너를 지목)는
+    서로 다른 사실이다. 여기서 전자를 후자처럼 다루면, 오늘의 씨앗에는 실제로
+    없던 코너를 `_argmax_points`가 지어내고, 그 코너가 `dropped`에 실려
+    "실재하지 않는 이유로 코너 하나가 빠졌다"는 거짓을 보고하게 된다."""
+    chosen = []
+    for criterion in criteria:
+        values = [m.get(criterion.measurement) for m in measurements]
+        if not values or all(_is_missing(v) for v in values):
+            continue  # 이 기준은 오늘의 씨앗에 코너를 전혀 남기지 않는다
+        missing = [i for i, v in enumerate(values) if _is_missing(v)]
+        index = missing[0] if missing else values.index(
+            _worst_of(values, criterion.operator)
+        )
+        if points[index] not in chosen:
+            chosen.append(points[index])
+    return chosen
+
+
+def seed_from_sweep(sweep: dict, spec) -> tuple[CornerSet, dict]:
     """진입 스윕에서 기준별 최악 코너를 뽑아 합집합. 새 시뮬레이션은 없다.
 
     value가 None인 항목도 포함한다 - 그 코너에서 측정값이 아예 안 나왔다는
@@ -161,18 +282,65 @@ def seed_from_sweep(sweep: dict, spec) -> CornerSet:
     진입 스윕의 overall_pass는 보지 않는다 - 실패한 설계의 최악 코너도
     최악 코너이고, 오히려 중간 루프가 봐야 할 코너다.
 
-    spec 인자는 지정된 인터페이스라서 유지하지만, 이 함수는 그 안의 어떤
-    것도 읽지 않는다 - worst_case_corners의 각 항목이 spec.pvt_corners가
-    선언한 교차곱 안에 실제로 있는지 검증하지 않는다. 오늘은 무해하지만
-    (sweep은 항상 all_corners(spec.pvt_corners)에서 나온 코너로 채워진다),
-    다른 출처의 sweep을 받는 순간 조용히 틀린 코너를 받아들일 수 있다."""
-    chosen: list[CornerPoint] = []
-    for raw in sweep.get("worst_case_corners", {}).values():
-        point = _as_point(raw)
-        if point not in chosen:
-            chosen.append(point)
+    spec 인자는 지정된 인터페이스라서 유지했었으나, worst_case_corners의 각
+    항목이 spec.pvt_corners가 선언한 교차곱 안에 실제로 있는지는 여전히
+    검증하지 않는다 - 오늘은 무해하지만(sweep은 항상
+    all_corners(spec.pvt_corners)에서 나온 코너로 채워진다), 다른 출처의
+    sweep을 받는 순간 조용히 틀린 코너를 받아들일 수 있다.
+
+    **반환형이 `(CornerSet, record)`다.** record 는 `corner_seed` 이벤트에
+    그대로 실리고, 호출부는 그것을 **무조건** 적는다 - 피복을 쓸 때만 적으면
+    "오늘 방식으로 골랐다"와 "기록하는 코드가 사라졌다"가 같은 침묵이 된다.
+
+    `spec` 인자를 이제 **실제로 읽는다**(`corner_reduction.coverage`,
+    `all_criteria`, `testbenches`). 예전 독스트링이 "이 함수는 spec 안의 어떤
+    것도 읽지 않는다"고 적고 있었는데, 그 문장은 이 커밋으로 낡았다."""
+    coverage = getattr(getattr(spec, "corner_reduction", None), "coverage", None)
+    n_tb = len(getattr(spec, "testbenches", ()) or ()) or 1
+
+    if coverage is None:
+        chosen: list = []
+        for raw in sweep.get("worst_case_corners", {}).values():
+            point = _as_point(raw)
+            if point not in chosen:
+                chosen.append(point)
+        record = {
+            "mode": "argmax", "epsilon": None, "tau": None, "dropped": [],
+        }
+        # **covered/total은 코너 개수가 아니라 기준 개수여야 coverage 모드와
+        # 같은 단위가 된다.** `len(chosen)`을 그대로 쓰면 covered == total이
+        # 항상 성립해 argmax 칸은 어떤 실행에서도 100%로만 읽히고, coverage
+        # 모드(기준 단위)와 나란히 놓았을 때 코너를 기준과 비교하는 셈이 된다.
+        # `spec.all_criteria`가 없는 호출자(테스트 더블)에서는 잘못된 단위를
+        # 적느니 두 키를 아예 비운다 - 이 함수의 다른 spec 속성 접근과 같은
+        # getattr 방식.
+        all_criteria = getattr(spec, "all_criteria", None)
+        if all_criteria is not None:
+            record["total"] = len(all_criteria)
+            record["covered"] = len(sweep.get("worst_case_corners", {}))
+    else:
+        chosen, cover_record = coverage_seed(sweep, list(spec.all_criteria), coverage)
+        record = {
+            "mode": "coverage", "epsilon": coverage.epsilon, "tau": coverage.tau,
+            **cover_record,
+        }
+
     corners = (NOMINAL, *chosen)
-    return CornerSet(corners=corners, probe_order=_probe_order(sweep, corners))
+    cs = CornerSet(corners=corners, probe_order=_probe_order(sweep, corners))
+    record["seed_size"] = len(chosen)
+    # corner_sim._probe_enabled과 같은 술어: 필드가 없으면(corner_reduction
+    # 블록이 없으면) 탐침은 켜진 것으로 취급한다. probe_frozen은 여기서 모른다 -
+    # 그것은 최적화 탐색이 도는 동안만 켜지는 별도 상태이고, 시딩 시점에는
+    # 아직 존재하지 않는다.
+    reduction_obj = getattr(spec, "corner_reduction", None)
+    probe_enabled = True if reduction_obj is None else reduction_obj.probe
+    # NOMINAL + 씨앗 + (탐침이 켜져 있고 집합 밖에 돌 코너가 있을 때만) 탐침 1.
+    # 탐침이 꺼져 있으면(`probe: false`) 중간 루프는 이 점을 절대 시뮬레이션하지
+    # 않으므로(corner_sim._probe_enabled), 여기서도 더하면 이 지표가 실제
+    # ngspice 실행 수보다 1 큰 상수를 영구히 보고하게 된다.
+    record["points_per_tb"] = len(corners) + (1 if probe_enabled and cs.probe_order else 0)
+    record["testbenches"] = n_tb
+    return cs, record
 
 
 def grown_with(
