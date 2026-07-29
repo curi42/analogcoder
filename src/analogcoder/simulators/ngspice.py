@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 
-from analogcoder.simulators.base import RawSimResult, SimulatorBackend
+from analogcoder.simulators.base import RawSimResult, SimulatorBackend, is_cacheable
 
 _MEASURE_RE = re.compile(r"^(\w+)\s*=\s*([-+0-9.eE]+)\s*$")
 
@@ -59,23 +59,13 @@ class NgspiceBackend(SimulatorBackend):
                 )
             # 아래 두 실패는 **환경이 낸 결과**라 순수 함수가 아니다. 부하가
             # 몰린 한 번의 timeout이 캐시에 들어가면 그 실행 내내 같은 점이
-            # 실패로 못박힌다. cacheable=False로 표시해 캐시가 담지 않게 한다.
+            # 실패로 못박힌다. 이제 그 판단을 여기서 되풀이하지 않고 실패의
+            # **종류**를 선언한다 - `base.FAILURE_KINDS`가 어느 종류가
+            # 환경성인지를 한 자리에서 정하고, 미분류 종류는 캐시되지 않는다.
             except subprocess.TimeoutExpired:
-                return RawSimResult(
-                    status="error",
-                    measurements={},
-                    raw_log=f"ngspice timed out after {self.timeout}s",
-                    warnings=[],
-                    cacheable=False,
-                )
+                return _failure("timeout", f"ngspice timed out after {self.timeout}s")
             except FileNotFoundError:
-                return RawSimResult(
-                    status="error",
-                    measurements={},
-                    raw_log=f"ngspice binary not found: {self.ngspice_bin}",
-                    warnings=[],
-                    cacheable=False,
-                )
+                return _failure("binary_missing", f"ngspice binary not found: {self.ngspice_bin}")
             log_text = proc.stdout + proc.stderr
 
         measurements: dict[str, float] = {}
@@ -87,11 +77,36 @@ class NgspiceBackend(SimulatorBackend):
         warnings = [ln for ln in log_text.splitlines() if "warning" in ln.lower()]
 
         lower_log = log_text.lower()
+        # `status`의 세 값은 그대로다(schemas.py가 고정한다). 달라진 것은
+        # "error" 하나가 접고 있던 **두 사실**이 이제 갈린다는 것뿐이다:
+        # 비영 종료와 "측정을 하나도 못 읽음". HSPICE는 measure 결과를 stdout이
+        # 아니라 파일로 낼 수 있어 후자가 첫 실행에서 통째로 발생할 수 있고,
+        # 그때 "모든 코너에서 회로 실패"로 오독된다.
         if "no convergence" in lower_log or "singular matrix" in lower_log:
-            status = "convergence_failure"
-        elif proc.returncode != 0 or not measurements:
-            status = "error"
+            status, kind = "convergence_failure", "convergence"
+        elif proc.returncode != 0:
+            status, kind = "error", "nonzero_exit"
+        elif not measurements:
+            status, kind = "error", "no_measurements"
         else:
-            status = "success"
+            status, kind = "success", None
 
-        return RawSimResult(status=status, measurements=measurements, raw_log=log_text, warnings=warnings)
+        return RawSimResult(
+            status=status,
+            measurements=measurements,
+            raw_log=log_text,
+            warnings=warnings,
+            cacheable=is_cacheable(kind),
+            failure_kind=kind,
+        )
+
+
+def _failure(kind: str, log: str) -> RawSimResult:
+    return RawSimResult(
+        status="error",
+        measurements={},
+        raw_log=log,
+        warnings=[],
+        cacheable=is_cacheable(kind),
+        failure_kind=kind,
+    )
