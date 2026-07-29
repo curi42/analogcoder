@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 
 from analogcoder.pvt import CornerPoint
+from analogcoder.spec import axis_corner_id
 
 NOMINAL = None  # 코너 렌더링을 거치지 않은 덱 그대로. tt/27도 하나의 코너일
 # 뿐이고 nominal과는 다르다 - 이름이나 숫자로 nominal을 알아내려 하지 않는다.
@@ -48,10 +49,14 @@ class CornerSet:
 
 def label(point: CornerPoint | None) -> str:
     """사람이 읽는 코너 이름. NOMINAL은 "(deck)" - 어떤 코너 렌더링도 거치지
-    않은 덱 그대로라는 뜻이므로 tt/27 같은 실제 코너와 혼동되어서는 안 된다."""
+    않은 덱 그대로라는 뜻이므로 tt/27 같은 실제 코너와 혼동되어서는 안 된다.
+
+    코너의 이름은 이제 코너 자신이 들고 있다(`CornerPoint.corner_id`). 축으로
+    선언된 코너에서는 `spec.axis_corner_id`가 채운 값이라 이 함수가 예전에
+    만들던 문자열과 **바이트 동일**하다."""
     if point is NOMINAL:
         return "(deck)"
-    return f"{point.process}/{point.voltage}/{point.temperature}"
+    return point.corner_id
 
 
 def raw_label(raw: dict | None) -> str | None:
@@ -61,48 +66,72 @@ def raw_label(raw: dict | None) -> str | None:
     산출물에서 되읽은 dict를 받는다. 세 갈래가 서로 다른 사실이다:
 
     - `None` — 그 기준에 최악 코너 항목이 **없다**
-    - `"(deck)"` — 항목은 있는데 **좌표가 없다**(`pvt._corner_fields`가
-      렌더링을 거치지 않은 덱에 적는 모양)
-    - `p/v/t` — 진짜 코너
+    - `"(deck)"` — 항목은 있는데 **정체성이 없다**(`pvt._corner_fields`가
+      렌더링을 거치지 않은 덱에 적는 모양: `{"corner_id": None}`)
+    - `sig_01` 또는 `p/v/t` — 진짜 코너
 
-    **판별은 좌표의 부재로 한다. 이름 매칭이 아니다** — `_as_point`의 거부
-    조건과 같은 방향("둘 중 하나라도 없으면")이어야 하고, 한쪽은 `or` 다른
-    쪽은 `and`로 두면 반쪽짜리 좌표에서 둘이 서로 다른 말을 한다. 반응은
-    반대다: 저쪽은 거부하고 이쪽은 적기만 하는데, argmax 계측은 순수한
-    기록이고 기록이 실행을 멈출 수는 없기 때문이다.
+    **판별은 정체성 키의 부재로 한다. 이름 매칭이 아니다** — `_as_point`의
+    거부 조건과 같은 방향이어야 하고, 두 함수를 **같은 커밋에서** 같이
+    바꿔야 한다. 한쪽만 바꾸면 모든 코너가 `"(deck)"`가 되고 `cli`의
+    `_argmax_drift`가 두 라벨의 문자열 비교뿐이라 `moved_count`가 **영구히
+    0**이 된다 - 실행은 안 죽고, "설계가 움직여도 최악 코너는 안 움직였다"는
+    재본 적 없는 결론이 report.md에 남는다. D1의 반복제안률 0.000과 정확히
+    같은 자리의 무효 지표다.
+
+    반응은 `_as_point`와 반대다: 저쪽은 거부하고 이쪽은 적기만 하는데,
+    argmax 계측은 순수한 기록이고 기록이 실행을 멈출 수는 없기 때문이다.
 
     **여기 사는 이유**: `cli.py`와 `report.py`가 이 함수를 각자 복사해
     갖고 있었고 두 독스트링 모두 "다른 쪽과 같은 문자열을 내야 한다"고
     **주장만** 했다. 강제하는 것은 없었고, `report.py`의 사본에는 테스트가
-    하나도 없었다. `label`·`_as_point`와 같은 파일에 두면 좌표 부재의
-    판별이 한 곳에 모인다.
+    하나도 없었다. `label`·`_as_point`와 같은 파일에 두면 판별이 한 곳에
+    모인다.
     """
     if raw is None:
         return None
-    if raw.get("voltage") is None or raw.get("temperature") is None:
+    identity = _identity_of(raw)
+    if identity is None:
         return "(deck)"
-    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
+    return identity
+
+
+def _identity_of(raw: dict) -> str | None:
+    """산출물 dict 하나가 가리키는 코너의 정체성. 없으면 None.
+
+    `_corner_fields`가 쓰는 세 모양을 그대로 되읽는다: 라벨 코너는
+    `corner_id`를, 축 코너는 좌표를(정체성은 `axis_corner_id`로 **유도**),
+    렌더링을 거치지 않은 덱은 아무것도 갖지 않는다."""
+    corner_id = raw.get("corner_id")
+    if corner_id is not None:
+        return corner_id
+    if raw.get("voltage") is None or raw.get("temperature") is None:
+        return None
+    return axis_corner_id(raw["process"], raw["voltage"], raw["temperature"])
 
 
 def _as_point(raw: dict) -> CornerPoint:
     """worst_case_corners/per_corner 항목 하나를 코너로 읽는다.
 
     **`(deck)` 항목은 코너가 아니므로 거부한다.** pvt._corner_fields는 렌더링을
-    거치지 않은 덱을 `{"process": "(deck)", "voltage": None, "temperature": None}`
-    으로 적고, corner_sim의 corner_worst는 선택 집합에 NOMINAL을 포함하므로 그
-    모양을 실제로 만들어 낸다. 검사 없이 통과시키면
-    `CornerPoint(process="(deck)", voltage=None, ...)`이 되어
-    `render_corner_netlist`가 `.include ".../pdk_corner_(deck).inc"`를 쓰고
-    존재하지 않는 파일을 ngspice에 넘긴다 - "좌표가 없다"는 사실이 조용히
-    좌표로 둔갑하는 것이다. 좌표의 **부재**로 판별한다(이름 매칭이 아니다):
-    실제 코너는 언제나 voltage/temperature를 둘 다 갖는다."""
-    if raw.get("voltage") is None or raw.get("temperature") is None:
+    거치지 않은 덱을 `{"corner_id": None}`으로 적고, corner_sim의 corner_worst는
+    선택 집합에 NOMINAL을 포함하므로 그 모양을 실제로 만들어 낸다. 검사 없이
+    통과시키면 좌표 없는 코너가 렌더러에 넘어가
+    `.include ".../pdk_corner_(deck).inc"` 같은 존재하지 않는 파일을 ngspice에
+    넘긴다 - "좌표가 없다"는 사실이 조용히 좌표로 둔갑하는 것이다.
+
+    **판별은 정체성 키의 부재로 한다**(이름 매칭이 아니다). 좌표만 보던 예전
+    규칙은 좌표 없는 **진짜** 코너를 100% 거부했다 - 실측으로 확인된 바,
+    라벨 코너를 넣으면 스윕 첫 코너에서 ValueError로 죽는다."""
+    identity = _identity_of(raw)
+    if identity is None:
         raise ValueError(
-            f"not a corner: {raw!r} has no voltage/temperature coordinates. "
-            f"pvt._corner_fields writes this shape for the unrendered deck "
+            f"not a corner: {raw!r} carries neither a corner_id nor voltage/temperature "
+            f"coordinates. pvt._corner_fields writes this shape for the unrendered deck "
             f'("(deck)", i.e. corner_selection.NOMINAL), which is not a point '
             f"any corner set can grow to - it is already corners[0]."
         )
+    if raw.get("corner_id") is not None:
+        return CornerPoint(corner_id=identity, payload=raw.get("payload"))
     return CornerPoint(
         process=raw["process"], voltage=raw["voltage"], temperature=raw["temperature"]
     )

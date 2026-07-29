@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.corner_selection import NOMINAL, CornerSet, raw_label
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.netlist import resolve_includes
 from analogcoder.pvt import CornerPoint
@@ -71,12 +71,9 @@ async def test_the_corner_aware_simulate_measures_a_real_deck_at_real_corners(tm
     # 렌더링을 건너뛰고 세 점 모두 덱 그대로를 돌리는 변형(이 하위 프로젝트
     # 전체를 무의미하게 만드는 변형)은 여기서 모든 기준이 (deck)을 가리키게
     # 만든다 - 그때 이 단언이 걸린다.
-    picked = {
-        (raw["process"], raw["voltage"], raw["temperature"])
-        for raw in result["corner_worst"].values()
-    }
-    assert ("fs", 1.98, 125.0) in picked
-    assert ("ss", 1.62, -40.0) in picked
+    picked = {raw_label(raw) for raw in result["corner_worst"].values()}
+    assert "fs/1.98/125.0" in picked
+    assert "ss/1.62/-40.0" in picked
 
     # 집합 밖이 비었으므로 탐침은 없다.
     assert result["probe"] is None

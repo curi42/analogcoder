@@ -226,24 +226,40 @@ def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
     return list(pvt.corners)
 
 
-def _corner_fields(corner: CornerPoint | None) -> dict:
-    """The reported coordinates of one point in a corner list.
+def corner_fields(corner: CornerPoint | None) -> dict:
+    """One point in a corner list, as it goes into an artifact.
 
-    `None` is the deck as it is - rendered through no corner at all - which is
-    how corner_selection.NOMINAL travels. It has no process/voltage/temperature
-    to read, so it is reported as "(deck)" (the same name corner_selection.label
-    gives it) with no numbers. Substituting a stand-in CornerPoint here instead
-    would put fabricated coordinates into worst_case_corners, where every
-    consumer reads them as a real corner - and tt/27 IS a real corner, distinct
-    from the unrendered deck. run_full_pvt_sweep never passes None, so this
-    changes nothing for it."""
+    **This is the one constructor.** Three places used to build this dict and
+    none of them shared code - `pvt._corner_fields`, `pvt`'s per_corner inline
+    dict, and `checkpoint._corner_payload`. When three such writers drift,
+    `corner_selection._as_point` accepts a corner that came through one path
+    and rejects one that came through another, and it only shows up on the rare
+    paths (re-entry, checkpoint resume) where the log does not say why.
+
+    **A corner records what it was declared with, and nothing else.**
+
+    - axis-declared -> its three coordinates, byte-for-byte what this function
+      has always written. That is the R2 regression baseline: adding
+      `corner_id` here would change every 45-corner sweep artifact.
+      `_as_point` re-derives the identity with `spec.axis_corner_id`, the same
+      function the loader used, so nothing is lost by not writing it.
+    - label-declared -> its identity and the payload that realises it. The
+      payload has to travel: without it the composed path cannot find the file
+      that makes this corner exist.
+    - `None` (the unrendered deck, i.e. `corner_selection.NOMINAL`) -> an
+      absent identity. It used to be written as `{"process": "(deck)", ...}`,
+      which put a *name* in a coordinate field - a reader of the artifact sees
+      "(deck)" sitting where `ss` sits and has no way to know it is not one.
+      run_full_pvt_sweep never passes None, so this changes nothing for it."""
     if corner is None:
-        return {"process": "(deck)", "voltage": None, "temperature": None}
-    return {
-        "process": corner.process,
-        "voltage": corner.voltage,
-        "temperature": corner.temperature,
-    }
+        return {"corner_id": None}
+    if corner.process is not None:
+        return {
+            "process": corner.process,
+            "voltage": corner.voltage,
+            "temperature": corner.temperature,
+        }
+    return {"corner_id": corner.corner_id, "payload": corner.payload}
 
 
 def worst_case_measurements(
@@ -315,7 +331,7 @@ def worst_case_measurements(
 
         if missing_corners:
             corner = missing_corners[0]
-            worst_corners[criterion.name] = {**_corner_fields(corner), "value": None}
+            worst_corners[criterion.name] = {**corner_fields(corner), "value": None}
             continue  # withhold the measurement so evaluate_criteria fails it as missing
 
         if criterion.operator in (">=", ">"):
@@ -323,7 +339,7 @@ def worst_case_measurements(
         else:
             value, corner = max(values_with_corner, key=lambda vc: vc[0])
         candidates.setdefault(criterion.measurement, []).append((criterion, value))
-        worst_corners[criterion.name] = {**_corner_fields(corner), "value": value}
+        worst_corners[criterion.name] = {**corner_fields(corner), "value": value}
 
     for name, entries in candidates.items():
         violating = [
@@ -474,7 +490,10 @@ def run_full_pvt_sweep(
         "worst_case_corners": combined_worst_corners,
         "per_corner": [
             {
-                "corner": {"process": c.process, "voltage": c.voltage, "temperature": c.temperature},
+                # `_corner_fields`를 지나간다 - 생성 지점이 셋으로 갈라져 있던
+                # 것이 이 자리였다(축 코너에서는 같은 세 키·같은 순서라 산출물은
+                # 바이트 동일하다).
+                "corner": corner_fields(c),
                 "measurements": m,
                 "severity": corner_severity(m, spec.all_criteria),
             }

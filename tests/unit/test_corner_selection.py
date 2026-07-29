@@ -13,7 +13,7 @@ from analogcoder.corner_selection import (
     raw_label,
     seed_from_sweep,
 )
-from analogcoder.pvt import CornerPoint, _corner_fields
+from analogcoder.pvt import CornerPoint, corner_fields as _corner_fields
 from analogcoder.spec import PVTCorners
 
 FS = CornerPoint(process="fs", voltage=1.98, temperature=125.0)

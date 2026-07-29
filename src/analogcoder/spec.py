@@ -4,10 +4,46 @@ from dataclasses import dataclass, field
 import yaml
 
 
+def axis_corner_id(process: str, voltage: float, temperature: float) -> str:
+    """축 좌표에서 코너의 정체성 문자열을 만든다. **생성자는 여기 하나뿐이다.**
+
+    로더, `CornerPoint.__post_init__`, 그리고 산출물 dict를 다시 코너로 읽는
+    `corner_selection._as_point`가 전부 이 함수를 부른다. 세 곳이 각자 같은
+    f-string을 쓰면 어긋나는 날 `_as_point`가 어떤 경로에서 온 코너는 받고
+    어떤 경로에서 온 코너는 거부한다 - 재진입/체크포인트 재개처럼 드문
+    경로에서만 터져 로그에서 원인이 안 보인다.
+
+    **형식은 오늘의 `corner_selection.label`과 바이트 동일하다.** 그것이 이
+    변경의 회귀 기준값이다."""
+    return f"{process}/{voltage}/{temperature}"
+
+
 @dataclass(frozen=True)
 class CornerPoint:
     """스윕할 한 점. **불변이며 필드로 비교·해시된다** - `CornerSet`의 집합
     연산 전부가 그 위에 서 있다.
+
+    **정체성은 `corner_id`이고 좌표는 선택이다.** 대상 흐름에서 사인오프가
+    요구하는 것은 데카르트 곱이 아니라 사람이 고른 서명 코너 N개이고, 그
+    선택은 이 저장소 밖의 코드가 한다. 코너 파일은 불투명하다 - 안을
+    들여다보고 축을 해석하는 것은 이 저장소가 금지한 추측(파일명·이름에서
+    뜻을 읽기)이다. 그래서 좌표를 필수로 두면 그런 코너를 아예 표현할 수
+    없다. 반대로 좌표를 **지우면** 벤치마크 경로의 렌더링(`pdk_corner_ss.inc`
+    선택, `.temp` 주입, 전압 치환)이 되돌릴 수 없이 사라진다. 둘 다 산다.
+
+    `process`/`voltage`/`temperature`는 **축 선언으로 만들어졌을 때만 채워지는
+    원본 기록**이다. 라벨로 선언된 코너에서는 비어 있고, 열거에서 축을
+    역산해 채우지 않는다.
+
+    `payload`는 이 코너를 **실현하는** 파일의 절대경로다. 조합 덱에서 코너
+    슬롯에 채워지는 것이 그 파일이고, 이 저장소는 그 **내용을 절대 읽지
+    않는다** - 경로는 선언된 입력이고 내용은 불투명하다.
+
+    **`factors`(축 분해)는 일부러 넣지 않았다.** 라벨 전용 단계에서는 항상
+    비어 있을 수밖에 없고 - 채울 코드 경로가 존재할 수 없다 - 그러면 "축이
+    없는 코너다"와 "축을 채우는 코드가 없다"가 같은 값이 된다. 조용히 무력한
+    게이트를 자료형에 적용한 모양이다. 선택 필드라 필요해지는 날 0곳 수정으로
+    들어온다.
 
     여기(스펙 모듈)에 사는 이유: 코너는 스펙이 **선언**하는 것이고, `pvt.py`는
     그것을 렌더링하고 도는 쪽이다. 방향도 그렇게만 성립한다 - `pvt.py`가
@@ -18,11 +54,36 @@ class CornerPoint:
     자신과도 같지 않고, 그러면 `point not in cs.corners`가 이미 있는 코너에
     대해 참이 된다 - `grown_with`가 다시 추가하고 중복 검사가 진단을
     `ValueError`로 바꾼다. 오늘 이것을 만드는 코드는 없다(좌표는 스펙에서
-    온다). 코너를 **측정**에서 유도하는 첫 사람을 위한 규칙이다."""
+    온다). 코너를 **측정**에서 유도하는 첫 사람을 위한 규칙이다.
 
-    process: str
-    voltage: float
-    temperature: float
+    **라벨에도 같은 부류의 함정이 방향만 바꿔 재등장한다.** `corner_sig01`,
+    `Corner1001`, `" corner_sig01"`은 서로 다른 세 코너다(set 크기 3). 필드 기반
+    중복 검사는 그것을 중복으로 보지 않으므로, 방어선은 **선언 자리**의
+    중복 거부(`_explicit_corners`)이고 반드시 유지해야 한다. 정규화(strip,
+    대소문자)는 코드가 추측하면 안 된다."""
+
+    corner_id: str | None = None
+    process: str | None = None
+    voltage: float | None = None
+    temperature: float | None = None
+    payload: str | None = None
+
+    def __post_init__(self) -> None:
+        """정체성이 없으면 좌표에서 **유도**한다. 둘 다 없으면 거부한다.
+
+        유도를 여기 두는 이유는 오늘의 모든 생성부(`CornerPoint(process=...)`)가
+        그대로 동작해야 하기 때문이고, 거부하는 이유는 정체성 없는 코너는
+        가리킬 이름이 없기 때문이다."""
+        if self.corner_id is not None:
+            return
+        if self.process is None or self.voltage is None or self.temperature is None:
+            raise ValueError(
+                f"a CornerPoint needs either a corner_id or all three coordinates, "
+                f"got {self!r}"
+            )
+        object.__setattr__(
+            self, "corner_id", axis_corner_id(self.process, self.voltage, self.temperature)
+        )
 
 
 @dataclass

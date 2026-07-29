@@ -2,7 +2,7 @@ import types
 
 import pytest
 
-from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.corner_selection import NOMINAL, CornerSet, raw_label
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.pvt import CornerPoint
 from analogcoder.simulators.base import RawSimResult
@@ -303,7 +303,7 @@ async def test_a_worst_case_at_the_deck_itself_is_reported_as_the_deck(tmp_path)
 
     result = await sim({"tb": DECK}, _spec_ge_40())
 
-    assert result["corner_worst"]["gain"]["process"] == "(deck)"
+    assert raw_label(result["corner_worst"]["gain"]) == "(deck)"
     assert result["corner_worst"]["gain"]["value"] == 50.0
 
 

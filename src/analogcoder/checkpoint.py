@@ -33,10 +33,10 @@ import os
 from dataclasses import dataclass, field, replace
 
 from analogcoder.attempt_log import Attempt
-from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.corner_selection import NOMINAL, CornerSet, _as_point
 from analogcoder.json_io import restore_non_finite
 from analogcoder.json_io import dump as json_dump
-from analogcoder.pvt import CornerPoint
+from analogcoder.pvt import CornerPoint, corner_fields
 from analogcoder.state import RunState
 
 CHECKPOINT_SCHEMA_VERSION = 1
@@ -221,21 +221,34 @@ def _attempt_from_payload(raw: dict) -> Attempt:
 
 
 def _corner_payload(point: CornerPoint | None):
+    """`pvt._corner_fields`와 **같은 모양**을 쓴다 - 코너 dict를 만드는 자리가
+    셋으로 갈라져 있던 것이 이 함수였다."""
     if point is NOMINAL:
         return None
-    return {
-        "process": point.process,
-        "voltage": point.voltage,
-        "temperature": point.temperature,
-    }
+    return corner_fields(point)
 
 
 def _corner_from_payload(raw) -> CornerPoint | None:
+    """체크포인트에 적힌 코너를 되읽는다. **모양을 모르면 인덱싱하지 않는다.**
+
+    예전 코드는 `raw["process"]`로 바로 인덱싱해서, 라벨로 선언된 코너가 담긴
+    체크포인트를 재개하면 `KeyError: 'process'`를 냈다 - 그것은
+    `CheckpointRejected`가 아니라서 `cli.py`의 잡에 걸리지 않고 트레이스백이
+    되며, `result.json`도 `report.md`도 안 나온다. `run_optimization` 가드가
+    이미 값을 치른 모양 그대로다.
+
+    **재개는 최적화이지 정확성이 아니다.** 알 수 없는 모양이면 체크포인트를
+    버리고 처음부터 도는 것이 옳고, 그것이 `CheckpointRejected`의 계약이다."""
     if raw is None:
         return NOMINAL
-    return CornerPoint(
-        process=raw["process"], voltage=raw["voltage"], temperature=raw["temperature"]
-    )
+    if not isinstance(raw, dict):
+        raise CheckpointRejected(f"체크포인트의 코너 항목이 매핑이 아니다: {raw!r}")
+    try:
+        return _as_point(raw)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise CheckpointRejected(
+            f"체크포인트의 코너 항목을 읽을 수 없다: {raw!r} ({exc})"
+        ) from None
 
 
 def _corner_set_payload(corner_set: CornerSet | None):
