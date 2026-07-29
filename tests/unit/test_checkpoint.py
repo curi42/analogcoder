@@ -434,3 +434,87 @@ def test_checkpoint_is_a_plain_dataclass_so_equality_is_by_value(tmp_path):
 
     assert isinstance(cp, Checkpoint)
     assert cp == from_payload(to_payload(cp))
+
+
+# ---------------------------------------------------------- 시뮬레이터 정체성
+
+
+def test_resuming_with_a_different_simulator_is_refused(tmp_path):
+    """`cache.simulation_key` 는 `identity()` 를 **네 번째 결정 요인**으로 이미
+    쓴다 - 근거는 "시뮬레이터가 다르면 다른 값이 나올 수 있으므로 키에서
+    빠지면 캐시가 다른 엔진의 측정값을 이 엔진의 값으로 돌려준다" 이다.
+    바로 위 층에는 그 결정 요인이 없었는데, 재개는 **진입 코너 스윕을 통째로
+    재사용**하고(`cli._reused_baseline_sweep`) 그 값이 `corner_allowances` 와
+    `seed_from_sweep` 으로 흘러간다. 즉 두 엔진의 측정이 한 결과에 섞인다 -
+    스펙 해시로 재개를 거부하는 것, `push_netlist_version` 을 원자적으로 만든
+    것과 정확히 같은 논리다."""
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(tmp_path, spec_path, spec, simulator_identity="ngspice|/usr/bin/ngspice|43")
+    write_checkpoint(run_dir, cp)
+
+    with pytest.raises(CheckpointRejected) as exc:
+        load_checkpoint(run_dir, spec_path, spec, simulator_identity="hspice|/tools/hspice|X-2024")
+
+    assert "시뮬레이터" in str(exc.value)
+    assert "ngspice|/usr/bin/ngspice|43" in str(exc.value)
+    assert "hspice|/tools/hspice|X-2024" in str(exc.value)
+
+
+def test_resuming_with_the_same_simulator_is_allowed(tmp_path):
+    spec_path, spec = make_spec(tmp_path)
+    ident = "ngspice|/usr/bin/ngspice|43"
+    run_dir, cp = make_checkpoint(tmp_path, spec_path, spec, simulator_identity=ident)
+    write_checkpoint(run_dir, cp)
+
+    assert load_checkpoint(run_dir, spec_path, spec, simulator_identity=ident) == cp
+
+
+def test_the_simulator_identity_round_trips_and_defaults_to_unrecorded(tmp_path):
+    from analogcoder.checkpoint import SIMULATOR_UNRECORDED, simulator_identity_state
+
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(tmp_path, spec_path, spec)
+    write_checkpoint(run_dir, cp)
+    payload = read_payload(run_dir)
+
+    assert cp.simulator_identity is None
+    # 키는 **항상** 있다. `null` 과 "필드가 통째로 없다" 가 같아지면
+    # "기록 안 함" 과 "검사가 사라졌다" 를 구별할 수 없다.
+    assert "simulator_identity" in payload
+    assert payload["simulator_identity"] is None
+    assert from_payload(payload) == cp
+    assert simulator_identity_state(payload, "ngspice|x") == SIMULATOR_UNRECORDED
+
+
+def test_the_four_simulator_identity_states_are_distinguishable(tmp_path):
+    """**이 게이트가 아무것도 안 할 때가 로그에서 보여야 한다.**
+
+    오늘 `cli.py` 는 정체성을 넘기지 않으므로(다른 에이전트 소유, 배선은
+    후속 작업) 프로덕션 상태는 `unrecorded` 다. 그 사실이 이름을 가진 값으로
+    나오지 않으면 "엔진이 같아서 통과" 와 "검사가 인자 없이 불려서 통과" 가
+    구별 불가가 된다 - 이 저장소가 아홉 번 값을 치른 모양이다."""
+    from analogcoder.checkpoint import (
+        SIMULATOR_MATCH,
+        SIMULATOR_MISMATCH,
+        SIMULATOR_UNRECORDED,
+        SIMULATOR_UNSUPPLIED,
+        simulator_identity_state,
+    )
+
+    assert simulator_identity_state({"simulator_identity": "a"}, "a") == SIMULATOR_MATCH
+    assert simulator_identity_state({"simulator_identity": "a"}, "b") == SIMULATOR_MISMATCH
+    assert simulator_identity_state({"simulator_identity": None}, "a") == SIMULATOR_UNRECORDED
+    assert simulator_identity_state({"simulator_identity": "a"}, None) == SIMULATOR_UNSUPPLIED
+    assert simulator_identity_state({}, None) == SIMULATOR_UNRECORDED
+
+
+def test_an_unrecorded_or_unsupplied_identity_does_not_reject(tmp_path):
+    """거부는 **불일치일 때만**이다. 기록이 없는데 거부하면 배선 전에 쓰인
+    체크포인트가 전부 재개 불가가 되고, 그것은 이 기능이 막으려는 것(버려진
+    실행 시간)을 스스로 만든다."""
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(tmp_path, spec_path, spec)
+    write_checkpoint(run_dir, cp)
+
+    assert load_checkpoint(run_dir, spec_path, spec, simulator_identity="anything") == cp
+    assert load_checkpoint(run_dir, spec_path, spec) == cp

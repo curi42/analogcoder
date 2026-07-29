@@ -45,6 +45,15 @@ BOUNDARY_ATTEMPT = "attempt"
 BOUNDARY_OPTIMIZATION = "optimization"
 BOUNDARIES = (BOUNDARY_OUTER_ITERATION, BOUNDARY_ATTEMPT, BOUNDARY_OPTIMIZATION)
 
+# 체크포인트에 적힌 시뮬레이터와 지금 재개하려는 시뮬레이터의 관계. 네 값이
+# 서로 다른 **사실**이고, 그래서 이름을 갖는다 - `match` 와 `unrecorded` 가
+# 로그에서 같아 보이면 "엔진이 같아서 통과" 와 "검사가 인자 없이 불려서 통과"
+# 를 사후에 구별할 수 없다.
+SIMULATOR_MATCH = "match"
+SIMULATOR_MISMATCH = "mismatch"
+SIMULATOR_UNRECORDED = "unrecorded"  # 체크포인트를 쓴 쪽이 안 남겼다
+SIMULATOR_UNSUPPLIED = "unsupplied"  # 재개하는 쪽이 안 넘겼다
+
 
 class CheckpointRejected(Exception):
     """재개를 거부한다 - 크래시가 아니라 무엇이 왜 어긋났는지 말하는 오류.
@@ -96,6 +105,20 @@ class Checkpoint:
     grown_labels: list[list[str]] = field(default_factory=list)
     progress: LoopProgress | None = None
     orchestration_result: dict | None = None
+    # `SimulatorBackend.identity()` - 이 실행이 무엇으로 시뮬레이션했는가.
+    #
+    # 바로 아래 층은 이것을 이미 결정 요인으로 쓴다: `cache.simulation_key` 가
+    # `identity()` 를 **네 번째** 축으로 넣고, 그 근거가 "시뮬레이터가 다르면
+    # 다른 값이 나올 수 있으므로 키에서 빠지면 캐시가 다른 엔진의 측정값을 이
+    # 엔진의 값으로 돌려준다" 이다. 위층에는 그것이 없었는데, 재개는 진입
+    # 코너 스윕(45코너 286 s)을 **다시 돌지 않고 재사용하고** 그 값이
+    # `corner_allowances`(최적화 가드밴드)와 `seed_from_sweep`(코너 축소
+    # 시드)으로 흘러간다. 한 층에서 지켜지는 결정 요인이 바로 위 층에서
+    # 빠져 있었다.
+    #
+    # None 은 "기록되지 않음" 이지 "엔진이 없음" 이 아니다 - 두 상태의 차이가
+    # `simulator_identity_state` 로 이름을 갖는다.
+    simulator_identity: str | None = None
     schema_version: int = CHECKPOINT_SCHEMA_VERSION
 
 
@@ -135,6 +158,7 @@ def build_checkpoint(
     grown_labels: list[list[str]] | None = None,
     progress: LoopProgress | None = None,
     orchestration_result: dict | None = None,
+    simulator_identity: str | None = None,
 ) -> Checkpoint:
     spec_sha, netlist_sha, names = spec_fingerprint(spec_path, spec)
     return Checkpoint(
@@ -151,6 +175,7 @@ def build_checkpoint(
         grown_labels=[list(g) for g in (grown_labels or [])],
         progress=progress,
         orchestration_result=orchestration_result,
+        simulator_identity=simulator_identity,
     )
 
 
@@ -282,6 +307,9 @@ def to_payload(checkpoint: Checkpoint) -> dict:
         "grown_labels": [list(g) for g in checkpoint.grown_labels],
         "progress": _progress_payload(checkpoint.progress),
         "orchestration_result": checkpoint.orchestration_result,
+        # **무조건 나간다.** 조건부로 쓰면 `null` 과 "필드가 통째로 없다" 가
+        # 같아지고, 그러면 "기록 안 함" 과 "검사가 사라졌다" 를 구별할 수 없다.
+        "simulator_identity": checkpoint.simulator_identity,
     }
 
 
@@ -300,6 +328,7 @@ def from_payload(payload: dict) -> Checkpoint:
         grown_labels=[list(g) for g in payload.get("grown_labels", [])],
         progress=_progress_from_payload(payload.get("progress")),
         orchestration_result=payload.get("orchestration_result"),
+        simulator_identity=payload.get("simulator_identity"),
         schema_version=payload.get("schema_version", CHECKPOINT_SCHEMA_VERSION),
     )
 
@@ -353,11 +382,36 @@ def read_payload(run_dir) -> dict | None:
 # ---------------------------------------------------------------- 재개 거부
 
 
-def rejection_reason(payload: dict | None, run_dir, spec_path, spec) -> str | None:
+def simulator_identity_state(payload: dict | None, simulator_identity: str | None) -> str:
+    """체크포인트의 시뮬레이터와 지금 재개하려는 시뮬레이터의 관계.
+
+    **거부 여부와 따로 이름을 갖는 이유**: 거부는 `mismatch` 일 때만 일어나고
+    나머지 셋은 전부 "통과" 인데, 그 셋이 같은 사실이 아니다. 특히
+    `unrecorded`/`unsupplied` 는 **검사가 아무 일도 하지 않은 상태**이고, 그것이
+    `match` 와 로그에서 같아 보이면 이 저장소가 아홉 번 값을 치른 모양이 그대로
+    재현된다. 호출자는 이 값을 실행 로그에 남겨야 한다.
+    """
+    recorded = (payload or {}).get("simulator_identity")
+    if recorded is None:
+        return SIMULATOR_UNRECORDED
+    if simulator_identity is None:
+        return SIMULATOR_UNSUPPLIED
+    return SIMULATOR_MATCH if recorded == simulator_identity else SIMULATOR_MISMATCH
+
+
+def rejection_reason(
+    payload: dict | None, run_dir, spec_path, spec, simulator_identity: str | None = None
+) -> str | None:
     """재개하면 안 되는 이유. 없으면 None.
 
     추측하지 않는다 - 하나라도 어긋나면 재개하지 않고 무엇이 왜 어긋났는지
     말한다.
+
+    `simulator_identity` 는 `SimulatorBackend.identity()` 다. 넘기지 않으면
+    그 축은 판정되지 않으며(`SIMULATOR_UNSUPPLIED`), **거부하지 않는다** -
+    거부하면 이 인자를 아직 안 넘기는 호출부의 체크포인트가 전부 재개 불가가
+    되어 이 기능이 막으려는 것(버려진 실행 시간)을 스스로 만든다. 판정되지
+    않았다는 사실은 `simulator_identity_state` 로 호출자가 읽어 로그에 남긴다.
     """
     if payload is None:
         return (
@@ -402,6 +456,14 @@ def rejection_reason(payload: dict | None, run_dir, spec_path, spec) -> str | No
             f"바뀐 회로에 중간부터 이으면 두 회로의 측정이 한 결과에 섞인다"
         )
 
+    if simulator_identity_state(payload, simulator_identity) == SIMULATOR_MISMATCH:
+        return (
+            f"시뮬레이터가 체크포인트에 기록된 것과 다르다: "
+            f"{payload.get('simulator_identity')!r} -> {simulator_identity!r}. "
+            f"재개는 진입 코너 스윕을 다시 돌지 않고 재사용하므로, 이어 붙이면 "
+            f"두 엔진의 측정이 한 결과에 섞인다"
+        )
+
     missing = []
     for paths in payload.get("netlist_versions", {}).values():
         missing += [p for p in paths if not os.path.exists(p)]
@@ -418,9 +480,9 @@ def rejection_reason(payload: dict | None, run_dir, spec_path, spec) -> str | No
     return None
 
 
-def load_checkpoint(run_dir, spec_path, spec) -> Checkpoint:
+def load_checkpoint(run_dir, spec_path, spec, simulator_identity: str | None = None) -> Checkpoint:
     payload = read_payload(run_dir)
-    reason = rejection_reason(payload, run_dir, spec_path, spec)
+    reason = rejection_reason(payload, run_dir, spec_path, spec, simulator_identity)
     if reason is not None:
         raise CheckpointRejected(reason)
     return from_payload(payload)
