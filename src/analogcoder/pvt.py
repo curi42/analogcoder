@@ -5,20 +5,165 @@ import tempfile
 from dataclasses import dataclass
 
 from analogcoder.judge_tools import evaluate_criteria
+from analogcoder.netlist import parse_spice_value
 from analogcoder.simulators.cache import attach_log_event
 from analogcoder.simulators.parallel import map_points
 from analogcoder.spec import Criterion, PVTCorners
 
 
-def render_corner_netlist(
+class CornerRenderError(ValueError):
+    """A rewrite this function had to perform could not be performed.
+
+    **ValueError on purpose.** `run_orchestration` and `run_optimization`
+    already fold a `ValueError` into a clean FAIL / `optimize_failed` rather
+    than a traceback, which is this repo's settled shape for "the deck is not
+    what this code can act on". Subclassing keeps that folding while letting a
+    caller that cares tell this apart from an apply_changes failure.
+
+    It is raised only for the third state below - never for "there was nothing
+    to rewrite"."""
+
+
+@dataclass(frozen=True)
+class CornerRender:
+    """One rendered corner deck plus what the rendering actually did.
+
+    Same shape, and the same reason, as `area_limits.evaluate_area_growth`'s
+    per-change visibility states: a rewrite that silently matched nothing is
+    indistinguishable in a log from a rewrite that worked, and this repo has
+    now paid for that ten times. `states` goes verbatim into the
+    `corner_render` event.
+
+    The three states a rewrite can be in:
+
+    - `applied`  - the pattern matched and the corner's value is in the deck.
+    - `absent`   - there is nothing in this deck for the rewrite to touch (no
+      `pdk_corner` include; no top-level `Vdd` line). Not an error, and not
+      silent either: it is recorded, because "this deck has no supply source
+      so every voltage corner runs the same circuit" is a fact a reader of
+      history.jsonl needs.
+    - raised as `CornerRenderError` - the thing to rewrite IS there but is in a
+      form that cannot be rewritten without guessing. Silence would be wrong
+      and a wrong label would be worse, so it fails loudly."""
+
+    text: str
+    states: dict
+
+
+_SUPPLY_LINE = re.compile(r"^Vdd\s")
+_SUPPLY_DC = re.compile(r"^(Vdd\s+\S+\s+\S+\s+DC\s+)(\S+)")
+# Only the parenthesised PWL form. ngspice also accepts a bare list and comma
+# separators; those are refused (below) rather than half-supported, because the
+# bare form runs to end of line and cannot be told apart from a trailing
+# "AC 1" clause without guessing where the value list stops.
+_SUPPLY_PWL = re.compile(r"^(Vdd\s+\S+\s+\S+\s+)([Pp][Ww][Ll]\s*\()([^()]*)(\))(.*)$")
+
+
+def _rewrite_pwl_body(line: str, body: str, voltage: float) -> str:
+    """The value list of a PWL supply, with its plateau moved to `voltage`.
+
+    Two facts and one judgement, kept apart on purpose:
+
+    - **Fact (SPICE syntax):** a PWL value list is alternating `t1 v1 t2 v2 ...`
+      pairs, so the voltages are the odd (0-based) indices. An odd token count
+      breaks that indexing outright.
+    - **Fact (SPICE semantics):** after the last time point a PWL holds its last
+      value forever. That last value is therefore the level the supply settles
+      at - the thing a voltage corner varies.
+    - **Judgement:** every voltage entry equal to that settled level is part of
+      the same plateau and moves with it; every other entry is the *shape* of
+      the waveform and is left alone. On
+      `benchmarks/bandgap/netlist_startup.cir` that keeps the ramp starting at
+      0 V - which is the entire point of the startup testbench - while both
+      1.8 V entries become the corner voltage. Comparison is numeric (via
+      `parse_spice_value`), not textual, so `1.8` and `1800m` are one level.
+
+    Anything that makes either fact unusable - a non-numeric token (`TD=5n`,
+    `REPEAT`, a `{...}` expression, a comma-glued token, a filename form), an
+    unpaired list, or a settled level of 0 (a supply that ends at 0 V has no
+    plateau to identify, so which entries are "the level" is unknowable) - is
+    a CornerRenderError. Refusing is not the same as ignoring: the run stops
+    and says which line it could not render."""
+    tokens = body.split()
+    if not tokens or len(tokens) % 2 != 0:
+        raise CornerRenderError(
+            f"cannot set the corner voltage on {line.strip()!r}: a PWL value list is "
+            f"alternating (time value) pairs, and this one has {len(tokens)} tokens"
+        )
+    try:
+        values = [parse_spice_value(token) for token in tokens]
+    except ValueError as exc:
+        raise CornerRenderError(
+            f"cannot set the corner voltage on {line.strip()!r}: {exc}. Only a PWL of "
+            f"plain numeric time/value pairs is rewritten - a modifier, an expression "
+            f"or a file reference would have to be guessed at"
+        ) from None
+
+    settled = values[-1]
+    if settled == 0:
+        raise CornerRenderError(
+            f"cannot set the corner voltage on {line.strip()!r}: the PWL settles at 0, "
+            f"so it carries no supply level to move"
+        )
+
+    rewritten = list(tokens)
+    for index in range(1, len(tokens), 2):
+        if values[index] == settled:
+            rewritten[index] = f"{voltage}"
+    return " ".join(rewritten)
+
+
+def _apply_corner_voltage(text: str, voltage: float) -> tuple[str, str, str | None, int]:
+    """Sets every top-level supply line to this corner's voltage.
+
+    Returns `(text, state, form, lines_rewritten)`.
+
+    **Which lines are supply lines is deliberately unchanged** - the same
+    `^Vdd` the DC substitution has always used. Recognising a rail by its name
+    is the guess this repo forbids everywhere else (`OPAMP2STAGE drives
+    vdd,vss`), and it is genuinely wrong here too; it is out of scope for this
+    fix and belongs to the corner-model generalisation work. What changes is
+    only what happens *after* a supply line is found: it used to require a
+    literal `DC` token and no-op in silence otherwise."""
+    lines = text.split("\n")
+    form: str | None = None
+    rewritten = 0
+    for index, line in enumerate(lines):
+        if not _SUPPLY_LINE.match(line):
+            continue
+
+        dc = _SUPPLY_DC.match(line)
+        if dc:
+            lines[index] = f"{dc.group(1)}{voltage}{line[dc.end():]}"
+            form = form or "dc"
+            rewritten += 1
+            continue
+
+        pwl = _SUPPLY_PWL.match(line)
+        if pwl:
+            head, opener, body, closer, tail = pwl.groups()
+            lines[index] = f"{head}{opener}{_rewrite_pwl_body(line, body, voltage)}{closer}{tail}"
+            form = form or "pwl"
+            rewritten += 1
+            continue
+
+        raise CornerRenderError(
+            f"cannot set the corner voltage on {line.strip()!r}: the supply source is "
+            f"neither 'DC <value>' nor 'PWL(<time> <value> ...)'. Rendering it unchanged "
+            f"would run this corner at the deck's own supply and report the result as "
+            f"that corner's"
+        )
+
+    if rewritten == 0:
+        return text, "absent", None, 0
+    return "\n".join(lines), "applied", form, rewritten
+
+
+def render_corner_report(
     netlist_text: str, process: str, voltage: float, temperature: float, benchmark_dir: str
-) -> str:
-    """Renders netlist_text for one PVT corner: swaps which process-corner
-    PDK include file is used, injects a .temp directive, and sets Vdd's DC
-    value - all via absolute paths / targeted regexes, not the tuner's
-    apply_changes (verified unsafe here: apply_changes's generic positional-
-    token targeting would hit the AC magnitude, not the DC value, on a Vdd
-    line with a trailing "AC 1" clause, e.g. netlist_psr_plus.cir)."""
+) -> CornerRender:
+    """`render_corner_netlist`'s richer sibling: the rendered deck plus which of
+    the three rewrites actually reached it. See `CornerRender`."""
     include_name = "pdk_corner.inc" if process == "tt" else f"pdk_corner_{process}.inc"
     abs_include = os.path.join(benchmark_dir, include_name)
 
@@ -29,14 +174,48 @@ def render_corner_netlist(
     # form. An exact-match on the bare relative form would silently no-op,
     # leaving all 45 corners running the tt models at the default temperature.
     corner_include_pattern = re.compile(r'^\s*\.include\s+"?\S*pdk_corner\.inc"?\s*$', re.MULTILINE)
-    text = corner_include_pattern.sub(f'.include "{abs_include}"', netlist_text, count=1)
+    text, include_subs = corner_include_pattern.subn(f'.include "{abs_include}"', netlist_text, count=1)
 
+    # The temperature is injected *after* the include line, so it can only land
+    # when the include swap landed. Reported separately anyway: "no .temp was
+    # injected" is what a reader chasing a corner that behaved like nominal
+    # needs to see, and deriving it from the include state is exactly the
+    # inference nobody makes while reading a log.
     include_line_pattern = re.compile(r'(\.include "' + re.escape(abs_include) + r'"\n)')
-    text = include_line_pattern.sub(lambda m: m.group(1) + f".temp {temperature}\n", text, count=1)
+    text, temp_subs = include_line_pattern.subn(
+        lambda m: m.group(1) + f".temp {temperature}\n", text, count=1
+    )
 
-    text = re.sub(r"^(Vdd\s+\S+\s+\S+\s+DC\s+)\S+", rf"\g<1>{voltage}", text, flags=re.MULTILINE)
+    text, supply_state, supply_form, supply_lines = _apply_corner_voltage(text, voltage)
 
-    return text
+    return CornerRender(
+        text=text,
+        states={
+            "process_include": "applied" if include_subs else "absent",
+            "temperature": "applied" if temp_subs else "absent",
+            "supply": supply_state,
+            "supply_form": supply_form,
+            "supply_lines": supply_lines,
+        },
+    )
+
+
+def render_corner_netlist(
+    netlist_text: str, process: str, voltage: float, temperature: float, benchmark_dir: str
+) -> str:
+    """Renders netlist_text for one PVT corner: swaps which process-corner
+    PDK include file is used, injects a .temp directive, and sets the supply
+    line's value - all via absolute paths / targeted regexes, not the tuner's
+    apply_changes (verified unsafe here: apply_changes's generic positional-
+    token targeting would hit the AC magnitude, not the DC value, on a Vdd
+    line with a trailing "AC 1" clause, e.g. netlist_psr_plus.cir).
+
+    Use `render_corner_report` where the states can be logged; this thin form
+    exists for the call sites that only want the text. Both raise
+    `CornerRenderError` on a supply line that cannot be rewritten."""
+    return render_corner_report(
+        netlist_text, process, voltage, temperature, benchmark_dir
+    ).text
 
 
 @dataclass(frozen=True)
@@ -245,10 +424,16 @@ def run_full_pvt_sweep(
     for tb in spec.testbenches:
         netlist_text = netlist_texts[tb.name]
         for index, corner in enumerate(corners):
-            rendered = render_corner_netlist(
+            render = render_corner_report(
                 netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
             )
-            points.append(((tb.name, index), (rendered, tb.control_block)))
+            # **테스트벤치마다 한 번, 그리고 무조건 적는다.** 상태는 덱의 성질이지
+            # 코너의 성질이 아니므로 코너마다 적으면 45배의 같은 줄이 되고, 실패
+            # 시에만 적으면 "확인했고 멀쩡했다"와 "검사가 사라졌다"가 구별되지
+            # 않는다 - optimize_guard_infeasible이 이미 치른 값이다.
+            if index == 0 and log_event is not None:
+                log_event("corner_render", {"testbench": tb.name, "states": render.states})
+            points.append(((tb.name, index), (render.text, tb.control_block)))
 
     raw_results = map_points(
         lambda payload: _simulate_rendered(sim_backend, payload[0], payload[1]),

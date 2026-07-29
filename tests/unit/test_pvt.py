@@ -1,9 +1,20 @@
 import math
+import os
 
 import pytest
 
-from analogcoder.pvt import CornerPoint, all_corners, corner_severity, render_corner_netlist, worst_case_measurements
+from analogcoder.pvt import (
+    CornerPoint,
+    CornerRenderError,
+    all_corners,
+    corner_severity,
+    render_corner_netlist,
+    render_corner_report,
+    worst_case_measurements,
+)
 from analogcoder.spec import Criterion, PVTCorners
+
+_BENCHMARKS = os.path.join(os.path.dirname(__file__), "..", "..", "benchmarks")
 
 NETLIST = """\
 * Two-stage CMOS op-amp
@@ -82,6 +93,136 @@ def test_render_corner_netlist_preserves_trailing_ac_clause_on_vdd():
 
     vdd_lines = [line for line in rendered.splitlines() if line.startswith("Vdd")]
     assert vdd_lines == ["Vdd vdd 0 DC 1.98 AC 1"]
+
+
+NETLIST_WITH_PWL_SUPPLY = """\
+* startup testbench
+.include "pdk_corner.inc"
+
+.subckt OPAMP2STAGE vinp vinn vout vdd vss
+X1 n1 vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
+.ends OPAMP2STAGE
+
+Vdd vdd 0 PWL(0 0 100n 1.8 1 1.8)
+Vss vss 0 DC 0
+.end
+"""
+
+
+def test_render_corner_netlist_moves_a_pwl_supplys_plateau_to_the_corner_voltage():
+    # benchmarks/bandgap/netlist_startup.cir ramps its supply on purpose - that
+    # ramp is the testbench's whole reason to exist - so its Vdd line carries a
+    # PWL, not a DC. The literal "DC" the substitution used to require matched
+    # nothing there, re.sub returned the text unchanged, and the voltage axis of
+    # every corner was silently dead on that testbench.
+    rendered = render_corner_netlist(NETLIST_WITH_PWL_SUPPLY, "tt", 1.62, 27, "/benchmarks/bandgap")
+
+    vdd_lines = [line for line in rendered.splitlines() if line.startswith("Vdd")]
+    assert vdd_lines == ["Vdd vdd 0 PWL(0 0 100n 1.62 1 1.62)"]
+
+
+def test_render_corner_netlist_keeps_a_pwl_ramps_origin():
+    # Only the plateau - the level the ramp settles at, which is what a supply
+    # corner varies - moves. The 0 V the ramp starts from is the shape of the
+    # startup event, not the supply level, and rewriting it would delete the
+    # very thing the startup testbench measures.
+    rendered = render_corner_netlist(NETLIST_WITH_PWL_SUPPLY, "ff", 1.98, 125, "/benchmarks/bandgap")
+
+    assert "PWL(0 0 100n 1.98 1 1.98)" in rendered
+
+
+def test_render_corner_netlist_rejects_a_supply_form_it_cannot_rewrite():
+    # A Vdd line exists but is neither of the two forms this function can move.
+    # Guessing what to rewrite in a SIN() is exactly the guess this repo forbids,
+    # and silently returning the deck unchanged is what the PWL case already cost.
+    deck = NETLIST.replace("Vdd vdd 0 DC 1.8", "Vdd vdd 0 SIN(1.8 0.1 1k)")
+
+    with pytest.raises(CornerRenderError) as exc:
+        render_corner_netlist(deck, "tt", 1.62, 27, "/benchmarks/two_stage_opamp")
+
+    assert "Vdd vdd 0 SIN(1.8 0.1 1k)" in str(exc.value)
+
+
+def test_render_corner_netlist_rejects_a_pwl_with_an_unpaired_or_unparseable_token():
+    # PWL is (t1 v1 t2 v2 ...) alternating pairs - a SPICE syntax fact, so the
+    # voltages are the odd indices. A modifier like TD= or an odd token count
+    # breaks that indexing, and acting on a broken index is a guess.
+    odd = NETLIST_WITH_PWL_SUPPLY.replace("PWL(0 0 100n 1.8 1 1.8)", "PWL(0 0 100n 1.8 1)")
+    modified = NETLIST_WITH_PWL_SUPPLY.replace(
+        "PWL(0 0 100n 1.8 1 1.8)", "PWL(0 0 100n 1.8 1 1.8 TD=5n)"
+    )
+
+    for deck in (odd, modified):
+        with pytest.raises(CornerRenderError):
+            render_corner_netlist(deck, "tt", 1.62, 27, "/benchmarks/bandgap")
+
+
+def test_render_corner_report_says_which_rewrites_actually_applied():
+    report = render_corner_report(NETLIST, "ss", 1.62, -40, "/benchmarks/two_stage_opamp")
+
+    assert report.text == render_corner_netlist(NETLIST, "ss", 1.62, -40, "/benchmarks/two_stage_opamp")
+    assert report.states == {
+        "process_include": "applied",
+        "temperature": "applied",
+        "supply": "applied",
+        "supply_form": "dc",
+        "supply_lines": 1,
+    }
+
+
+def test_render_corner_report_says_so_when_there_is_nothing_to_rewrite():
+    # A deck with no PDK include and no supply source. Nothing here is an error -
+    # but "the voltage axis did nothing" and "the voltage axis worked" must not
+    # look identical in history.jsonl, which is the whole lesson of this fix.
+    report = render_corner_report("* bare\n.end\n", "ss", 1.62, -40, "/benchmarks/x")
+
+    assert report.states == {
+        "process_include": "absent",
+        "temperature": "absent",
+        "supply": "absent",
+        "supply_form": None,
+        "supply_lines": 0,
+    }
+
+
+def test_the_shipped_startup_deck_really_takes_the_corner_voltage():
+    # The regression as it actually is on disk, not a hand-written stand-in.
+    path = os.path.join(_BENCHMARKS, "bandgap", "netlist_startup.cir")
+    with open(path) as f:
+        deck = f.read()
+
+    low = render_corner_netlist(deck, "ss", 1.62, -40, os.path.dirname(path))
+    high = render_corner_netlist(deck, "ss", 1.98, -40, os.path.dirname(path))
+
+    assert "Vdd vdd 0 PWL(0 0 100n 1.62 1 1.62)" in low
+    assert "Vdd vdd 0 PWL(0 0 100n 1.98 1 1.98)" in high
+
+
+def test_every_shipped_dc_supply_deck_renders_exactly_as_before():
+    # Judgement rule: widening the supply rewrite must not move a single byte on
+    # the decks that already worked. Each of these carries a plain DC supply, and
+    # the two PSR decks additionally carry a trailing "AC 1" that must survive.
+    expected = {
+        "bandgap/netlist.cir": "Vdd vdd 0 DC 1.62",
+        "bandgap/netlist_loops.cir": "Vdd vdd 0 DC 1.62",
+        "bandgap/netlist_psrr.cir": "Vdd vdd 0 DC 1.62 AC 1",
+        "bandgap/netlist_settling.cir": "Vdd vdd 0 DC 1.62",
+        "bandgap/netlist_seed_topology.cir": "Vdd vdd 0 DC 1.62",
+        "two_stage_opamp/netlist.cir": "Vdd vdd 0 DC 1.62",
+        "two_stage_opamp/netlist_psr_plus.cir": "Vdd vdd 0 DC 1.62 AC 1",
+        "two_stage_opamp/netlist_psr_minus.cir": "Vdd vdd 0 DC 1.62",
+        "two_stage_opamp/netlist_settling.cir": "Vdd vdd 0 DC 1.62",
+    }
+    for relative, vdd_line in expected.items():
+        path = os.path.join(_BENCHMARKS, relative)
+        with open(path) as f:
+            deck = f.read()
+
+        report = render_corner_report(deck, "ss", 1.62, -40, os.path.dirname(path))
+
+        assert [line for line in report.text.splitlines() if line.startswith("Vdd")] == [vdd_line]
+        assert report.states["supply_form"] == "dc"
+        assert report.states["supply"] == "applied"
 
 
 def test_all_corners_produces_full_cross_product():
@@ -316,6 +457,48 @@ def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
 
     failed = {c["name"] for c in result["criteria"] if not c["pass"]}
     assert failed == {"vbgout_min"}
+
+
+def test_the_sweep_logs_which_corner_rewrites_applied_per_testbench():
+    """"코너를 렌더링했다"와 "렌더링이 아무것도 하지 않았다"가 history.jsonl에서
+    구별되어야 한다. 전압 축이 죽어 있던 3년치 startup 코너가 어떤 로그에도
+    남지 않았다는 것이 이 수정의 이유이므로, 사건은 **무조건** 적힌다 -
+    셋 다 적용됐을 때도 적힌다. 코너마다가 아니라 테스트벤치마다 한 번인
+    이유는 상태가 덱의 성질이지 코너의 성질이 아니기 때문이다."""
+    from types import SimpleNamespace
+
+    from analogcoder.pvt import run_full_pvt_sweep
+    from analogcoder.simulators.base import RawSimResult
+
+    class _StubBackend:
+        def run(self, netlist_path, testbench_config):
+            return RawSimResult(status="success", measurements={"g": 44.0}, raw_log="", warnings=[])
+
+    criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
+    tb = SimpleNamespace(
+        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria
+    )
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        canonical=tb,
+        all_criteria=criteria,
+        pvt_corners=PVTCorners(process=["tt", "ff"], voltage=[1.62, 1.8], temperature=[27]),
+    )
+    events = []
+
+    run_full_pvt_sweep(
+        {"dc": '* n\n.include "pdk_corner.inc"\nVdd vdd 0 DC 1.8\n.end\n'},
+        spec,
+        _StubBackend(),
+        max_workers=1,
+        log_event=lambda name, payload: events.append((name, payload)),
+    )
+
+    renders = [payload for name, payload in events if name == "corner_render"]
+    assert len(renders) == 1  # one testbench, not one per corner
+    assert renders[0]["testbench"] == "dc"
+    assert renders[0]["states"]["supply"] == "applied"
+    assert renders[0]["states"]["supply_form"] == "dc"
 
 
 GE = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)

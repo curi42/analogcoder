@@ -193,6 +193,38 @@ def _recording_log(events):
     return log
 
 
+async def test_the_mid_loop_records_which_corner_rewrites_reached_the_deck(tmp_path):
+    """전체 스윕과 마찬가지로, 중간 루프도 "전압 축이 적용됐다"와 "아무것도
+    바뀌지 않았다"를 history.jsonl에서 구별할 수 있어야 한다. 이 사건이 없으면
+    PWL 공급의 전압 축이 죽은 채로 도는 실행이 로그상 정상 실행과 똑같이 보인다
+    - 실제로 그랬다. 테스트벤치마다 한 번이고, 코너 수와 무관하다."""
+    state = _state(tmp_path)
+    events = []
+    cs = CornerSet(corners=(NOMINAL, FS, SS), probe_order=())
+    sim = build_corner_simulate(
+        _agent(),
+        _backend([{"g": 50.0}, {"g": 41.0}, {"g": 44.0}]),
+        state,
+        CornerState(cs),
+        lambda name, payload: events.append((name, payload)),
+    )
+
+    await sim({"tb": DECK}, _spec_ge_40())
+
+    renders = [payload for name, payload in events if name == "corner_render"]
+    assert len(renders) == 1
+    assert renders[0] == {
+        "testbench": "tb",
+        "states": {
+            "process_include": "applied",
+            "temperature": "applied",
+            "supply": "applied",
+            "supply_form": "dc",
+            "supply_lines": 1,
+        },
+    }
+
+
 # --- 선택 집합의 최악값 -------------------------------------------------------
 
 

@@ -368,7 +368,7 @@ that number was measured.
   read as metres, include-only wrapper cells, wrapper instance parameters, and
   now a zero baseline), and the first three were invisible in every run log.
   A new gate ships with the record of when it did nothing, not just the rule.
-  **The running total is nine.** Curation added three more, all of them a gate
+  **The running total is ten.** Curation added three more, all of them a gate
   that *passed* without being able to fail: `tunable_range` taking the direct
   branch where the judging path takes the traced one (so every geometry knob on
   a wrapper-cell deck vanished while the record blamed the area gate), the
@@ -383,6 +383,17 @@ that number was measured.
   Both are described under "Spec, topologies, and the area gate" above. Six
   occurrences is no longer a run of bad luck — treat "what does this log look
   like when the gate does nothing?" as part of writing the gate.
+  **#10 is `render_corner_netlist`'s supply rewrite, and it is the first one
+  that made a *measurement* mean nothing rather than a check.** The
+  substitution required a literal `DC` token, `benchmarks/bandgap/
+  netlist_startup.cir` writes `Vdd vdd 0 PWL(0 0 100n 1.8 1 1.8)`, and
+  `re.sub` returns the input unchanged on zero matches — so the voltage axis
+  of that testbench was dead in both corner-carrying specs and nothing said
+  so. Described in full under "Corner reduction and re-entry" below. The
+  lesson that generalises past this file: **`re.sub`/`str.replace` are silent
+  by construction.** Any rewrite this repo *asks for* must be counted
+  (`re.subn`) and its result recorded, in exactly the way a gate's inert state
+  is.
   **The same shape reaches measurements, and the count deliberately does not
   absorb that.** D1's repeat-proposal-rate metric produced `0.000` on its
   baseline run because that run had **zero** rollbacks and zero rejections, and
@@ -390,7 +401,7 @@ that number was measured.
   was the only value it could return (see "D1 ships unproven" under
   "Deterministic netlist derivation"). That is this defect class applied to a
   metric rather than a gate. It is **not** counted here and the total stays at
-  **nine**: this ledger enumerates gates, and folding a metric in would make the
+  **ten**: this ledger enumerates gates, and folding a metric in would make the
   number mean two things. The transferable rule is the question, not the count —
   for a gate ask "what does the log look like when it does nothing?", for a
   metric ask **"was the condition under which this could return a different
@@ -471,6 +482,72 @@ that number was measured.
   `render_corner_netlist`, which writes `.include ".../pdk_corner_(deck).inc"`
   and hands ngspice a file that does not exist: "this point has no coordinates"
   silently becoming a coordinate.
+- **A rewrite nobody counted is a corner nobody ran, and the comment two lines
+  above already said so.** `render_corner_netlist` performs three rewrites, and
+  the supply one used to be `re.sub(r"^(Vdd\s+\S+\s+\S+\s+DC\s+)\S+", ...)`.
+  `benchmarks/bandgap/netlist_startup.cir` writes `Vdd vdd 0 PWL(0 0 100n 1.8
+  1 1.8)` — the ramp *is* that testbench's reason to exist, so it is the one
+  deck of eleven that cannot carry a `DC` token. Zero matches, and `re.sub`
+  returns its input unchanged. That deck is a testbench of **both**
+  `spec_pvt.yaml` (45 corners) and `spec_corner_reduction.yaml` (9), so on the
+  45-corner grid the startup testbench saw **15 distinct conditions, not 45**,
+  and `startup_time`'s worst corner — plus its contribution to the corner
+  reduction seed — was an arbitrary label on a 1.8 V run. Measured after the
+  fix, at `tt/27`: **5.836 µs at 1.62 V vs 87.03 ns at 1.98 V**, a 67× spread
+  the sweep had collapsed to one number. And at the corner the spec's own
+  comment names as the slow end: real `sf/1.62/-40` is **9.751 µs** while what
+  the sweep actually simulated under that label (`sf/1.8/-40`) is **5.140 µs**.
+  The comment's `9.75us` matches the *real* 1.62 V value, so the threshold was
+  set from a number the automated sweep could never reproduce — and the
+  disagreement was invisible. Still inside the 20 µs threshold, so the
+  benchmark's verdict does not move.
+  **The part worth carrying: the fix for this exact shape was already written
+  in this same function, six lines up.** The include swap carries a comment
+  explaining that an exact-match would "silently no-op, leaving all 45 corners
+  running the tt models" — the identical accident, diagnosed, fixed, and
+  documented — while the line below it kept its own silent no-op. **When you
+  fix a shape inside a function, read the rest of that function for it.**
+- **The corner renderer now reports what it did, and refuses what it cannot
+  do.** `render_corner_report` returns `CornerRender(text, states)` — the same
+  richer-sibling shape as `area_limits.evaluate_area_growth` — and both call
+  sites (`run_full_pvt_sweep`, `corner_sim`) log a `corner_render` event **once
+  per testbench, unconditionally**, including when all three rewrites applied.
+  Per corner would be 45 identical lines; only-on-failure would make "checked,
+  fine" and "the check is gone" identical again. Three states, and the split is
+  the point: `applied`; `absent` (nothing in this deck to touch — no
+  `pdk_corner` include, no `Vdd` line — which is not an error and is exactly
+  what `tests/unit/test_pvt.py`'s bare stub decks are); and, when the line **is**
+  there in a form that cannot be rewritten without guessing, a raised
+  `CornerRenderError`. It subclasses **`ValueError` on purpose**, so
+  `run_orchestration` and `run_optimization`'s existing guards fold it into a
+  clean FAIL / `optimize_failed` rather than a traceback — the optimization
+  phase still has no FAIL outcome. One gap is deliberate and known:
+  `cli.py`'s final sweep is not inside either guard, so an unrenderable deck
+  crashes there. Reaching it requires a deck no benchmark has, and the
+  alternative — rendering it unchanged — is the silent wrong verdict this whole
+  entry is about.
+- **The PWL supply rewrite is two SPICE facts plus one stated judgement, and
+  everything outside them fails loudly.** Facts: a PWL value list is
+  alternating `t1 v1 t2 v2 …` pairs, so voltages are the odd (0-based)
+  indices; and after the last time point a PWL holds its last value forever,
+  so that value is the level the supply settles at. Judgement: **every voltage
+  entry numerically equal to that settled level moves to the corner voltage,
+  every other entry is waveform shape and is left alone** — which is what keeps
+  the startup ramp starting at 0 V while both 1.8 V entries become 1.62 V.
+  Comparison goes through `netlist.parse_spice_value`, so `1.8` and `1800m`
+  are one level. Refused with `CornerRenderError`, never half-handled: an odd
+  token count, any non-numeric token (`TD=`, `REPEAT`, `{expr}`, a comma-glued
+  token, the file form), the bare unparenthesised PWL (its value list runs to
+  end of line and cannot be told from a trailing `AC 1` without guessing), a
+  `+`-continued line, and a settled level of `0` (no plateau to identify). The
+  `DC` branch is byte-for-byte what it was — verified by hashing every render
+  of all eleven benchmark decks at three corners before and after: **31 of 33
+  identical**, the two that moved being `netlist_startup.cir` at 1.62 V and
+  1.98 V.
+  **Recognising the supply by the name `Vdd` is still there and is still the
+  forbidden guess.** Deliberately untouched here: it is not a live defect (all
+  eleven decks use `Vdd`), and widening it belongs to the corner-model
+  generalisation work, not to a rewrite-counting fix.
 - **Never put a NaN in a `CornerPoint`.** It is a frozen dataclass, so it
   compares and hashes by field, and `NaN != NaN` — such a value is not equal to
   *itself*. Every set operation in this module then breaks silently:
@@ -969,6 +1046,18 @@ knob that decided the shipped proof case.
   never MiM. Full corner table and the design assumptions ngspice disproved:
   `docs/superpowers/specs/2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md`
   ("Part 2 — as built" and "Part 2 revision").
+  **Until 2026-07-29 the `startup` testbench had no voltage axis at all**, in
+  this spec and in `spec_corner_reduction.yaml` both: `netlist_startup.cir`'s
+  supply is a `PWL` ramp and the corner renderer only rewrote a literal `DC`
+  value, so its 45 corners were 15 distinct conditions repeated three times
+  (see "A rewrite nobody counted…" under "Corner reduction and re-entry").
+  **Any `startup_time` corner number quoted from a run before that date is a
+  1.8 V number wearing another voltage's label** — including the `74.8ns ..
+  9.75us` range in the spec's own criterion comment, whose slow end happens to
+  match the *real* `sf/1.62/-40` (9.751 µs) rather than what the sweep ran
+  under that name (`sf/1.8/-40`, 5.140 µs). Every other testbench in both specs
+  is unaffected: they all carry a `DC` supply and their renders are
+  byte-identical across the fix.
   Both `spec.yaml` and `spec_pvt.yaml` also carry the `optimize:` block, and
   this is the benchmark the optimization phase was first verified on against
   real ngspice — `quiescent_current` sits at 212.99 µA against a 300 µA

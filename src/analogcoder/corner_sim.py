@@ -5,7 +5,12 @@ from dataclasses import dataclass
 
 from analogcoder.corner_selection import NOMINAL, CornerSet, label, next_probe, promote
 from analogcoder.judge_tools import evaluate_criteria
-from analogcoder.pvt import CornerPoint, render_corner_netlist, worst_case_measurements
+from analogcoder.pvt import (
+    CornerPoint,
+    render_corner_netlist,
+    render_corner_report,
+    worst_case_measurements,
+)
 from analogcoder.simulators.base import RawSimResult
 from analogcoder.simulators.cache import attach_log_event
 from analogcoder.simulators.parallel import map_points
@@ -99,6 +104,29 @@ def _run_point(
         return sim_backend.run(netlist_path, {"control_block": control_block})
 
 
+def _log_corner_render(tb_name, netlist_text, cs, benchmark_dir, log_event) -> None:
+    """이 테스트벤치의 덱을 렌더링하면 세 재작성 중 무엇이 실제로 적용되는지를
+    적는다. NOMINAL은 렌더링을 거치지 않으므로, 선택 집합이 NOMINAL뿐이면
+    적을 것이 없다 - 그때는 조용히 넘어가는 것이 맞다(재작성을 아무도 요청하지
+    않았다).
+
+    대표 코너 하나로 재는 이유: 세 상태는 덱에 그 줄이 있느냐만 보므로 코너
+    좌표에 의존하지 않는다. 그래서 존재하는 코너 중 첫 번째를 쓴다 - 가짜
+    좌표를 지어내지 않는다(`_corner_fields`가 (deck)에 대해 지키는 것과 같은
+    규칙)."""
+    representative = next((point for point in cs.corners if point is not NOMINAL), None)
+    if representative is None or log_event is None:
+        return
+    render = render_corner_report(
+        netlist_text,
+        representative.process,
+        representative.voltage,
+        representative.temperature,
+        benchmark_dir,
+    )
+    log_event("corner_render", {"testbench": tb_name, "states": render.states})
+
+
 def build_corner_simulate(
     agent_simulate, sim_backend, state, corner_state: CornerState, log_event, max_workers=None
 ) -> Callable:
@@ -174,6 +202,15 @@ def build_corner_simulate(
                 # 원문으로 돌아가면 수렴 재시도의 이득을 코너가 못 받는다.
                 # 폴백은 에이전트가 아무것도 주지 않았을 때만이다.
                 control_block = agent_result.get("control_block") or tb.control_block
+
+                # **렌더링이 무엇을 했는지는 테스트벤치마다 한 번, 무조건
+                # 적는다.** 전체 스윕(pvt.run_full_pvt_sweep)과 같은 이유이자
+                # 같은 사건 이름이다: 요청한 재작성이 0건 매치인 것과 정상
+                # 적용된 것이 history.jsonl에서 똑같이 보이면, 축이 죽은 채로
+                # 도는 실행을 아무도 알아채지 못한다(startup 테스트벤치의
+                # 전압 축이 정확히 그랬다). 상태는 코너가 아니라 덱의 성질이라
+                # 대표 코너 하나로 충분하고, 그 렌더링 비용은 정규식 몇 개다.
+                _log_corner_render(tb.name, netlist_texts[tb.name], cs, benchmark_dir, log_event)
 
                 def _point_task(point, _tb=tb, _cb=control_block):
                     return _run_point(

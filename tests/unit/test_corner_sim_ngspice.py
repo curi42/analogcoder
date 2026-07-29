@@ -80,4 +80,9 @@ async def test_the_corner_aware_simulate_measures_a_real_deck_at_real_corners(tm
 
     # 집합 밖이 비었으므로 탐침은 없다.
     assert result["probe"] is None
-    assert events == []
+    # 사건 이름을 지목해서 본다. 예전에는 `events == []`이었는데, 그것은 "탐침
+    # 사건이 없다"가 아니라 "이 경로가 아무것도 기록하지 않는다"를 고정하는
+    # 단언이라, 렌더링 상태 기록처럼 **기록이 늘어나는** 방향의 변경까지 함께
+    # 막았다. 이 저장소가 반복해서 값을 치른 것은 기록이 없는 쪽이다.
+    assert [name for name, _ in events if name == "corner_probe"] == []
+    assert [name for name, _ in events] == ["corner_render"]
