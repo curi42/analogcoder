@@ -359,6 +359,95 @@ def _is_subckt_open(lower: str) -> bool:
     return lower.startswith(".subckt") or lower.startswith(".macro")
 
 
+# 포트 절이 끝나고 파라미터 절이 시작된다는 예약어. SPICE 헤더 문법이지
+# 이 저장소의 추측이 아니다 - 노드 이름으로는 쓸 수 없다.
+_PARAMS_KEYWORDS = frozenset({"params:", "param:"})
+
+
+def _subckt_header_fields(tokens: list[str], name: str, line: str) -> tuple[list[str], dict[str, str]]:
+    """`.subckt` 헤더의 이름 뒤 토큰들을 (포트, 기본값)으로 가른다.
+
+    파서는 오래도록 `"=" not in t` 하나로 이 판정을 했다. 그래서 실제로
+    시뮬레이션되는 두 표기에서 **유령 포트**가 생겼다:
+
+        .subckt CELL a b rv = 2k       -> ports ['a','b','rv','2k'], defaults {'':''}
+        .subckt CELL a b PARAMS: rv=4k -> ports ['a','b','PARAMS:']
+
+    **유령 포트는 조용히 틀리는 것이 아니라 회로 사실로 위장한다.**
+    `benchmarks/two_stage_opamp/netlist.cir` 헤더에 `ccx = 1`만 덧붙여 확인:
+    `compatible_swaps` 후보가 1 -> 0이 되고, `miller_basic`의 기각 사유가
+    `identical_body`(진짜 도메인 사실)에서 `ports :: instance 'Xdut' … has
+    fewer nodes`로 바뀐다. 그러면 `topology_unavailable`은 가장 뭉뚱그린
+    `all_pairs_rejected`를 낸다 - 사유 코드를 붙이며 막으려던 바로 그 모양이다.
+    같은 오독은 `signal_path`의 포트 mismatch(초점 씨앗 불가)와
+    `build_param_envs`의 빈 환경(면적 게이트 판정 불가)으로도 번진다.
+
+    **판별에 쓰는 것은 문법 사실 둘뿐이다.** (1) 단독 `=` 토큰은 대입
+    연산자일 수밖에 없다 - `=`라는 이름의 노드는 없다. (2) `PARAMS:`는
+    포트 절의 끝을 알리는 예약어다. 둘 다 SPICE 문법이지 이름에서 뜻을
+    읽어 내는 추측이 아니다.
+
+    **그 밖의 모양은 지어내지 않고 `ValueError`로 거절한다.** 값 없는 `=`,
+    이름 없는 `=`, `PARAMS:` 뒤의 맨 토큰 - 포트로 읽으면 유령 포트가 되고
+    파라미터로 읽으려면 값을 지어내야 한다. 거절은 헤더 줄과 문제의 토큰을
+    말하는데, 사유 없는 거절은 이 결함이 다시 회로 사실로 위장하는 자리다.
+    """
+
+    def refuse(detail: str, token: str) -> None:
+        raise ValueError(
+            f"cannot read subckt header for '{name}': {detail} (token {token!r}) - {line.strip()!r}"
+        )
+
+    ports: list[str] = []
+    defaults: dict[str, str] = {}
+    seen_params_keyword = False
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+
+        if tok.lower() in _PARAMS_KEYWORDS:
+            seen_params_keyword = True
+            i += 1
+            continue
+
+        if "=" in tok:
+            # 이름은 아래에서 **앞을 내다보며** 소비되므로, 여기 오는 `=`로
+            # 시작하는 토큰은 이름이 없는 것이다.
+            if tok.startswith("="):
+                refuse("'=' has no parameter name before it", tok)
+            key, value = tok.split("=", 1)
+            if value == "":  # `name= value`
+                if nxt is None:
+                    refuse("assignment has no value after it", tok)
+                defaults[key] = nxt
+                i += 2
+            else:  # `name=value`
+                defaults[key] = value
+                i += 1
+            continue
+
+        # 맨 토큰. 뒤를 봐야 포트인지 대입의 이름인지 정해진다.
+        if nxt == "=":  # `name = value`
+            if i + 2 >= len(tokens):
+                refuse("'=' has no value after it", nxt)
+            defaults[tok] = tokens[i + 2]
+            i += 3
+            continue
+        if nxt is not None and nxt.startswith("="):  # `name =value`
+            defaults[tok] = nxt[1:]
+            i += 2
+            continue
+
+        if seen_params_keyword:
+            # `PARAMS:` 뒤는 전부 대입이다. 여기서 포트로 접수하면 그것이
+            # 정확히 유령 포트다.
+            refuse("a bare token follows the parameter keyword", tok)
+        ports.append(tok)
+        i += 1
+    return ports, defaults
+
+
 def _is_subckt_close(lower: str) -> bool:
     return lower.startswith(".ends") or lower.startswith(".eom")
 
@@ -391,8 +480,7 @@ def parse_netlist(text: str) -> ParsedNetlist:
         if _is_subckt_open(lower):
             tokens = split_tokens(line)
             name = tokens[1]
-            ports = [t for t in tokens[2:] if "=" not in t]
-            defaults = dict(t.split("=", 1) for t in tokens[2:] if "=" in t)
+            ports, defaults = _subckt_header_fields(tokens[2:], name, line)
             path = ".".join([s.name for s in stack] + [name])
             subckt = Subckt(name=name, ports=ports, path=path, defaults=defaults)
             subckts[path] = subckt

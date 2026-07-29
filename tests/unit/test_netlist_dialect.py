@@ -1,3 +1,5 @@
+import pytest
+
 from analogcoder.netlist import (
     apply_changes,
     check_refdes_resolution,
@@ -232,3 +234,89 @@ def test_a_single_quoted_include_path_does_not_keep_its_quotes():
     out = resolve_includes(".include 'models/tt.inc'\n", "/BASE")
 
     assert out.strip() == '.include "/BASE/models/tt.inc"'
+
+
+# ------------------------------- `.subckt` 헤더의 파라미터 구분 표기
+
+# 세 표기가 모두 실제로 시뮬레이션되는 SPICE 이고, 목표 환경(HSPICE + 래퍼
+# 래퍼 셀)이 정확히 이 문법을 쓴다. 파서는 `"=" not in t` 하나로 포트를
+# 갈랐기 때문에 뒤의 둘에서 **유령 포트**를 만들었다.
+#
+# **왜 이것이 그냥 파싱 버그보다 나쁜가**: 유령 포트는 조용히 틀리지 않고
+# **회로 사실로 위장한다.** `benchmarks/two_stage_opamp/netlist.cir` 헤더에
+# `ccx = 1` 만 덧붙여 직접 확인했다 - `compatible_swaps` 후보가 1 -> 0 이 되고,
+# `miller_basic` 의 기각 사유가 `identical_body`(진짜 도메인 사실)에서
+# `ports :: instance 'Xdut' … has fewer nodes` 로 바뀐다. 그러면
+# `topology_unavailable` 이 가장 뭉뚱그린 `all_pairs_rejected` 를 낸다.
+# 사유 코드를 붙이며 막으려던 바로 그 모양이다.
+#
+# 판별에 쓰는 것은 **문법 사실 둘뿐**이다: (1) 단독 `=` 토큰은 대입
+# 연산자일 수밖에 없다(`=` 라는 이름의 노드는 없다), (2) `PARAMS:` 는 포트
+# 절이 끝나고 파라미터 절이 시작된다는 예약어다. 그 밖의 모양은 추측하지
+# 않고 시끄럽게 거절한다.
+
+
+def _ports_and_defaults(header):
+    subckt = parse_netlist(f"* t\n{header}\nR1 a b rv\n.ends\n.end\n").subckts["CELL"]
+    return subckt.ports, subckt.defaults
+
+
+def test_a_spaced_equals_in_a_subckt_header_is_an_assignment_not_two_ports():
+    assert _ports_and_defaults(".subckt CELL a b rv = 2k") == (["a", "b"], {"rv": "2k"})
+
+
+def test_a_params_keyword_is_not_a_port():
+    assert _ports_and_defaults(".subckt CELL a b PARAMS: rv=4k") == (["a", "b"], {"rv": "4k"})
+
+
+def test_the_params_keyword_is_case_insensitive_and_composes_with_spacing():
+    assert _ports_and_defaults(".subckt CELL a b params: rv=4k wn = 2u") == (
+        ["a", "b"],
+        {"rv": "4k", "wn": "2u"},
+    )
+
+
+def test_equals_glued_to_either_side_is_still_one_assignment():
+    assert _ports_and_defaults(".subckt CELL a b rv= 2k") == (["a", "b"], {"rv": "2k"})
+    assert _ports_and_defaults(".subckt CELL a b rv =2k") == (["a", "b"], {"rv": "2k"})
+
+
+def test_a_spaced_assignment_may_carry_a_quoted_expression():
+    """`split_tokens` 가 `'...'` 를 한 토큰으로 지켜 주므로 값 쪽이 식이어도
+    같은 규칙이 그대로 걸린다."""
+    assert _ports_and_defaults(".subckt CELL a b W = 'wn * 2'") == (["a", "b"], {"W": "'wn * 2'"})
+
+
+def test_the_shipped_headers_parse_exactly_as_before():
+    """오늘 벤치마크 덱들이 쓰는 두 표기는 건드리지 않는다."""
+    assert _ports_and_defaults(".subckt CELL a b") == (["a", "b"], {})
+    assert _ports_and_defaults(".subckt CELL a b rv=2k") == (["a", "b"], {"rv": "2k"})
+
+
+# --- 추측하지 않는 자리: 읽을 수 없는 헤더는 조용히 넘어가지 않는다
+
+
+def test_a_trailing_equals_with_no_value_is_refused():
+    with pytest.raises(ValueError, match=r"subckt header"):
+        _ports_and_defaults(".subckt CELL a b rv =")
+
+
+def test_a_leading_equals_with_no_name_is_refused():
+    with pytest.raises(ValueError, match=r"subckt header"):
+        _ports_and_defaults(".subckt CELL = 2k")
+
+
+def test_a_bare_token_after_the_params_keyword_is_refused():
+    """`PARAMS:` 뒤는 전부 대입이어야 한다. 포트로 읽으면 유령 포트가 되고,
+    파라미터로 읽으려면 값을 지어내야 한다 - 둘 다 추측이다."""
+    with pytest.raises(ValueError, match=r"subckt header"):
+        _ports_and_defaults(".subckt CELL a b PARAMS: rv=4k stray")
+
+
+def test_the_refusal_names_the_header_it_could_not_read():
+    """사유가 없으면 이 거절이 회로 사실로 다시 위장한다."""
+    with pytest.raises(ValueError) as excinfo:
+        _ports_and_defaults(".subckt CELL a b PARAMS: rv=4k stray")
+
+    assert "CELL" in str(excinfo.value)
+    assert "stray" in str(excinfo.value)
