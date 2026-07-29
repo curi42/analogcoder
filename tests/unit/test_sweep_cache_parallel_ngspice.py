@@ -147,6 +147,56 @@ def test_a_dropped_determinant_would_be_caught_here():
     assert blind != good
 
 
+class _CountingNgspice(NgspiceBackend):
+    """실제로 ngspice 프로세스를 몇 번 띄웠는지 센다.
+
+    **이 카운트가 벽시계보다 강한 증거다.** 벽시계는 머신 부하에 흔들리지만
+    "몇 번 안 돌렸는가"는 결정론적이고, 캐시의 효과를 정확히 그 값으로
+    설명한다. 병렬화 쪽에서는 같은 카운트가 "병렬이 일을 더 하거나 덜 하지
+    않는다"를 말한다."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.invocations = 0
+        self._count_lock = __import__("threading").Lock()
+
+    def run(self, netlist_path, testbench_config):
+        with self._count_lock:
+            self.invocations += 1
+        return super().run(netlist_path, testbench_config)
+
+
+def test_the_cache_avoids_a_deterministic_number_of_ngspice_invocations():
+    """부하와 무관한 대리 지표. 스윕 한 번은 4코너 × 4테스트벤치 = 16회다.
+    캐시가 채워진 뒤의 두 번째 스윕은 **0회**여야 한다 - 16회 회피."""
+    spec = _opamp_spec()
+    inner = _CountingNgspice()
+    cache = CachingSimulator(inner)
+    texts = _texts(spec)
+
+    run_full_pvt_sweep(texts, spec, cache, max_workers=1)
+    after_fill = inner.invocations
+    run_full_pvt_sweep(texts, spec, cache, max_workers=1)
+    after_reuse = inner.invocations
+
+    assert after_fill == 16
+    assert after_reuse == 16, "두 번째 스윕은 ngspice를 한 번도 띄우지 않아야 한다"
+    assert cache.stats() == {"hits": 16, "misses": 16, "entries": 16}
+
+
+def test_the_parallel_sweep_runs_exactly_as_many_simulations_as_the_sequential_one():
+    """병렬화가 일을 더 하거나(중복 제출) 덜 하는(점을 빠뜨리는) 변형을
+    카운트로 잡는다. 벽시계와 달리 이 값은 머신 부하에 흔들리지 않는다."""
+    spec = _opamp_spec()
+    sequential = _CountingNgspice()
+    parallel = _CountingNgspice()
+
+    run_full_pvt_sweep(_texts(spec), spec, sequential, max_workers=1)
+    run_full_pvt_sweep(_texts(spec), spec, parallel, max_workers=8)
+
+    assert sequential.invocations == parallel.invocations == 16
+
+
 @pytest.mark.asyncio
 async def test_the_corner_aware_simulate_agrees_between_sequential_and_parallel(tmp_path):
     """축소 코너 경로도 같은 규칙을 받는다. corner_sim은 테스트벤치 **안쪽**을

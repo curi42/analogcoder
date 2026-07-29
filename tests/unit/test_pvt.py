@@ -276,6 +276,8 @@ def test_a_two_sided_window_with_both_sides_passing_keeps_the_last_writer():
 
 def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
     class _StubBackend:
+        # _SequencedBackend와 같은 이유로 호출 순서에 기댄다 - 아래 스윕은
+        # max_workers=1로 고정한다.
         def __init__(self, values):
             self.values = list(values)
 
@@ -310,7 +312,7 @@ def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
     # satisfied by both corners.
     backend = _StubBackend([1.24, 1.10])
 
-    result = run_full_pvt_sweep({"dc": "* netlist\n.end\n"}, spec, backend)
+    result = run_full_pvt_sweep({"dc": "* netlist\n.end\n"}, spec, backend, max_workers=1)
 
     failed = {c["name"] for c in result["criteria"] if not c["pass"]}
     assert failed == {"vbgout_min"}

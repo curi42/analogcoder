@@ -30,6 +30,23 @@ Vin in 0 DC 0 AC 1
 SPEC_CONTROL_BLOCK = ".ac dec 10 1 1G"
 
 
+@pytest.fixture(autouse=True)
+def _sequential_points(monkeypatch):
+    """이 파일의 대역은 **호출 순서로 점을 식별한다** - `_FakeBackend`는 큐에서
+    측정값을 pop하고 `raise_on_call`은 몇 번째 호출인지로 터진다. corner_sim이
+    한 테스트벤치의 코너들을 풀에 던지므로, 순서를 고정하지 않으면 이 파일
+    전체가 산발적으로 깨진다(실제로 깨졌다).
+
+    대역을 내용으로 색인하도록 고치는 길은 여기서 막혀 있다: 결과가 위치
+    리스트로 주어지므로 어느 결과가 어느 점의 것인지는 순서 말고 표현할 자리가
+    없다. 그래서 한계를 정직하게 적고 순차로 고정한다.
+
+    **병렬 경로가 값을 바꾸지 않는다는 주장은 이 파일이 지지 않는다** -
+    `test_sweep_cache_parallel_ngspice.py`가 진짜 ngspice로 순차와 병렬을
+    붙여 놓고, 탐침을 포함한 결과 전체가 같은지 확인한다."""
+    monkeypatch.setenv("ANALOGCODER_SIM_WORKERS", "1")
+
+
 def _state(tmp_path, texts=None):
     state = RunState(run_dir=str(tmp_path / "run"), testbench_names=["tb"])
     state.push_netlist_version(texts or {"tb": DECK})
