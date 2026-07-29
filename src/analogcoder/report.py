@@ -107,7 +107,7 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
     # 승격 재진입 attempt는 `grown`에 빈 리스트를 신는다 - 그것만 보면
     # "무엇을 더했는지 기록이 없다"로 읽히지 "새 코너를 판정하러
     # 재진입했다"로 읽히지 않는다. `attempts > 0`이면 **항상** 그린다 - 재진입은
-    # 했는데 무엇을 했는지 리포트에 없으면 이 저장소가 already 치른 값이
+    # 했는데 무엇을 했는지 리포트에 없으면 이 저장소가 이미 치른 값이
     # 그대로 반복된다.
     if attempts:
         grown = reduction.get("grown") or []
@@ -135,6 +135,12 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
                 # 재진입 기록도 없다 - 옛 result.json(이 필드가 생기기 전)이거나
                 # 두 리스트가 어긋난 자리다. 지어내지 않고 그 사실 자체를 적는다.
                 lines.append(f"- attempt {i}: no growth record available")
+        # M3(T19 리뷰): 이 파일은 `"\n".join(lines)`로 쓰므로, 불릿 목록 바로
+        # 뒤에 빈 줄이 없으면 다음 굵은 줄(`**Corner seed:**` 등)이 마크다운의
+        # lazy continuation으로 마지막 불릿에 흡수된다 - 특히
+        # `**Area-gate baselines:**`는 이 함수 독스트링이 "이 섹션이 존재하는
+        # 유일한 이유"라고 적은 줄이라 흡수되면 안 된다.
+        lines.append("")
 
     # **씨앗을 무엇으로 골랐는지.** history.jsonl의 `corner_seed`에만 있던 사실을
     # 여기로 끌어온다 - result.json/report.md만 보는 사람은 argmax와 ε-coverage

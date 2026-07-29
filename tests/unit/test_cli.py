@@ -9,6 +9,7 @@ import pytest
 from analogcoder import cli
 from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
+from analogcoder.checkpoint import BOUNDARY_ATTEMPT, read_payload
 from analogcoder.cli import (
     AGENT_NAMES,
     _argmax_drift,
@@ -1496,6 +1497,58 @@ async def test_a_corner_promoted_after_the_last_judgment_re_enters_instead_of_a_
     # `promotion_reentries`가 그 attempt·기준·코너를 담아야 한다. 이 필드
     # 자체를 지우면(또는 append를 빼먹으면) 아래 단언들이 실패한다.
     assert corner_reduction["promotion_reentries"] == [
+        {"attempt": 1, "criteria": ["pm"], "corners": ["ss/1.98/125.0"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_attempt_boundary_checkpoint_written_during_a_promotion_reentry_carries_it(
+    tmp_path,
+):
+    """I1(T19 리뷰): `_save`가 `build_checkpoint(promotion_reentries=...)`를
+    실제로 넘기는지는 지금까지 무테스트였다 - 재개 테스트들은 체크포인트
+    payload를 손으로 써넣거나(`grown_labels`와 같은 방식) `build_checkpoint`를
+    직접 호출해서 이 배선 자체를 우회했다. C1(`test_cli_resume.py`의
+    `..._preserves_the_last_judged_snapshot`)이 쓴 것과 같은 패턴 -
+    `read_payload(run_dir)`로 cli가 **실제로 디스크에 쓴** 체크포인트를 읽어
+    단언한다 - 을 여기서는 **중단 전** 실행에 적용한다: 승격 재진입이 첫
+    시도 안에서 일어나고, 그 attempt 경계 체크포인트가 써진 직후(두 번째
+    `run_orchestration` 호출에서) 죽는다.
+
+    **반증 확인 대상**: `cli.py`의 `_save(BOUNDARY_ATTEMPT)` 호출로 가는
+    `build_checkpoint(...)`에서 `promotion_reentries=promotion_reentries`
+    인자를 지우면 이 단언이 실패한다."""
+    run_dir = str(tmp_path / "runs" / "c_reentry_checkpoint")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    promoted = _wc("ss", 12.0, voltage=1.98, temperature=125.0)
+    verdict_fail = _sweep({"pm": promoted}, failing=["pm"])
+
+    calls: list = []
+
+    async def first_pass_then_boom(initial_netlist_texts, spec, state, agents, **kwargs):
+        calls.append(dict(initial_netlist_texts))
+        if len(calls) == 1:
+            state.push_netlist_version(initial_netlist_texts)
+            state.push_netlist_version({name: TUNED_TEXT for name in initial_netlist_texts})
+            return dict(_pass_result(run_dir))
+        raise RuntimeError("승격 재진입 뒤 두 번째 시도에서 죽는다 - "
+                            "attempt boundary 체크포인트만 남기려는 것이다")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail], [])),
+        patch("analogcoder.cli.run_orchestration", new=first_pass_then_boom),
+        patch("analogcoder.cli.build_corner_simulate",
+              new=_judged_snapshot_build_corner_simulate(promoted_raw=promoted)),
+    ):
+        with pytest.raises(RuntimeError):
+            await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(calls) == 2       # 승격 재진입이 실제로 두 번째 시도를 불렀다
+    payload = read_payload(run_dir)
+    assert payload["boundary"] == BOUNDARY_ATTEMPT
+    assert payload["attempt"] == 1
+    assert payload["promotion_reentries"] == [
         {"attempt": 1, "criteria": ["pm"], "corners": ["ss/1.98/125.0"]}
     ]
 

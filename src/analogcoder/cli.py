@@ -1050,13 +1050,12 @@ async def _run(args) -> dict:
                     # 더했는가"와 "왜 재진입했는가"는 다른 질문이고, 후자는
                     # promotion_reentries가 답한다.
                     grown_labels.append([])
-                    promotion_reentries.append(
-                        {
-                            "attempt": attempt,
-                            "criteria": [name for name, _ in stale],
-                            "corners": [corner for _, corner in stale],
-                        }
-                    )
+                    # `promotion_reentry`(바로 위, history 이벤트로 이미 나간
+                    # 것)와 같은 `criteria`/`corners`를 **다시 만들지 않는다** -
+                    # M4(T19 리뷰): 독립된 리스트 컴프리헨션 두 벌은 한쪽만
+                    # 고치면 history.jsonl과 result.json이 조용히 갈라지는
+                    # 자리다. `attempt`만 덧붙인다.
+                    promotion_reentries.append({"attempt": attempt, **promotion_reentry})
                     state.log_event(
                         "corner_set_grown",
                         {

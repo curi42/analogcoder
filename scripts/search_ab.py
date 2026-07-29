@@ -270,19 +270,20 @@ def run_side(
         # **거부를 `main()`에만 두지 않는다.** `main()`의 인자 검증은 이
         # 스크립트를 CLI로 부를 때만 지난다 - 이 모듈을 직접 import해서
         # `run_side`를 부르면(예: 다른 스크립트, 노트북, 미래의 하니스) 그
-        # 검증을 완전히 건너뛴다. `run_side` 자신은 `corner_regime`을 record의
-        # 라벨에만 쓰고(`build_agents`에 넘기지 않는다 - 아래를 보라) 실제 코너
-        # 선택에는 전혀 반영하지 않으므로, 조용히 통과시키면 두 쪽이 실제로는
-        # 같은(argmax) 코너로 돌면서 기록에는 서로 다른 체제 이름이 실려
-        # 격자의 셀 하나가 통째로 거짓이 된다 - 이 저장소가 세는 조용히
-        # 무력한 게이트 #11이 정확히 이 모양이었다.
+        # 검증을 완전히 건너뛴다. `run_side`는 이 가드를 지난 뒤로는
+        # `corner_regime`을 **어디에도** 쓰지 않는다(M9, T19 리뷰 - record의
+        # `corner_regime` 라벨도 상수 `"argmax"`로 고정돼 있다. 아래를 보라) -
+        # 조용히 통과시키면 두 쪽이 실제로는 같은(argmax) 코너로 돌면서
+        # 기록에는 서로 다른 체제 이름이 실려 격자의 셀 하나가 통째로 거짓이
+        # 된다 - 이 저장소가 세는 조용히 무력한 게이트 #11이 정확히 이 모양이었다.
         raise ValueError(
             f"run_side()가 argmax가 아닌 코너 체제({corner_regime!r})를 받았다: "
             "이 하니스는 run_optimization을 직접 부르고 corner_reduction의 "
             "중간-루프 코너 축소(corner_sim.build_corner_simulate)를 거치지 "
             "않으므로 coverage 체제를 실제로 적용할 수 없다 - corner_regime은 "
-            "record의 라벨에만 쓰이고 회로가 도는 방식은 전혀 바뀌지 않는다. "
-            "run_side가 cli.py처럼 corner_selection.seed_from_sweep / "
+            "이 지점을 지나면 어디에도 쓰이지 않고 회로가 도는 방식은 전혀 "
+            "바뀌지 않는다. run_side가 cli.py처럼 "
+            "corner_selection.seed_from_sweep / "
             "corner_sim.build_corner_simulate 를 거치도록 고쳐야 이 값을 "
             "받을 수 있다."
         )

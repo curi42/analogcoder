@@ -176,6 +176,29 @@ def test_write_report_md_reports_the_corner_reduction_phase(tmp_path):
     assert "re-anchored" in content        # 1보다 크다는 사실의 의미
 
 
+def test_write_report_md_puts_a_blank_line_after_the_growth_bullet_list(tmp_path):
+    """M3(T19 리뷰): `write_report_md`는 `"\\n".join(lines)`로 쓴다. 새 성장
+    불릿 목록(`- attempt N: ...`) 바로 다음 줄이 다른 굵은 줄(`**Area-gate
+    baselines:**` 등)이면, 커먼마크의 lazy continuation 규칙 때문에 그 줄이
+    마지막 불릿의 문단으로 흡수돼 더 이상 독립된 줄로 렌더링되지 않는다 -
+    `**Area-gate baselines:**`는 `_corner_reduction_lines` 독스트링이 "이
+    섹션이 존재하는 유일한 이유"라고 적은 줄이라 특히 중요하다.
+
+    `CORNER_REDUCTION_RESULT`는 `seed` 키가 없어(스킵됨) 성장 목록 바로 뒤에
+    `**Area-gate baselines:**`가 오는, 결함이 실제로 일어나는 정확한 인접
+    상황이다. 문자열 부분 일치(`in content`)만으로는 이 결함을 못 잡는다 -
+    흡수돼도 텍스트 자체는 여전히 어딘가에 나타나기 때문에, 줄 단위로 빈 줄이
+    있는지 확인해야 한다.
+
+    **반증 확인 대상**: 성장 블록 끝의 `lines.append("")`를 지우면 이 단언이
+    실패한다."""
+    path = write_report_md(str(tmp_path), CORNER_REDUCTION_RESULT)
+    with open(path) as f:
+        content_lines = f.read().splitlines()
+    idx = next(i for i, line in enumerate(content_lines) if line.startswith("**Area-gate baselines:**"))
+    assert content_lines[idx - 1] == ""
+
+
 def test_write_report_md_draws_a_growth_line_for_a_pure_growth_attempt(tmp_path):
     """M10(T19): `grown`이 아예 그려지지 않던 결함. attempts > 0이면 무엇이
     더해졌는지 리포트에 한 줄 나와야 한다."""
