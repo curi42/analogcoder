@@ -28,7 +28,6 @@ UNINFORMATIVE 다. 그 상태에서 집계 규칙을 코드에 넣으면 D1 의 
 """
 
 import json
-import math
 import os
 import sys
 
@@ -46,19 +45,6 @@ from analogcoder.spec import load_spec
 from analogcoder.structure import derive_structure
 from analogcoder.structure_view import select_focus
 from perturbations import PERTURBATIONS
-
-
-def _missing(v):
-    return v is None or (isinstance(v, float) and math.isnan(v))
-
-
-def _violates(value, op, threshold):
-    if _missing(value):
-        return True
-    return not {
-        ">=": value >= threshold, ">": value > threshold,
-        "<=": value <= threshold, "<": value < threshold,
-    }[op]
 
 
 def failing_criteria(sweep, criteria):

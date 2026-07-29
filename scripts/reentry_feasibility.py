@@ -37,7 +37,6 @@ coverage 씨앗은 argmax 씨앗보다 작으므로 **집합 밖이 더 넓고, 
 """
 
 import json
-import math
 import os
 import sys
 
@@ -45,15 +44,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 sys.path.insert(0, _HERE)
 
-from analogcoder.corner_selection import coverage_seed, label
+from analogcoder.corner_selection import coverage_seed, label, raw_label
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import apply_changes, resolve_includes
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.simulators.cache import CachingSimulator
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import CoverageConfig, load_spec
-
-WORSE_IS_SMALLER = {">=", ">"}
-
 
 # 교란 모양은 `scripts/perturbations.py` 가 소유한다 - `coverage_feasibility.py`
 # 와 같은 목록을 써야 "필요조건 1을 재진입이 발화한 바로 그 덱 상태에서
@@ -61,21 +58,11 @@ WORSE_IS_SMALLER = {">=", ">"}
 from perturbations import PERTURBATIONS
 
 
-def _worse(op):
-    return min if op in WORSE_IS_SMALLER else max
-
-
-def _missing(v):
-    return v is None or (isinstance(v, float) and math.isnan(v))
-
-
-def _violates(value, op, threshold):
-    if _missing(value):
-        return True  # 측정값이 안 나온 것은 가장 강한 위반 증거다
-    return not {
-        ">=": value >= threshold, ">": value > threshold,
-        "<=": value <= threshold, "<": value < threshold,
-    }[op]
+def _violates(value, criterion):
+    """`judge_tools.evaluate_criteria`가 소유한 통과/실패 규칙을 그대로 쓴다 -
+    측정값이 없으면(`None`) `pass=False`로 접는 것도, NaN이 비교에서 항상
+    False가 되어 마찬가지로 위반으로 잡히는 것도 거기서 온다."""
+    return not evaluate_criteria({criterion.measurement: value}, [criterion])["overall_pass"]
 
 
 def sweep_deck(spec, spec_dir, perturb, backend):
@@ -88,53 +75,54 @@ def sweep_deck(spec, spec_dir, perturb, backend):
     return run_full_pvt_sweep(texts, spec, backend)
 
 
-def _coord_key(process, voltage, temperature):
-    """코너의 **좌표**로 만든 조인 키.
-
-    `per_corner` 의 코너 dict 는 `{process, voltage, temperature}` 만 들고
-    `corner_id` 를 들지 않는다(실측). 반면 `coverage_seed` 는 `CornerPoint` 를
-    돌려준다. 두 축을 `corner_id` 로 이으려던 첫 판은 키가 전부 `None` 이 되어
-    **씨앗이 조용히 빈 리스트가 되고**, 그 빈 씨앗이 "재진입이 발화한다"는 답을
-    만들어 냈다 - 이 저장소가 세는 무효 측정과 같은 모양이라 좌표로 잇는다."""
-    return f"{process}/{voltage}/{temperature}"
-
-
 def per_criterion(sweep, criteria):
-    """{기준 이름: 코너별 값 리스트} 와 코너 라벨 순서."""
+    """{기준 이름: 코너별 값 리스트} 와 코너 라벨 순서.
+
+    라벨은 `corner_selection.raw_label`로 만든다 - `per_corner`의 코너 dict를
+    그대로 받는 함수라 형식이 `coverage_feasibility.py`의 라벨과도 일치한다
+    (둘 다 `raw_label`을 거친다). 예전에는 이 함수가 사설 `_coord_key`로 직접
+    조립한 `f"{process}/{voltage}/{temperature}"` 문자열을 썼다 - `raw_label`이
+    축 코너에서 내는 값과 바이트 동일하지만(둘 다 `axis_corner_id`를 거친다),
+    소유자가 둘로 갈라져 있었다.
+
+    **`_coord_key`가 애초에 존재한 이유는 남겨 둔다.** 좌표 대신 `corner_id`로
+    조인하려던 첫 판은 `per_corner`의 코너 dict가 `corner_id`를 들지 않는다는
+    사실(실측: `{process, voltage, temperature}`만 들고 있다)을 놓쳐 조인 키가
+    전부 `None`이 됐다 - 씨앗이 조용히 빈 리스트가 되고, 그 빈 씨앗이 "재진입이
+    발화한다"는 답을 만들어 냈다. `raw_label`은 그 두 모양(좌표 코너 vs
+    `corner_id` 코너)을 이미 구분해서 다루므로 같은 함정이 재발하지 않는다."""
     per = sweep["per_corner"]
-    labels = [
-        _coord_key(e["corner"].get("process"), e["corner"].get("voltage"),
-                   e["corner"].get("temperature"))
-        for e in per
-    ]
+    labels = [raw_label(e["corner"]) for e in per]
     table = {c.name: [e["measurements"].get(c.measurement) for e in per] for c in criteria}
     return table, labels
 
 
-def argmax_label(values, labels, op):
-    """이 기준의 최악 코너 라벨. 측정값이 없는 코너가 있으면 그 **첫** 코너 -
-    `pvt.worst_case_measurements` 와 같은 규약이며, argmax 가 아니라 "여기서
-    측정이 안 나왔다"는 다른 사실이다."""
-    missing = [i for i, v in enumerate(values) if _missing(v)]
-    if missing:
-        return labels[missing[0]], True
-    return labels[values.index(_worse(op)(values))], False
-
-
 def seed_labels(sweep, criteria, labels, coverage=None):
-    """중간 집합에 들어가는 코너 라벨 집합(NOMINAL 제외)."""
+    """중간 집합에 들어가는 코너 라벨 집합(NOMINAL 제외).
+
+    argmax 모드는 `pvt.worst_case_measurements`가 이미 계산해
+    `sweep["worst_case_corners"]`에 실어 둔 코너를 그대로 읽는다 - "측정값이
+    없으면 argmax가 아니라 측정이 안 나온 첫 코너"라는 그 함수의 규약을 여기서
+    다시 손으로 재현하지 않는다. 라벨은 `raw_label`로 만들어 `per_criterion`의
+    라벨과 같은 형식을 쓴다 - 형식이 갈라지면 `lbl in seed`/`lbl not in labels`
+    비교가 조용히 항상 거짓이 되고, 그것이 바로 이 파일이 `_coord_key`를 두게
+    된 원래 사고(코너 좌표 조인이 실패해 씨앗이 조용히 빈 리스트가 됨)와 같은
+    모양이다."""
     if coverage is None:
         chosen = []
         for c in criteria:
-            values = [
-                e["measurements"].get(c.measurement) for e in sweep["per_corner"]
-            ]
-            lbl, _ = argmax_label(values, labels, c.operator)
+            raw = sweep["worst_case_corners"].get(c.name)
+            if raw is None:
+                continue  # 이 기준의 측정이 시도된 어떤 코너에도 없다
+            lbl = raw_label(raw)
             if lbl not in chosen:
                 chosen.append(lbl)
         return chosen
     points, _record = coverage_seed(sweep, list(criteria), coverage)
-    chosen = [_coord_key(p.process, p.voltage, p.temperature) for p in points]
+    # `coverage_seed`는 `CornerPoint`를 돌려준다 - 좌표가 아니라 그 자료형
+    # 자신의 라벨 함수(`corner_selection.label`)로 이름을 붙인다. `raw_label`은
+    # 산출물 dict용이라 여기서는 맞지 않는다.
+    chosen = [label(p) for p in points]
     # **조인이 실패하면 조용히 작은 씨앗이 되고, 작은 씨앗은 "재진입이 발화한다"를
     # 자동으로 만들어 낸다.** 그래서 여기서 시끄럽게 실패한다.
     stray = [c for c in chosen if c not in labels]
@@ -161,10 +149,10 @@ def analyse(spec_path, coverage, shapes):
         tbl, lbls = per_criterion(sw, criteria)
         labels = lbls
         sweeps[name], tables[name] = sw, tbl
-        fails = [c.name for c in criteria
-                 if _violates(tbl[c.name][
-                     labels.index(argmax_label(tbl[c.name], labels, c.operator)[0])],
-                     c.operator, c.threshold)]
+        # `sw["criteria"]`는 `run_full_pvt_sweep`이 이미 `evaluate_criteria`로
+        # 판정해 둔 것이다(각 기준을 자기 자신의 최악값에 대해) - 여기서
+        # `argmax_label`+`_violates`로 다시 판정하지 않는다.
+        fails = [e["name"] for e in sw["criteria"] if not e["pass"]]
         print(f"  {name:<16} overall_pass={str(sw['overall_pass']):<5} "
               f"failing={len(fails):>2}/{len(criteria)}")
 
@@ -180,10 +168,18 @@ def analyse(spec_path, coverage, shapes):
                 tbl = tables[d1]
                 fired, detail = [], []
                 for c in criteria:
-                    values = tbl[c.name]
-                    lbl, was_missing = argmax_label(values, labels, c.operator)
-                    worst = values[labels.index(lbl)]
-                    if not _violates(worst, c.operator, c.threshold):
+                    # `pvt.worst_case_measurements`가 `sweeps[d1]` 안에 이미
+                    # 계산해 둔 최악 코너/값을 읽는다 - 여기서
+                    # `argmax_label`로 다시 손으로 재현하지 않는다. 이 기준의
+                    # 측정이 d1의 어떤 코너에도 없으면(`worst_case_corners`에
+                    # 항목 자체가 없다) 지목할 최악 코너가 없으므로 건너뛴다.
+                    raw = sweeps[d1]["worst_case_corners"].get(c.name)
+                    if raw is None:
+                        continue
+                    lbl = raw_label(raw)
+                    worst = raw.get("value")
+                    was_missing = worst is None
+                    if not _violates(worst, c):
                         continue
                     if lbl in seed:
                         continue
@@ -197,10 +193,11 @@ def analyse(spec_path, coverage, shapes):
                     #   (2) 판정 스윕이 그 기준을 실패시키고,
                     #   (3) 그 최악 코너가 집합 밖일 것.
                     # (1)이 곧 이 설계가 "낙관적 PASS" 라고 부르는 바로 그것이다.
+                    values = tbl[c.name]
                     inside = [
                         values[labels.index(s)] for s in seed if s in labels
                     ]
-                    if any(_violates(v, c.operator, c.threshold) for v in inside):
+                    if any(_violates(v, c) for v in inside):
                         continue
                     fired.append(c.name)
                     detail.append({

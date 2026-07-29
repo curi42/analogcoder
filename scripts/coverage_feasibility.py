@@ -46,33 +46,42 @@ from analogcoder.netlist import apply_changes, resolve_includes
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.simulators.cache import CachingSimulator
 from analogcoder.spec import load_spec
+from analogcoder.judge_tools import evaluate_criteria
+from analogcoder.corner_selection import raw_label
 
 WORSE_IS_SMALLER = {">=", ">"}
 
 
 def _worse(op):
-    """이 연산자에서 '더 나쁜' 방향. >= 면 작을수록 나쁘다."""
+    """이 연산자에서 '더 나쁜' 방향. >= 면 작을수록 나쁘다.
+
+    **`covering_sets`(아래) 전용으로만 남긴다.** `covering_sets`/`greedy`는
+    `corner_selection.coverage_seed`가 하는 일의 의도적 재구현(여러 epsilon을
+    스캔하기 위한 별도 도구)이라 손대지 않는다 - 그래서 이 헬퍼도 그 안에서만
+    쓰이도록 남는다. 씨앗/위반 판정 쪽은 아래에서 `judge_tools.evaluate_criteria`
+    (통과/실패의 소유자)와 `sweep["worst_case_corners"]`
+    (`pvt.worst_case_measurements`가 이미 계산해 둔, "코너의 최악값" 규약의
+    소유자)로 옮겨 더 이상 이 헬퍼를 쓰지 않는다."""
     return min if op in WORSE_IS_SMALLER else max
 
 
-def _violates(value, op, threshold):
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return True  # 측정값이 안 나온 것은 가장 강한 위반 증거다
-    if op == ">=":
-        return not (value >= threshold)
-    if op == ">":
-        return not (value > threshold)
-    if op == "<=":
-        return not (value <= threshold)
-    if op == "<":
-        return not (value < threshold)
-    raise ValueError(f"unknown operator {op!r}")
+def _violates(value, criterion):
+    """`judge_tools.evaluate_criteria`가 소유한 통과/실패 규칙을 그대로 쓴다 -
+    측정값이 없으면(`None`) `pass=False`로 접는 것도, NaN이 비교에서 항상
+    False가 되어 마찬가지로 위반으로 잡히는 것도 거기서 온다. 예전에는 이
+    스크립트가 그 규칙을 손으로 재현했다."""
+    return not evaluate_criteria({criterion.measurement: value}, [criterion])["overall_pass"]
 
 
 def build_table(sweep, criteria):
-    """{기준 이름: [코너별 값]} 과 코너 라벨."""
+    """{기준 이름: [코너별 값]} 과 코너 라벨.
+
+    라벨은 `corner_selection.raw_label`(코너 dict -> 사람이 읽는 이름의
+    소유자)로 만든다. 예전에는 `json.dumps(entry["corner"], ...)`로 만든
+    임시 키였다 - 사람이 읽을 수 없고, `reentry_feasibility.py`의 `_coord_key`
+    와도 형식이 달라 두 스크립트의 산출물을 나란히 놓고 비교할 수 없었다."""
     per = sweep["per_corner"]
-    labels = [json.dumps(entry["corner"], sort_keys=True) for entry in per]
+    labels = [raw_label(entry["corner"]) for entry in per]
     table = {}
     for crit in criteria:
         values = []
@@ -126,14 +135,21 @@ def greedy(sets, universe, tau=1.0):
     return chosen, covered
 
 
-def argmax_seed(table, criteria):
-    """오늘의 씨앗: 기준별 argmax 코너의 합집합."""
+def argmax_seed(sweep, criteria, labels):
+    """오늘의 씨앗: 기준별 argmax 코너의 합집합.
+
+    `pvt.worst_case_measurements`가 이미 계산해 `sweep["worst_case_corners"]`에
+    실어 둔 값을 그대로 읽는다 - "측정값이 없으면 argmax가 아니라 측정이
+    안 나온 **첫** 코너"라는 그 함수의 규약을 여기서 다시 손으로 재현하지
+    않는다. 이 기준의 측정이 시도된 **어떤** 코너에도 없으면
+    (`worst_case_corners`에 항목 자체가 없다) 지목할 코너가 없으므로 건너뛴다 -
+    예전 구현은 이 경우 첫 코너를 잘못 지목했었다."""
     chosen = []
     for crit in criteria:
-        values = table[crit.name]
-        missing = [i for i, v in enumerate(values)
-                   if v is None or (isinstance(v, float) and math.isnan(v))]
-        idx = missing[0] if missing else values.index(_worse(crit.operator)(values))
+        raw = sweep["worst_case_corners"].get(crit.name)
+        if raw is None:
+            continue
+        idx = labels.index(raw_label(raw))
         if idx not in chosen:
             chosen.append(idx)
     return chosen
@@ -145,7 +161,7 @@ def caught_violations(seed, table, criteria):
     for crit in criteria:
         values = table[crit.name]
         for i in seed:
-            if _violates(values[i], crit.operator, crit.threshold):
+            if _violates(values[i], crit):
                 caught.add(crit.name)
                 break
     return caught
@@ -180,7 +196,7 @@ def analyse(spec_path, workers, perturb=None):
     n_corners = len(labels)
     n_tb = len(spec.testbenches)
 
-    base_seed = argmax_seed(table, criteria)
+    base_seed = argmax_seed(sweep, criteria, labels)
     base_caught = caught_violations(base_seed, table, criteria)
 
     tag = "" if not perturb else "  [perturbed: " + ", ".join(
