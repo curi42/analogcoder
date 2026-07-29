@@ -387,3 +387,173 @@ def test_a_non_integer_retry_budget_is_rejected(tmp_path):
 
     with pytest.raises(ValueError):
         load_spec(_corner_reduction_spec(tmp_path, '  retry_budget: "two"'))
+
+
+# --- §3.5: 테스트벤치 사이의 이름 충돌 ---------------------------------------
+#
+# 판정 경로 두 곳이 이름으로 색인된 슬롯 하나에 두 값을 쓴다:
+# pvt.combined_worst_corners(criterion 이름)와 cli.simulate_fn의
+# merged_measurements(measurement 이름). 둘 다 last-wins라 앞선 값이
+# 조용히 사라진다. orchestrator.py는 초점 경로에서 정확히 이 이유로 이미
+# 합집합 병합으로 고쳐졌다 - 판정 경로는 덮어쓰기로 남았으므로, 계약을
+# 어기는 스펙을 로더가 거부한다.
+
+def _two_testbench_spec(tmp_path, first_criterion: str, second_criterion: str) -> str:
+    path = tmp_path / "spec.yaml"
+    (tmp_path / "n1.cir").write_text("* n1\n.end\n")
+    (tmp_path / "n2.cir").write_text("* n2\n.end\n")
+    def block(name: str, netlist: str, criteria: str) -> str:
+        return (
+            f"  - name: {name}\n"
+            f"    netlist: {netlist}\n"
+            "    analyses: [ac]\n"
+            '    control_block: ".ac dec 10 1 1G"\n'
+            "    criteria:\n" + textwrap.indent(criteria, "      ")
+        )
+
+    path.write_text(
+        "circuit_name: two_tb\ntestbenches:\n"
+        + block("tb1", "n1.cir", first_criterion)
+        + block("tb2", "n2.cir", second_criterion)
+    )
+    return str(path)
+
+
+_GAIN_MIN = """\
+- name: gain_min
+  measurement: gain_db
+  operator: ">="
+  threshold: 60
+"""
+_GAIN_MAX = """\
+- name: gain_max
+  measurement: gain_db
+  operator: "<="
+  threshold: 80
+"""
+_PM = """\
+- name: pm
+  measurement: phase_margin
+  operator: ">="
+  threshold: 60
+"""
+
+
+def test_two_testbenches_sharing_a_criterion_name_are_rejected(tmp_path):
+    # pvt.combined_worst_corners는 criterion 이름으로 색인된 dict를 update로
+    # 채운다. 같은 이름이 둘이면 뒤에 온 테스트벤치의 최악 코너가 앞의 것을
+    # 덮고, 앞 테스트벤치가 위반하는 사실이 overall_pass에서 사라진다.
+    import pytest
+
+    same_name = _GAIN_MIN.replace("gain_db", "phase_margin")
+    with pytest.raises(ValueError, match="gain_min"):
+        load_spec(_two_testbench_spec(tmp_path, _GAIN_MIN, same_name))
+
+
+def test_two_testbenches_producing_the_same_measurement_name_are_rejected(tmp_path):
+    # cli.simulate_fn이 테스트벤치별 측정값을 merged_measurements.update로
+    # 합친다. 두 테스트벤치가 같은 measurement 이름을 내면 앞의 값이 버려지고
+    # judge는 두 기준을 한 회로의 값으로 판정한다.
+    import pytest
+
+    with pytest.raises(ValueError, match="gain_db"):
+        load_spec(_two_testbench_spec(tmp_path, _GAIN_MIN, _PM.replace("phase_margin", "gain_db")))
+
+
+def test_a_two_sided_window_inside_one_testbench_is_still_allowed(tmp_path):
+    # 한 테스트벤치 안에서 두 기준이 같은 measurement를 나눠 쓰는 것은
+    # 정상이고 출하 스펙이 실제로 그렇게 쓴다(vbgout_min/vbgout_max).
+    # 위 규칙을 테스트벤치 경계가 아니라 measurement 전역에 걸면 이것이
+    # 깨진다.
+    spec = load_spec(_two_testbench_spec(tmp_path, _GAIN_MIN + _GAIN_MAX, _PM))
+
+    assert [c.name for c in spec.all_criteria] == ["gain_min", "gain_max", "pm"]
+
+
+# --- §3.7: pvt_corners 축의 모양 --------------------------------------------
+
+def _pvt_spec(tmp_path, pvt_block: str) -> str:
+    path = tmp_path / "spec.yaml"
+    (tmp_path / "n.cir").write_text("* n\n.end\n")
+    path.write_text(textwrap.dedent("""\
+        circuit_name: c
+        testbenches:
+          - name: tb
+            netlist: n.cir
+            analyses: [ac]
+            control_block: ".ac dec 10 1 1G"
+            criteria:
+              - name: gain
+                measurement: g
+                operator: ">="
+                threshold: 40
+        pvt_corners:
+        """) + textwrap.indent(textwrap.dedent(pvt_block), "  "))
+    return str(path)
+
+
+def test_a_bare_string_process_axis_is_rejected(tmp_path):
+    # 대괄호를 빠뜨린 `process: tt`는 문자열이 문자 단위로 순회되어
+    # CornerPoint(process='t')를 만들고, 렌더러가 존재하지 않는
+    # pdk_corner_t.inc를 include해 45코너 전부가 NaN·FAIL이 된다.
+    # 사람이 보는 표층 신호는 "회로가 모든 코너에서 망가졌다"인데 원인은
+    # 대괄호 두 개다.
+    import pytest
+
+    with pytest.raises(ValueError, match="process"):
+        load_spec(_pvt_spec(tmp_path, """\
+            process: tt
+            voltage: [1.8]
+            temperature: [27]
+            """))
+
+
+def test_an_empty_axis_is_rejected(tmp_path):
+    # 빈 축은 itertools.product를 0점으로 만든다 - pvt_corners를 선언한
+    # 스펙이 코너를 하나도 안 도는데 아무 말도 없다.
+    import pytest
+
+    with pytest.raises(ValueError, match="voltage"):
+        load_spec(_pvt_spec(tmp_path, """\
+            process: [tt]
+            voltage: []
+            temperature: [27]
+            """))
+
+
+def test_a_non_numeric_voltage_is_rejected_by_name(tmp_path):
+    # float("1.8v")의 ValueError는 이미 시끄럽지만 어느 축인지 안 말한다.
+    import pytest
+
+    with pytest.raises(ValueError, match="voltage"):
+        load_spec(_pvt_spec(tmp_path, """\
+            process: [tt]
+            voltage: ["1.8v"]
+            temperature: [27]
+            """))
+
+
+def test_a_non_string_process_entry_is_rejected(tmp_path):
+    # YAML의 `process: [tt, 1.8]`은 코너 include 이름을 만들 수 없다.
+    import pytest
+
+    with pytest.raises(ValueError, match="process"):
+        load_spec(_pvt_spec(tmp_path, """\
+            process: [tt, 1.8]
+            voltage: [1.8]
+            temperature: [27]
+            """))
+
+
+def test_the_axis_check_does_not_constrain_process_label_content(tmp_path):
+    # V2: 검사는 모양만 본다. process 라벨의 내용을 알려진 집합
+    # (tt/ss/ff)으로 제한하면 대상 환경의 라벨 기반 코너 선언을
+    # 구조적으로 막게 된다 - 이 저장소가 "이름으로 레일을 알아보기"를
+    # 금지한 것과 같은 이유다.
+    spec = load_spec(_pvt_spec(tmp_path, """\
+        process: [worst_speed, worst_power]
+        voltage: [1.8]
+        temperature: [27]
+        """))
+
+    assert spec.pvt_corners.process == ["worst_speed", "worst_power"]
