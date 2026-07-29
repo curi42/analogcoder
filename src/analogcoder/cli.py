@@ -548,10 +548,14 @@ async def _run(args) -> dict:
 
     corner_state = None
     # 어떤 방식으로 씨앗을 뽑았는지(`corner_selection.seed_from_sweep`의 record).
-    # 재개된 실행이 코너 집합을 **다시 뽑지 않는** 분기(checkpoint.corner_set이
-    # 있는 경우)와 축소가 꺼진 분기에서는 이번 실행이 실제로 씨앗을 뽑지
-    # 않았으므로 None으로 남는다 - result.json의 "seed"가 그 부재를 그대로
-    # 보여야 한다("seed": null과 "이번에 안 뽑았다"가 같은 사실).
+    # 축소가 꺼진 분기에서는 이번 실행이 실제로 씨앗을 뽑지 않았으므로 None으로
+    # 남는다 - result.json의 "seed"가 그 부재를 그대로 보여야 한다("seed": null과
+    # "이번에 안 뽑았다"가 같은 사실). 재개된 실행이 코너 집합을 **다시 뽑지
+    # 않는** 분기(checkpoint.corner_set이 있는 경우)는 씨앗을 새로 뽑지 않지만,
+    # 그렇다고 None이 되는 것은 **아니다** - 체크포인트가 담아 온
+    # `checkpoint.corner_seed`를 그대로 물려받는다(T2). 그러지 않으면 재개된
+    # 실행의 seed가 영원히 null이 되어, 중단 없이 돈 실행과 재개된 실행이 같은
+    # 사실("argmax를 골랐다")에 대해 다른 것("기록이 사라졌다")을 말하게 된다.
     seed_record: dict | None = None
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
     simulate_for_run = simulate_fn
@@ -559,8 +563,12 @@ async def _run(args) -> dict:
         # 씨앗을 **다시 뽑지 않는다.** 코너 집합은 attempt마다 자라므로
         # 진입 스윕에서 다시 씨앗을 뽑으면 재진입이 배운 코너가 통째로
         # 사라지고, 재개한 실행이 중단 없이 돈 실행보다 덜 보는 집합으로
-        # 판정하게 된다.
+        # 판정하게 된다. 뽑는 대신 체크포인트가 기록해 둔 것을 그대로 옮긴다 -
+        # 다시 뽑을 스윕이 없고(진입 스윕은 재사용될 뿐이다), 뽑는다 해도 이
+        # 지점에서는 재진입이 자라게 한 코너들이 이미 반영된 뒤라 원래 실행이
+        # 뽑았던 값과 달라질 수 있다.
         corner_state = CornerState(checkpoint.corner_set)
+        seed_record = checkpoint.corner_seed
         state.log_event(
             "corner_set_restored",
             {
@@ -692,9 +700,12 @@ async def _run(args) -> dict:
     def _save(boundary: str, *, progress=None, orchestration_result=None) -> None:
         """경계 하나에서 체크포인트를 원자적으로 갈아 끼운다.
 
-        cli 쪽 상태(attempt, 누적 스왑, 코너 집합, 성장 이력)와
+        cli 쪽 상태(attempt, 누적 스왑, 코너 집합, 성장 이력, 코너 씨앗 기록)와
         run_orchestration이 넘겨 준 루프 상태를 한 파일에 함께 담는다 - 재개는
         둘 다 있어야 성립하고, 두 파일로 나누면 그 둘이 어긋날 자리가 생긴다.
+        `corner_seed`는 `seed_record`를 그대로 옮긴다 - 이번 실행이 새로 뽑았든
+        (elif 분기) 앞선 실행의 체크포인트에서 물려받았든(if 분기, 위 T2 주석)
+        같은 변수이므로 다음 경계까지 그대로 이어진다.
         """
         write_checkpoint(
             run_dir,
@@ -708,6 +719,7 @@ async def _run(args) -> dict:
                 all_topology_swaps=all_topology_swaps,
                 corner_set=corner_state.corner_set if corner_state is not None else None,
                 grown_labels=grown_labels,
+                corner_seed=seed_record,
                 progress=progress,
                 orchestration_result=orchestration_result,
             ),

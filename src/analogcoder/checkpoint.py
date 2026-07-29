@@ -39,7 +39,13 @@ from analogcoder.json_io import dump as json_dump
 from analogcoder.pvt import CornerPoint, corner_fields
 from analogcoder.state import RunState
 
-CHECKPOINT_SCHEMA_VERSION = 1
+# 1 -> 2: `Checkpoint`에 `corner_seed`가 늘었다(T2). 올리면 `rejection_reason`이
+# 옛 버전이 쓴 체크포인트를 **거부한다** - 의도된 것이다: 옛 체크포인트는
+# `corner_seed`를 아예 모르므로, 조용히 읽어 주면 재개된 실행의 seed가 다시
+# null이 되어 이 수정이 고치려는 바로 그 침묵이 재개된 실행마다 재현된다.
+# 진행 중이던 실행은 처음부터 다시 돌아야 한다 - "재개는 최적화이지 정확성이
+# 아니다"라는 이 파일의 기존 규칙 그대로다.
+CHECKPOINT_SCHEMA_VERSION = 2
 CHECKPOINT_FILENAME = "checkpoint.json"
 
 BOUNDARY_OUTER_ITERATION = "outer_iteration"
@@ -105,6 +111,16 @@ class Checkpoint:
     # 거기서 되읽을 수 없다. 재개한 실행의 result가 이것을 잃으면 리포트가
     # "성장 없음"이라고 말하면서 집합은 자라 있다.
     grown_labels: list[list[str]] = field(default_factory=list)
+    # `corner_selection.seed_from_sweep`의 **기록**(두 번째 반환값) - "어떤 방식
+    # (argmax/coverage)으로 씨앗을 뽑았는가"다. `corner_set`에서 파생되지
+    # **않는다** - 집합은 결과 코너들만 들고 있고, 어느 모드가 그것을 골랐는지,
+    # points_per_tb가 몇이었는지는 거기서 되읽을 수 없다. cli.py는 이것을
+    # 무조건 `corner_seed` 이벤트로 로깅하고 result.json에 싣는데(argmax를
+    # 골랐다"와 "기록이 사라졌다"를 구별하기 위해서), 재개된 실행이 이것을
+    # 잃으면 그 구별이 정확히 되돌아간다 - 재개는 씨앗을 다시 뽑지 않으므로
+    # (진입 스윕을 재사용할 뿐 다시 뽑을 스윕이 없다), 체크포인트가 이것을
+    # 담지 않으면 재개된 실행에서 seed는 영원히 None이다.
+    corner_seed: dict | None = None
     progress: LoopProgress | None = None
     orchestration_result: dict | None = None
     # `SimulatorBackend.identity()` - 이 실행이 무엇으로 시뮬레이션했는가.
@@ -158,6 +174,7 @@ def build_checkpoint(
     all_topology_swaps: list[dict] | None = None,
     corner_set: CornerSet | None = None,
     grown_labels: list[list[str]] | None = None,
+    corner_seed: dict | None = None,
     progress: LoopProgress | None = None,
     orchestration_result: dict | None = None,
     simulator_identity: str | None = None,
@@ -175,6 +192,7 @@ def build_checkpoint(
         all_topology_swaps=[dict(s) for s in (all_topology_swaps or [])],
         corner_set=corner_set,
         grown_labels=[list(g) for g in (grown_labels or [])],
+        corner_seed=dict(corner_seed) if corner_seed is not None else None,
         progress=progress,
         orchestration_result=orchestration_result,
         simulator_identity=simulator_identity,
@@ -320,6 +338,11 @@ def to_payload(checkpoint: Checkpoint) -> dict:
         "all_topology_swaps": [dict(s) for s in checkpoint.all_topology_swaps],
         "corner_set": _corner_set_payload(checkpoint.corner_set),
         "grown_labels": [list(g) for g in checkpoint.grown_labels],
+        # **무조건 나간다** - simulator_identity와 같은 규칙. 조건부로 쓰면
+        # `null`("이번 회차에 씨앗을 안 뽑았다")과 "필드가 통째로 없다"가 같아져,
+        # "축소가 꺼져 있었다"와 "체크포인트가 이 필드를 잊었다"를 사후에
+        # 구별할 수 없다.
+        "corner_seed": dict(checkpoint.corner_seed) if checkpoint.corner_seed is not None else None,
         "progress": _progress_payload(checkpoint.progress),
         "orchestration_result": checkpoint.orchestration_result,
         # **무조건 나간다.** 조건부로 쓰면 `null` 과 "필드가 통째로 없다" 가
@@ -341,6 +364,9 @@ def from_payload(payload: dict) -> Checkpoint:
         all_topology_swaps=[dict(s) for s in payload.get("all_topology_swaps", [])],
         corner_set=_corner_set_from_payload(payload.get("corner_set")),
         grown_labels=[list(g) for g in payload.get("grown_labels", [])],
+        corner_seed=(
+            dict(payload["corner_seed"]) if payload.get("corner_seed") is not None else None
+        ),
         progress=_progress_from_payload(payload.get("progress")),
         orchestration_result=payload.get("orchestration_result"),
         simulator_identity=payload.get("simulator_identity"),

@@ -168,6 +168,38 @@ def test_a_corner_set_round_trips_with_nominal_first(tmp_path):
     assert back.corner_set.corners[0] is NOMINAL
 
 
+def test_the_corner_seed_record_round_trips_through_json(tmp_path):
+    """T2: `corner_selection.seed_from_sweep`의 두 번째 반환값(기록)이 체크포인트에
+    없으면 재개한 실행의 `result["corner_reduction"]["seed"]`가 null이 되고,
+    report.py의 씨앗 줄이 안 그려진다 - "argmax를 골랐다"와 "기록이 사라졌다"가
+    같은 침묵이 된다. 이 기록이 무조건 로깅되는 이유가 정확히 그것이었다."""
+    spec_path, spec = make_spec(tmp_path)
+    seed_record = {
+        "mode": "argmax",
+        "corners": ["fs/1.98/125.0", "ff/1.98/125.0"],
+        "points_per_tb": 3,
+        "dropped": [],
+    }
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, corner_seed=seed_record)
+
+    back = from_payload(json.loads(json.dumps(to_payload(cp))))
+
+    assert back.corner_seed == seed_record
+
+
+def test_a_corner_seed_of_none_round_trips_as_none_not_as_a_missing_key(tmp_path):
+    """씨앗을 뽑지 않은 실행(축소 꺼짐, 또는 재개가 다시 뽑지 않은 경우)과
+    구별하려면 `corner_seed` 키가 **무조건** 나가야 한다 - 조건부로 쓰면 `null`과
+    "필드가 통째로 없다"가 같아진다(simulator_identity가 이미 지키는 규칙)."""
+    spec_path, spec = make_spec(tmp_path)
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, corner_seed=None)
+
+    payload = to_payload(cp)
+
+    assert "corner_seed" in payload
+    assert payload["corner_seed"] is None
+
+
 def test_a_corner_set_payload_that_breaks_an_invariant_is_refused_on_load(tmp_path):
     """CornerSet.__post_init__을 통과시켜 되살린다 - 역직렬화가 불변식을 우회하는
     뒷문이 되면 next_probe가 이미 선택된 코너를 또 고른다."""

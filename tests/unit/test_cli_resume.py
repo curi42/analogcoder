@@ -23,6 +23,11 @@ from analogcoder.checkpoint import (
 from analogcoder.cli import _run, build_arg_parser
 from analogcoder.history import read_events
 
+# 코너 축소 스펙과 스윕 모양 헬퍼는 test_cli.py에 이미 있다 - 같은 모양을 여기서
+# 다시 만들면 두 파일이 "run_full_pvt_sweep이 내놓는 모양"에 대해 갈라진 정의를
+# 갖게 된다.
+from tests.unit.test_cli import CORNER_REDUCTION_SPEC_YAML, _sweep, _wc
+
 SPEC_YAML = (
     "circuit_name: test\n"
     "testbenches:\n"
@@ -253,6 +258,63 @@ async def test_resuming_at_the_outer_iteration_boundary_hands_the_progress_back(
     assert result["resumed_from"]["boundary"] == BOUNDARY_OUTER_ITERATION
     assert result["resumed_from"]["outer_iter"] == 3
     assert result["status"] == "PASS"
+
+
+def _corner_args(tmp_path, spec_yaml: str, run_dir: str, *extra):
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(spec_yaml)
+    parser = build_arg_parser()
+    return parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir, *extra])
+
+
+@pytest.mark.asyncio
+async def test_resuming_at_the_outer_iteration_boundary_restores_the_corner_seed_record(tmp_path):
+    """T2: 체크포인트가 코너 씨앗 기록을 잃는다.
+
+    코너 축소가 켜진 실행이 outer-iteration 경계에서 죽었다가 재개하면, 재개된
+    실행의 `result["corner_reduction"]["seed"]`는 (a) null이 아니고 (b) 원본
+    실행이 실제로 뽑은 씨앗과 같아야 한다. 재개는 **다시 씨앗을 뽑지 않는다** -
+    진입 스윕을 재사용하므로 다시 뽑을 스윕이 없고, 다시 뽑으면 (오늘의
+    `_reused_baseline_sweep` 경로가 없다면) 원래 실행과 다른 값이 나올 수 있다.
+    """
+    run_dir = str(tmp_path / "runs" / "seedresume1")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=entry) as mock_sweep,
+        patch(
+            "analogcoder.cli.run_orchestration",
+            new=orchestration(pass_result(run_dir), checkpoint_at=3, crash=True),
+        ),
+    ):
+        with pytest.raises(Boom):
+            await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    # 첫 실행은 진입 스윕 한 번만 돌고(판정 스윕 전에 죽는다) 체크포인트에
+    # corner_seed를 남긴다.
+    assert mock_sweep.call_count == 1
+    original_seed = read_payload(run_dir)["corner_seed"]
+    assert original_seed is not None
+    assert original_seed["mode"] == "argmax"
+
+    with (
+        # 재개한 실행에서도 run_full_pvt_sweep은 **한 번** 불린다 - 그것은
+        # 판정(verdict) 스윕이다. 진입 스윕은 이력에서 재사용되어 다시 불리지
+        # 않는다(재사용이 깨지면 "씨앗을 다시 뽑을 스윕이 있는" 상태가 되어
+        # 아래 seed 비교가 우연히 통과할 수 있으므로, 호출 횟수로 그 경로가
+        # 살아 있는지도 함께 확인한다).
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=entry) as mock_sweep_resume,
+        patch(
+            "analogcoder.cli.run_orchestration",
+            new=orchestration(pass_result(run_dir)),
+        ),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir, "--resume"))
+
+    assert mock_sweep_resume.call_count == 1
+    assert result["corner_reduction"]["seed"] is not None
+    assert result["corner_reduction"]["seed"] == original_seed
 
 
 @pytest.mark.asyncio
