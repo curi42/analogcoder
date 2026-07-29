@@ -8,7 +8,9 @@ from tests.unit.wrapper_decks import (
     CONTESTED_NAME_DECK,
     POSITIONAL_VALUE_DECK,
     SIBLING_INSTANCE_DECK,
+    SKY130_POLY_RESISTOR_DECK,
     WRAPPER_DECK,
+    ZERO_MULTIPLICITY_DECK,
 )
 
 FIXTURE = os.path.join(
@@ -384,3 +386,23 @@ def test_instance_env_drops_a_name_the_body_and_the_subckt_line_contest():
     xc1 = _traced(CONTESTED_NAME_DECK, "xc1")
 
     assert xc1.traced_params["ln"][0].total_width is None
+
+
+def test_the_traced_tier_baseline_of_a_poly_resistor_is_its_length():
+    # 추적 경로는 도달한 토큰과 무관하게 언제나 w(총 폭)를 넘겨 왔다. sky130
+    # 폴리 저항의 티어 기준 치수는 l이고 이 덱의 w는 1이므로, 그 차이가
+    # 324.74u vs 1u로 드러난다 - 후자는 가장 느슨한 티어를 받는다.
+    xr = _traced(SKY130_POLY_RESISTOR_DECK, "xr")
+
+    target = xr.traced_params["rl"][0]
+    assert (target.device.refdes, target.token) == ("XRp", "l")
+    assert target.total_width == pytest.approx(324.74e-6)
+
+
+def test_a_nonpositive_multiplicity_is_clamped_to_one_like_the_direct_resolver():
+    # area_limits.multiplicity는 m<=0을 1.0으로 잡는다. 여기가 그 클램프를
+    # 빠뜨리면 총 폭이 0이 되고, 0은 가장 느슨한 티어를 받는다 - 모르는 값을
+    # 느슨한 쪽으로 추측하는, 이 저장소가 이미 값을 치른 모양이다.
+    xm2 = _traced(ZERO_MULTIPLICITY_DECK, "xm2")
+
+    assert xm2.traced_params["wn"][0].total_width == pytest.approx(30e-6)

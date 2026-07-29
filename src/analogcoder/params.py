@@ -336,33 +336,118 @@ def _token_value(component: Component, token: str, env: dict[str, float]) -> flo
     return None
 
 
+# --- 티어 기준 치수: 직접 경로와 추적 경로가 공유하는 한 벌의 규칙 ----------
+# 이 규칙이 두 벌 존재하면 같은 소자·같은 성장이 **래퍼로 감쌌는지 여부만으로**
+# 정반대 판정을 받는다. 이 저장소는 이미 "두 해소기가 갈라졌고 게이트가 추측한
+# 쪽을 골랐다"는 사고를 겪었고(_instance_env의 섀도잉), 그 재발이 티어 **차원
+# 선택**에 남아 있었다: 직접 경로는 X-접두 저항을 l로 티어링하는데 추적 경로는
+# 도달 토큰과 무관하게 언제나 w를 넘겼다 (324.74u vs 1u -> 1.5x vs 3.0x).
+# 그래서 규칙을 이 아래 세 함수에만 둔다. area_limits는 이것을 import 해서 쓴다
+# (반대 방향은 순환 import다 - area_limits가 params를 이미 import 한다).
+
+_SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
+    ("fet", "M"),
+    ("cap", "C"),
+    ("res", "R"),
+    ("pnp", "Q"),
+]
+
+# X-접두 sky130 프리미티브가 티어를 고를 때 읽는 **자기 자신의 토큰 이름**.
+# 트랜지스터는 W, MiM/MOS 캡은 w, 폴리 저항은 l(길이가 저항값도 면적도 정한다),
+# 바이폴라는 m(에미터 면적비 - 길이가 아니라 개수다).
+_TIER_GEOMETRY_TOKEN: dict[str, str] = {"M": "w", "C": "w", "R": "l", "Q": "m"}
+
+
+def classify_ctype(component: Component) -> str:
+    """티어 판정에 쓰는 실효 소자 종류.
+
+    일반 소자의 refdes 접두(M/C/R/Q)는 그대로 통과한다. X-접두 sky130 PDK
+    프리미티브는 서브회로/모델 이름을 component.value(줄의 마지막 위치 토큰)로
+    들고 있으므로 그 이름으로 분류한다 - sky130 트랜지스터와 MiM 캡은 둘 다
+    X-접두라 그러지 않으면 `Xdut ... OPAMP2STAGE` 같은 평범한 서브회로
+    인스턴스와 구별되지 않는다.
+
+    **모델 이름은 refdes 접두를 이길 수 없다** - `ctype != "X"`이면 이름을
+    아예 보지 않는다. MOS 캡으로 쓴 MOSFET(`m3 ... UNITDEV_N_DEP_CAP`)이 이름
+    때문에 cap으로 분류돼 밀러 매처가 그것을 자기 자신과 짝지은 사고가
+    있었다 (structure._classify_model 주석 참고)."""
+    if component.ctype != "X" or component.value is None:
+        return component.ctype
+    lowered = component.value.lower()
+    for marker, ctype in _SKY130_CTYPE_MARKERS:
+        if marker in lowered:
+            return ctype
+    return component.ctype
+
+
+def tier_geometry_token(component: Component) -> str | None:
+    """이 소자가 크기 티어를 고를 때 읽는 자기 자신의 토큰 이름(소문자).
+
+    None은 "기하 토큰으로 티어링하지 않는다"이다 - 일반 R/C는 위치 인자 값이
+    이미 절대량이라 그것으로 티어를 고르고(호출자가 처리한다), 정의를 알 수
+    없는 X 인스턴스는 티어링할 치수 자체가 없다.
+
+    토큰 이름은 SPICE 표준 소자 문법이므로 사실이지 명명 규칙이 아니다 -
+    인스턴스 파라미터 이름(`wn`/`ma1`)에서 의미를 읽어내는 것과 대비된다
+    (TracedTarget 주석 참고)."""
+    ctype = classify_ctype(component)
+    if component.ctype == "X":
+        return _TIER_GEOMETRY_TOKEN.get(ctype)
+    if ctype == "M":
+        return "w"
+    return None
+
+
+def multiplicity_from(m: float | None, declared: bool) -> float | None:
+    """해소된 m과 "줄에 적혀 있었는가"로부터 면적에 곱할 배수.
+
+    - 토큰이 아예 없으면 1.0.
+    - 토큰은 있는데 값을 못 풀면 None ("모르는 m"을 1로 가정하면 그 추측은
+      **항상 티어를 느슨한 쪽으로** 틀린다 - 소자가 실제보다 작아 보인다.
+      8배짜리 소자가 1배로 티어링돼 1.5x 대신 3.0x를 받은 실측이 있다).
+    - m <= 0은 개수로서 말이 되지 않으므로 1.0으로 잡는다. 그냥 곱하면 총 폭이
+      0이 되어 **가장 느슨한 티어**를 받는다.
+
+    정의 단위 해소기(area_limits.multiplicity)와 인스턴스 단위 해소기
+    (_multiplier)가 이 한 함수를 공유한다 - 한쪽만 클램프를 갖고 있어서 같은
+    m=0 소자가 감쌌는지 여부로 2.0x와 3.0x를 받았다."""
+    if m is None:
+        return None if declared else 1.0
+    return 1.0 if m <= 0 else m
+
+
 def _multiplier(device: Component, env: dict[str, float]) -> float | None:
-    """면적에 곱할 m. m 토큰이 아예 없으면 1.0, 있는데 못 풀면 None.
-
-    이 구분이 없을 때 `1.0 if m is None else m`은 "모르는 m"을 조용히 1로
-    가정했고, 그 가정은 항상 티어를 **느슨한 쪽으로** 틀리게 만든다 (총 폭이
-    m배만큼 작게 보이므로). 경합하는 이름을 해소하지 않기로 한 규칙이 그
-    경로를 새로 도달 가능하게 만들면서 실제로 드러났다: 8배짜리 소자가
-    1배로 티어링돼 1.5x 티어 대신 3.0x 티어를 받았다."""
-    m = _token_value(device, "m", env)
-    if m is not None:
-        return m
-    return None if has_token(device, "m") else 1.0
+    """이 인스턴스에서 device의 면적 배수 m. 규칙은 multiplicity_from에 있다."""
+    return multiplicity_from(_token_value(device, "m", env), has_token(device, "m"))
 
 
-def _total_width(device: Component, env: dict[str, float]) -> float | None:
-    """이 인스턴스에서 device의 총 폭 = w x m, `.option scale` 반영.
+def _tier_baseline(device: Component, env: dict[str, float]) -> float | None:
+    """이 인스턴스에서 device가 크기 티어를 고르는 데 쓰는 치수.
 
-    m은 병렬 소자의 **개수**이므로 폭에 곱해지되 scale은 곱하지 않는다
-    (`w=2u m=2`는 2um 소자 두 개, 총 폭 4um). nf는 여기 들어오지 않는다 -
-    손가락은 w를 나눌 뿐 총 폭을 바꾸지 않는다."""
-    w = _token_value(device, "w", env)
-    if w is None:
+    `area_limits._tier_baseline_value`와 **같은 규칙**이고, 다른 것은 값을
+    정의 단위 resolved_params가 아니라 이 인스턴스의 env에서 푼다는 점뿐이다.
+    치수는 tier_geometry_token이 고른다 - MOSFET/캡은 w x scale x m, 폴리
+    저항은 l x scale x m, 바이폴라는 m 그 자체(개수라 scale도 m도 곱하지
+    않는다). nf는 여기 들어오지 않는다 - 손가락은 w를 나눌 뿐 총 폭을 바꾸지
+    않는다.
+
+    이 값이 TracedTarget.total_width에 실린다. 그 필드 이름은 MOSFET만 다루던
+    시절의 것이고 지금은 "티어 기준 치수"가 정확한 이름이다 (저항이면 길이가
+    들어간다) - 이름을 고치려면 netlist.TracedTarget을 함께 고쳐야 한다."""
+    token = tier_geometry_token(device)
+    if token is None:
         return None
+    raw = _token_value(device, token, env)
+    if raw is None:
+        return None
+    if token == "m":
+        # 바이폴라의 m은 에미터 면적 개수이자 티어 키 자신이다. scale을 곱하면
+        # 길이 취급이 되고, m을 또 곱하면 이중 계산이다.
+        return raw
     m = _multiplier(device, env)
     if m is None:
         return None
-    return w * device.geometry_scale * m
+    return raw * device.geometry_scale * m
 
 
 def _instance_env(
@@ -487,7 +572,9 @@ def _trace(
                     TracedTarget(
                         device=device,
                         token=token,
-                        total_width=_total_width(device, env),
+                        # 필드 이름은 total_width지만 싣는 것은 **티어 기준
+                        # 치수**다 - 저항이면 길이가 들어간다 (_tier_baseline).
+                        total_width=_tier_baseline(device, env),
                         chain=chain,
                     )
                 )

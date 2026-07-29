@@ -1,15 +1,15 @@
 from dataclasses import dataclass
 
 from analogcoder.netlist import Component, TracedTarget, parse_netlist
-from analogcoder.params import annotate_traced_params, build_param_envs, has_token, resolve_value
-
-
-_SKY130_CTYPE_MARKERS: list[tuple[str, str]] = [
-    ("fet", "M"),
-    ("cap", "C"),
-    ("res", "R"),
-    ("pnp", "Q"),
-]
+from analogcoder.params import (
+    annotate_traced_params,
+    build_param_envs,
+    has_token,
+    multiplicity_from,
+    resolve_value,
+    tier_geometry_token,
+)
+from analogcoder.params import classify_ctype as _classify_ctype
 
 
 @dataclass(frozen=True)
@@ -61,23 +61,6 @@ TIERS_BY_CTYPE: dict[str, list[SizeTier]] = {
     "R": RESISTOR_TIERS,
     "Q": PNP_TIERS,
 }
-
-
-def _classify_ctype(component: Component) -> str:
-    """Effective device-type for tiering. Generic-device refdes prefixes
-    (M/C/R) pass through unchanged. An X-prefixed sky130 PDK primitive
-    instantiation carries its subckt/model name as component.value (the
-    last positional token on the line) - classify by that name instead,
-    since sky130 transistors and MiM caps are both X-prefixed and would
-    otherwise be indistinguishable from an unconstrained subckt
-    instantiation like "Xdut ... OPAMP2STAGE"."""
-    if component.ctype != "X" or component.value is None:
-        return component.ctype
-    lowered = component.value.lower()
-    for marker, ctype in _SKY130_CTYPE_MARKERS:
-        if marker in lowered:
-            return ctype
-    return component.ctype
 
 
 def allowed_multiplier_for(ctype: str, baseline_value: float, is_sky130: bool = False) -> float | None:
@@ -171,8 +154,9 @@ def _baseline_value_for(component: Component, param: str) -> float | None:
     return component.resolved_params.get(param)
 
 
-# The geometry dimension each X-prefixed sky130 primitive is tiered on.
-_SKY130_GEOMETRY_PARAM: dict[str, str] = {"M": "W", "C": "w", "R": "l", "Q": "m"}
+# 티어를 고르는 치수(어느 토큰을 읽는가)는 params.tier_geometry_token 한 곳에만
+# 있다 - 여기와 추적 경로가 따로 정하면 같은 소자가 감쌌는지 여부로 정반대
+# 판정을 받는다 (그 갈라짐의 실측은 params.py의 주석 참고).
 
 # 소자 자신의 토큰 이름별 취급. 이름들은 SPICE 표준 소자 문법이므로 사실이지,
 # 명명 규칙이 아니다 (인스턴스 파라미터 이름과 대비된다 - netlist.TracedTarget
@@ -237,19 +221,14 @@ def resolved_token(component: Component, token: str) -> float | None:
 
 
 def multiplicity(component: Component) -> float | None:
-    """m이 없으면 1, m 토큰이 있는데 값을 못 풀면 None. m은 개수이므로
-    `.option scale`을 곱하지 않는다.
-
-    "m 토큰이 없다"와 "m 토큰은 있는데 모른다"를 구별하지 않으면 모르는 값을
-    1로 가정하게 되고, 그 추측은 **항상 티어를 느슨한 쪽으로** 틀린다 (소자가
-    실제보다 작아 보인다). params._multiplier와 같은 규칙, 같은 이유다 -
-    직접 주소지정 경로와 추적 경로 중 한쪽만 고치면 같은 구멍이 반쪽 남는다.
+    """정의 단위로 해소된 m. 규칙 자체는 params.multiplicity_from에 있다 -
+    인스턴스 단위 해소기(params._multiplier)와 **같은 한 함수**를 부른다.
+    "같은 규칙, 같은 이유"라고 주석으로만 적어 두었을 때 실제로는 m<=0
+    클램프가 이쪽에만 있었고, 그래서 같은 m=0 소자가 감쌌는지 여부로 2.0x와
+    3.0x를 받았다.
 
     area.py의 total_area도 이 함수로 m을 읽는다 - 공개 이름으로 승격."""
-    m = resolved_token(component, "m")
-    if m is None:
-        return None if has_token(component, "m") else 1.0
-    return 1.0 if m <= 0 else m
+    return multiplicity_from(resolved_token(component, "m"), has_token(component, "m"))
 
 
 def _tier_baseline_value(component: Component) -> float | None:
@@ -270,31 +249,29 @@ def _tier_baseline_value(component: Component) -> float | None:
     티어링되어 가장 느슨한 티어를 받는다. 이것은 MOS만의 사실이 아니다 -
     m=4인 MiM 캡도 면적이 똑같이 네 배이므로 같은 규칙을 받는다. 예전에는
     ctype "M"에만 곱해져서 그 비대칭이 캡/저항을 한 티어 느슨하게 만들었다.
-    Q만 예외인데, 그쪽은 m 자체가 티어 키(에미터 면적비)라 곱하면 이중이다."""
-    ctype = _classify_ctype(component)
-    if component.ctype == "X":
-        param = _SKY130_GEOMETRY_PARAM.get(ctype)
-        if param is None:
+    Q만 예외인데, 그쪽은 m 자체가 티어 키(에미터 면적비)라 곱하면 이중이다.
+
+    어느 토큰을 읽는지는 params.tier_geometry_token이 정한다 - 추적 경로
+    (params._tier_baseline)와 **같은 한 함수**여야 한다."""
+    token = tier_geometry_token(component)
+    if token is None:
+        if component.ctype == "X":
+            # 정의를 알 수 없는 X 인스턴스. 위치 인자는 값이 아니라 서브회로
+            # 이름이라 티어링할 치수가 아예 없다.
             return None
-        raw = resolved_token(component, param.lower())
-        if raw is None:
-            return None
-        if ctype == "Q":
-            # m is an emitter-area count, not a length - it must not be
-            # scaled, and it is already the tier key itself.
-            return raw
-        mult = multiplicity(component)
-        return None if mult is None else raw * component.geometry_scale * mult
-    if ctype == "M":
-        w = resolved_token(component, "w")
-        if w is None:
+        if component.resolved_value is None:
             return None
         mult = multiplicity(component)
-        return None if mult is None else w * component.geometry_scale * mult
-    if component.resolved_value is None:
+        return None if mult is None else component.resolved_value * mult
+    raw = resolved_token(component, token)
+    if raw is None:
         return None
+    if token == "m":
+        # m is an emitter-area count, not a length - it must not be
+        # scaled, and it is already the tier key itself.
+        return raw
     mult = multiplicity(component)
-    return None if mult is None else component.resolved_value * mult
+    return None if mult is None else raw * component.geometry_scale * mult
 
 
 @dataclass(frozen=True)
@@ -425,8 +402,12 @@ def _traced_targets(refdes: str, traced: list[TracedTarget]) -> list[_Target]:
             )
             continue
         if token in _GEOMETRY_TOKENS:
+            # total_width는 필드 이름일 뿐이고 실린 것은 **티어 기준 치수**다
+            # (params._tier_baseline) - 저항이면 길이가 들어간다. 여기서
+            # 도달 토큰(w/l)이 결정하는 것은 "면적에 관여하는가"이고, 어느
+            # 치수로 티어를 고르는가는 도달한 **소자**가 결정한다.
             if traced_target.total_width is None:
-                # 이 소자의 총 폭을 확정하지 못했다 - 면적 영향을 판단할 수
+                # 이 소자의 티어 기준 치수를 확정하지 못했다 - 면적 영향을 판단할 수
                 # 없으므로 막지 않는다 (해소 불가 베이스라인과 같은 폴백).
                 # 그래도 **버리지는 않는다**: 조용히 빼면 이 도달점이 아예
                 # 없었던 것처럼 보여, 반쪽만 판정한 변경이 로그에 "bounded"로
@@ -517,6 +498,32 @@ class AreaCheckResult:
     states: dict[str, str]
 
 
+def _last_write_wins(proposed_changes: list[dict]) -> list[dict]:
+    """한 제안 안에 같은 (refdes, param)이 두 번 있으면 **마지막 것만** 남긴다.
+
+    apply_changes가 변경들을 순서대로 적용하면서 같은 물리 줄의 같은 토큰을
+    다시 쓰기 때문이다 - 덱에 남는 것은 마지막 값 하나이고, 그것이 이 게이트가
+    판정해야 할 유일한 성장이다. 두 항목을 그대로 곱하면 **어느 덱에도 존재하지
+    않는 성장률**(같은 값이 두 번이면 ratio^2)을 계산해 거짓 거부하고, 그
+    피드백 문자열이 그대로 튜너 프롬프트로 간다. `ratio^N`은 애초에 양이 아니며
+    보수적인 선택도 아니다 - 같은 논증이 TracedTarget.chain 주석에 있다.
+
+    로그로는 보이지 않던 결함이다: states 키가 "<refdes>.<param>" 하나뿐이라
+    두 번 셌다는 사실이 기록에 남지 않고, 거짓 거부는 '거부'로 정상 기록된다.
+    합치는 규칙을 여기 한 줄로 두는 이유가 그것이다 - 곱 계산 자리에 흩어
+    두면 다음 사람이 다시 재발명한다.
+
+    키는 문자열 그대로다. 같은 소자를 서로 다른 표기로 쓴 두 항목(`M6`과
+    `AMP.M6`)은 합쳐지지 않는데, 그것은 apply_changes도 두 번 적용하는
+    별개의 사실이고 여기서 추측으로 이어 붙일 것이 아니다."""
+    collapsed: dict[tuple[str, str], dict] = {}
+    for change in proposed_changes:
+        key = (change["refdes"], change["param"])
+        collapsed.pop(key, None)
+        collapsed[key] = change
+    return list(collapsed.values())
+
+
 def check_area_growth(
     baseline_components: dict[str, Component], proposed_changes: list[dict]
 ) -> tuple[bool, str | None]:
@@ -540,7 +547,7 @@ def evaluate_area_growth(
     groups: dict[tuple, _Group] = {}
     states: dict[str, str] = {}
 
-    for change in proposed_changes:
+    for change in _last_write_wins(proposed_changes):
         refdes = change["refdes"]
         param = change["param"]
         state_key = f"{refdes}.{param}"

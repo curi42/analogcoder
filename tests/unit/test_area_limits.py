@@ -15,8 +15,10 @@ from tests.unit.wrapper_decks import (
     PARTIAL_REACH_DECK,
     POSITIONAL_VALUE_DECK,
     SIBLING_INSTANCE_DECK,
+    SKY130_POLY_RESISTOR_DECK,
     UNRESOLVABLE_M_DECK,
     WRAPPER_DECK,
+    ZERO_MULTIPLICITY_DECK,
 )
 
 NETLIST_WITH_SUBCKT = (
@@ -1022,3 +1024,86 @@ def test_a_genuine_expression_positional_value_is_still_refused():
 
     assert result.approved is True
     assert result.states == {"xr1.rv": "unjudged"}
+
+
+# --- 티어 기준 치수는 감쌌는지와 무관하다 ------------------------------------
+
+
+def test_a_poly_resistor_is_tiered_on_its_length_whether_or_not_it_is_wrapped():
+    # 티어 기준값을 정하는 규칙이 두 벌 있었다: 직접 경로는 X-접두 저항을
+    # **l**로 티어링하고(길이가 저항값도 면적도 정한다), 추적 경로는 도달한
+    # 토큰과 무관하게 언제나 **w**(총 폭)를 넘겼다. 그래서 같은 324.74 길이의
+    # 같은 저항이 감쌌는지 여부만으로 1.5x와 3.0x라는 정반대 한도를 받았고,
+    # 로그에는 둘 다 'bounded'로 남아 그 갈라짐이 보이지 않았다.
+    components = index_baseline_components(SKY130_POLY_RESISTOR_DECK)
+
+    direct = tunable_range(components["LADDER.XRpa"], "l")
+    wrapped = tunable_range(components["LADDER.xr"], "rl")
+
+    assert direct == wrapped
+    assert direct == (pytest.approx(324.74), 1.5)
+
+
+def test_a_wrapped_poly_resistor_gets_the_same_verdict_as_the_bare_one():
+    components = index_baseline_components(SKY130_POLY_RESISTOR_DECK)
+
+    verdicts = {}
+    for label, refdes, param in (
+        ("direct", "LADDER.XRpa", "l"),
+        ("wrapped", "LADDER.xr", "rl"),
+    ):
+        result = evaluate_area_growth(
+            components, [{"refdes": refdes, "param": param, "new_value": "649.48"}]
+        )
+        verdicts[label] = (result.approved, list(result.states.values()))
+
+    assert verdicts["direct"] == (False, ["bounded"])
+    assert verdicts["wrapped"] == (False, ["bounded"])
+
+
+def test_a_nonpositive_multiplicity_is_clamped_the_same_way_on_both_paths():
+    # m<=0은 개수로서 말이 되지 않는다. 직접 경로는 1.0으로 잡았지만 추적
+    # 경로는 그대로 곱해 총 폭 0을 만들었고, 0은 가장 느슨한 티어를 받는다.
+    components = index_baseline_components(ZERO_MULTIPLICITY_DECK)
+
+    direct = tunable_range(components["HOLD.Xmd"], "W")
+    wrapped = tunable_range(components["HOLD.xm2"], "wn")
+
+    assert direct == wrapped
+    assert direct == (pytest.approx(30.0), 2.0)
+
+
+# --- 한 제안 안의 같은 (refdes, param) 중복 ----------------------------------
+
+
+def test_the_same_refdes_and_param_twice_in_one_proposal_is_not_counted_twice():
+    # apply_changes는 같은 줄을 순서대로 다시 써서 **마지막 값만** 덱에
+    # 남긴다. 게이트가 두 항목을 곱하면 어느 덱에도 존재하지 않는 성장률을
+    # 계산해 거짓 거부하고, states 키가 "<refdes>.<param>" 하나뿐이라 두 번
+    # 셌다는 사실은 로그에 남지도 않는다.
+    components = index_baseline_components(NETLIST_WITH_SUBCKT)
+    change = {"refdes": "AMP.M6", "param": "W", "new_value": "72u"}
+
+    once = evaluate_area_growth(components, [change])
+    twice = evaluate_area_growth(components, [dict(change), dict(change)])
+
+    assert once.approved is True
+    assert twice.approved is True
+    assert twice.feedback is None
+    assert twice.states == once.states
+
+
+def test_a_duplicated_change_is_judged_on_the_value_that_survives_in_the_deck():
+    # 값이 다른 중복이면 마지막 것만 덱에 남으므로, 게이트도 마지막 것만 본다.
+    components = index_baseline_components(NETLIST_WITH_SUBCKT)
+
+    result = evaluate_area_growth(
+        components,
+        [
+            {"refdes": "AMP.M6", "param": "W", "new_value": "72u"},
+            {"refdes": "AMP.M6", "param": "W", "new_value": "76u"},
+        ],
+    )
+
+    assert result.approved is True
+    assert result.feedback is None

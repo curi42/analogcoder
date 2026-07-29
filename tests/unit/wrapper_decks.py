@@ -91,3 +91,41 @@ UNRESOLVABLE_M_DECK = (
     "xc1 a b c d CELL wn=10e-6\n"
     ".end\n"
 )
+
+# 같은 sky130 폴리 저항을 하나는 직접(XRpa), 하나는 래퍼로 감싸(xr -> RCELL_PO.XRp)
+# 둔다. 폴리 저항의 티어 기준 치수는 **길이 l**이고(저항값도 면적도 l이 정한다),
+# 폭 w는 이 덱에서 두 소자 모두 1로 같다 - 두 경로가 서로 다른 차원을 읽으면
+# 같은 성장이 감쌌는지 여부만으로 정반대 판정을 받는다.
+SKY130_POLY_RESISTOR_DECK = (
+    "* synthetic sky130 poly-resistor deck (shape only)\n"
+    ".option scale=1.0u\n"
+    ".subckt RCELL_PO a b\n"
+    "XRp a b 0 sky130_fd_pr__res_high_po w=1 l=rl\n"
+    ".ends RCELL_PO\n"
+    ".subckt LADDER a b c d\n"
+    "XRpa a b 0 sky130_fd_pr__res_high_po w=1 l=324.74\n"
+    "xr c d RCELL_PO rl=324.74\n"
+    ".ends LADDER\n"
+    "Xl n1 n2 n3 n4 LADDER\n"
+    "V1 n1 0 1.8\n"
+    ".end\n"
+)
+
+# m이 0인 소자를 직접·래퍼 두 벌로 둔다. m<=0은 개수로서 말이 되지 않으므로
+# 직접 경로(area_limits.multiplicity)는 1.0으로 잡아 왔다. 추적 경로가 그
+# 클램프를 안 하면 총 폭이 0이 되어 **가장 느슨한 티어**를 받는다 - 모르는
+# 값을 추측할 때 항상 느슨한 쪽으로 틀린다는 이 저장소의 반복된 실패 모양이다.
+ZERO_MULTIPLICITY_DECK = (
+    "* synthetic zero-multiplicity deck (shape only)\n"
+    ".option scale=1.0u\n"
+    ".subckt MCELL d g s b\n"
+    "Xm d g s b sky130_fd_pr__nfet_01v8 W=wn L=1 m=0\n"
+    ".ends MCELL\n"
+    ".subckt HOLD d g s b\n"
+    "Xmd d g s b sky130_fd_pr__nfet_01v8 W=30 L=1 m=0\n"
+    "xm2 d g s b MCELL wn=30\n"
+    ".ends HOLD\n"
+    "Xh n1 n2 n3 n4 HOLD\n"
+    "V1 n1 0 1.8\n"
+    ".end\n"
+)
