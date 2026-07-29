@@ -148,6 +148,54 @@ def test_a_corner_slot_needs_every_corner_to_carry_a_payload(tmp_path):
         load_spec(_write(tmp_path, compose_block=DEFAULT_COMPOSE, corners=corners, nominal="tt/1.8/27.0"))
 
 
+def test_a_label_corner_cannot_reach_a_single_file_testbench(tmp_path):
+    """거울 검사가 한쪽만 있었다. 위 검사는 *좌표 코너 -> 슬롯*을 막는데,
+    반대 짝인 *라벨 코너 -> 재작성 경로*는 아무도 막지 않았다.
+
+    라벨 코너에는 좌표가 없으므로 `render_corner_report`가 셋을 전부 `None`으로
+    쓴다: `pdk_corner_None.inc`, `.temp None`, `DC None`. 그러면서 `states`는
+    셋 다 `applied`다 - 재작성이 일어났음을 증명해야 할 기록이, 돌지 못하는 덱에
+    대해 성공을 증명한다. `pdk_corner` include도 `Vdd`도 없는 덱이면 셋 다
+    `absent`가 되고 **모든 코너가 같은 덱을 돌면서 각자의 이름으로 보고된다** -
+    `netlist_startup.cir`의 45코너가 실은 15조건이던 사고 그대로다."""
+    with pytest.raises(ValueError, match="coordinates"):
+        load_spec(_write(tmp_path, corners=DEFAULT_CORNERS, nominal="sign_off_a"))
+
+
+def test_a_label_corner_is_refused_even_when_another_testbench_is_composed(tmp_path):
+    """조합형 테스트벤치가 하나라도 있으면 위 검사가 `composed`를 찾아 통과해
+    버렸다. 판정 단위는 스펙이 아니라 **(코너, 테스트벤치) 짝**이다."""
+    raw_path = _write(tmp_path, compose_block=DEFAULT_COMPOSE, corners=DEFAULT_CORNERS, nominal="sign_off_a")
+    raw = yaml.safe_load(open(raw_path))
+    single = dict(raw["testbenches"][0])
+    single.pop("compose")
+    single["name"] = "tb2"
+    single["netlist"] = "core.cir"
+    single["criteria"] = [{"name": "v2", "measurement": "vout2", "operator": ">=", "threshold": 0.0}]
+    raw["testbenches"].append(single)
+    (tmp_path / "spec.yaml").write_text(yaml.safe_dump(raw))
+
+    with pytest.raises(ValueError, match="coordinates"):
+        load_spec(raw_path)
+
+
+def test_rendering_a_coordinateless_corner_on_the_rewrite_path_raises(tmp_path):
+    """로더 검사의 벨트-앤-브레이스. `deck_for_corner`는 `None`을 경로에
+    포매팅하는 대신 멈춘다. `CornerRenderError`(=`ValueError`)이므로
+    `run_orchestration`/`run_optimization`의 기존 가드가 깨끗한 FAIL로 접는다."""
+    from analogcoder.pvt import CornerRenderError, deck_for_corner
+
+    class _SingleFileTB:
+        fragments = None
+        name = "tb1"
+
+    corner = CornerPoint(corner_id="sign_off_a", payload="/abs/c_a.inc")
+    deck = '* t\n.include "/x/pdk_corner.inc"\nVdd vdd 0 DC 1.8\nR1 vdd 0 1k\n.end\n'
+
+    with pytest.raises(CornerRenderError, match="coordinates"):
+        deck_for_corner(_SingleFileTB(), deck, corner, str(tmp_path))
+
+
 def test_a_corner_slot_needs_a_declared_nominal_corner(tmp_path):
     """조합 모델에는 '렌더링을 거치지 않은 덱'이 존재하지 않는다 - 코너가
     입력이기 때문이다. 어느 코너가 임계값을 정한 그 덱인지는 **사람이
@@ -258,3 +306,37 @@ def test_the_tuning_loop_refuses_a_composed_spec_instead_of_simulating_a_fragmen
         import asyncio
 
         asyncio.run(_run(args))
+
+
+def test_the_curation_entry_point_refuses_a_composed_slot_spec(tmp_path):
+    """거부가 `cli._run` 한 자리에만 적혀 있었다. `analogcoder-curate`도 같은
+    스펙을 `load_spec`으로 읽고 `tb.netlist_path`를 **열어서** 블록 추출·직접
+    시뮬레이션·코너 스윕에 넘긴다 - 조합형이면 그 경로는 tunable 조각이고,
+    커밋 4가 든 근거(자극도 코너도 없는 파일)가 그대로 적용된다.
+
+    지금은 조합형 스펙이 저장소에 없어 실행 가능한 결함이 아니다. 그러나 커밋
+    4의 요지가 **경계를 사실로 적는 것**이었으므로, 우연히 참인 상태로 두지
+    않는다."""
+    import types
+
+    from analogcoder.cli_curate import _curate, _RunContext
+
+    spec_path = _write(
+        tmp_path, compose_block=DEFAULT_COMPOSE, corners=DEFAULT_CORNERS, nominal="sign_off_a"
+    )
+    args = types.SimpleNamespace(
+        slot_spec=spec_path,
+        slot_block="AMP",
+        from_deck=None,
+        from_body=None,
+        technique="a technique name",
+        id="cand",
+        out_dir=str(tmp_path / "out"),
+        knobs=None,
+        max_knobs=None,
+        points=None,
+    )
+    with pytest.raises(ValueError, match="not wired into"):
+        import asyncio
+
+        asyncio.run(_curate(args, None, None, _RunContext()))

@@ -114,16 +114,26 @@ def _run_point(
 
 
 def _log_corner_render(tb, netlist_text, cs, benchmark_dir, log_event, nominal_corner=None) -> None:
-    """이 테스트벤치의 덱을 렌더링하면 세 재작성 중 무엇이 실제로 적용되는지를
-    적는다. NOMINAL은 렌더링을 거치지 않으므로, 선택 집합이 NOMINAL뿐이면
-    적을 것이 없다 - 그때는 조용히 넘어가는 것이 맞다(재작성을 아무도 요청하지
-    않았다).
+    """이 테스트벤치의 덱을 만들면 무엇이 실제로 적용되는지를 적는다.
 
-    대표 코너 하나로 재는 이유: 세 상태는 덱에 그 줄이 있느냐만 보므로 코너
+    **재작성 경로**에서 NOMINAL은 렌더링을 거치지 않으므로, 선택 집합이
+    NOMINAL뿐이면 적을 것이 없다 - 그때는 조용히 넘어가는 것이 맞다(재작성을
+    아무도 요청하지 않았다).
+
+    **조합 경로에서는 그 근거가 성립하지 않는다.** `_run_point`가 조합형에서는
+    NOMINAL도 조합한다 - 디스크에 있는 것은 tunable 조각뿐이고 그것만으로는
+    회로가 아니기 때문이다. 그래서 조합형은 NOMINAL뿐인 집합에서도 대표를 갖는다:
+    스펙이 선언한 nominal 코너다(로더가 슬롯 있는 조합형에 그것을 요구한다).
+    없으면 조합했는데 기록이 없는 상태가 되고, "조합했고 괜찮다"와 "조합 경로가
+    사라졌다"가 같은 침묵이 된다.
+
+    대표 코너 하나로 재는 이유: 상태들은 덱에 그 줄이 있느냐만 보므로 코너
     좌표에 의존하지 않는다. 그래서 존재하는 코너 중 첫 번째를 쓴다 - 가짜
-    좌표를 지어내지 않는다(`_corner_fields`가 (deck)에 대해 지키는 것과 같은
+    좌표를 지어내지 않는다(`corner_fields`가 NOMINAL에 대해 지키는 것과 같은
     규칙)."""
     representative = next((point for point in cs.corners if point is not NOMINAL), None)
+    if representative is None and tb is not None and tb.fragments is not None:
+        representative = nominal_corner
     if representative is None or log_event is None:
         return
     render = deck_for_corner(

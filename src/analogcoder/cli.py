@@ -33,7 +33,7 @@ from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
 from analogcoder.simulators.cache import CachingSimulator
 from analogcoder.simulators.ngspice import NgspiceBackend
-from analogcoder.spec import load_spec
+from analogcoder.spec import load_spec, refuse_composed_testbenches
 from analogcoder.state import RunState
 
 
@@ -335,15 +335,11 @@ async def _run(args) -> dict:
     # 전체 코너 스윕(`run_full_pvt_sweep`)과 코너 축소 경로는 배선되어 있다 -
     # 그쪽은 덱을 텍스트로 만들어 임시 파일에 쓰므로 조합이 그 자리에 정확히
     # 들어간다. 남은 것은 에이전트에게 **경로**를 넘기는 이 경로 하나다.
-    composed = [tb.name for tb in spec.testbenches if tb.fragments is not None]
-    if composed:
-        raise ValueError(
-            f"composed testbench(es) {composed} are not wired into the tuning loop yet: "
-            f"the simulator agent is handed the versioned fragment's path, which for a "
-            f"composed testbench is not a runnable deck. The corner sweep path does "
-            f"compose - see pvt.deck_for_corner - so this refusal is the boundary, not "
-            f"the feature's limit."
-        )
+    refuse_composed_testbenches(
+        spec,
+        consumer="the tuning loop",
+        detail="the simulator agent is handed that path directly.",
+    )
 
     # Includes are absolutized here, at the one point netlist text enters the
     # system, because everything downstream relocates that text away from the

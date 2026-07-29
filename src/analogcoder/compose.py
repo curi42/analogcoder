@@ -37,14 +37,33 @@ ngspice-46으로 재현한 실패에서 나왔다(2026-07-29):
 
 **이 검사들은 오늘의 벤치마크 11개 덱에서 거의 전부 통과한다** - 즉 그것만
 보고 출하하면 조용히 무력한 게이트가 하나 더 늘어난다. 그래서 각 항목마다
-음성 픽스처가 `tests/unit/test_compose.py`에 고정되어 있다.
+음성 픽스처가 `tests/unit/test_compose.py`에 고정되어 있다. 그러고도 세 개가
+무력한 채로 리뷰까지 갔다 - 띄어쓴 `.param`(이름이 빈 문자열이 되어 진짜
+충돌을 놓치고 거짓 충돌을 만든다), `.inc` 약어(절대경로 게이트를 통째로
+우회하면서 `includes_checked`는 0을 적는다), `.lib <섹션>` 정의 형태(파일이
+아닌 것을 파일로 읽어 거짓 거부한다). 셋 다 `records`가 건강하게 읽히는
+상태였다.
+
+**`records`의 수는 게이트가 아니다.** `corner_slot_filled`가 1이고
+`title_inserted`가 1인 것은 이 경로가 돌았다는 뜻이지, 0이 될 수 있는데
+안 됐다는 뜻이 아니다 - 슬롯이 0개이거나 2개인 조합은 `spec._load_fragments`가
+선언 자리에서 막으므로 `deck_for`에 닿지 않는다. 수는 "조합 경로가
+사라졌는가"를 구별해 주고, 막는 것은 로더다.
 """
 
 import os
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
-from analogcoder.netlist import logical_lines, parse_netlist, resolve_includes, split_tokens
+from analogcoder.netlist import (
+    _INCLUDE_RE,
+    _LIB_CALL_RE,
+    _quoted_path,
+    logical_lines,
+    parse_netlist,
+    resolve_includes,
+    split_tokens,
+)
 
 
 class ComposeError(ValueError):
@@ -129,11 +148,74 @@ def _check_subckt_balance(fragment: Fragment, statements: list[str]) -> int:
 
 
 def _include_paths(code: str) -> list[str]:
-    """`.include` / `.lib` 가 가리키는 경로들."""
-    tokens = split_tokens(code)
-    if len(tokens) < 2:
-        return []
-    return [tokens[1].strip('"').strip("'")]
+    """이 문장이 가리키는 **파일** 경로들.
+
+    **`netlist.py`의 정규식을 그대로 쓴다** - `simulators/cache.py`가 같은
+    이유로 같은 선택을 했고, 그 주석이 이유를 적어 두었다: "복제하면 두 쪽이
+    갈라지고, 갈라진 쪽이 놓친 파일이 곧 캐시 키에서 빠진 결정 요인이 된다."
+    이 함수는 손으로 복제했다가 **두 방향 모두로** 갈라졌다.
+
+    - `tokens[1]`은 `.inc`(약어)를 접두사 검사에서 놓쳤다. `_INCLUDE_RE`는
+      `\\.inc(?:lude)?`로 처음부터 둘 다 안다.
+    - `tokens[1]`은 `.lib <섹션>` … `.endl`(**정의** 형태, 파일을 가리키지
+      않는다)의 섹션 이름을 경로로 읽어 거짓 거부했다. 파일을 가리키는 것은
+      인자 둘짜리 **호출** 형태뿐이고, 그 구별은 추측이 아니라 실제 프로덕션
+      덱으로 확인된 관측이다(`netlist._LIB_CALL_RE` 주석)."""
+    paths = []
+    for regex in (_INCLUDE_RE, _LIB_CALL_RE):
+        for match in regex.finditer(code):
+            raw, _quote = _quoted_path(match, 2)
+            paths.append(raw)
+    return paths
+
+
+def _assignment_names(tokens: list[str], directive: str) -> list[str]:
+    """`name=value` 나열에서 **이름들**만.
+
+    ngspice 는 `n=v`, `n = v`, `n =v`, `n= v` 를 전부 받는다. 토큰마다
+    독립적으로 `"=" in token` 을 묻던 옛 코드는 띄어쓴 표기에서 `"="` 토큰
+    하나만 보고 이름을 **빈 문자열**로 만들었다. 그러면 같은 이름을 선언한 두
+    조각이 충돌로 잡히지 않고(실측: ngspice-46 에서 조용히 나중 것이 이긴다),
+    반대로 이름이 다른 두 조각은 둘 다 `""` 라서 **거짓 충돌**한다. 그러면서
+    `directives_checked` 는 정상적으로 올라가므로 기록은 "보고 통과시켰다"로
+    읽힌다 - 이 모듈이 막으려는 실패 모양 그 자체다.
+
+    읽을 수 없는 표기는 빈 키를 내지 않고 **거부한다**. 놓치는 쪽으로 닫는
+    것은 파일 참조처럼 오탐이 비싼 자리의 규율이고, 여기서 놓친다는 것은
+    충돌을 놓친다는 뜻이다."""
+    names: list[str] = []
+    pending: str | None = None  # `=` 를 기다리는 이름
+    awaiting_value = False  # `=` 를 봤고 값을 기다린다
+    for token in tokens:
+        if awaiting_value:
+            awaiting_value = False
+            continue
+        head, sep, tail = token.partition("=")
+        if not sep:
+            if pending is not None:
+                raise ComposeError(
+                    f"cannot read '{directive} {' '.join(tokens)}': {pending!r} is followed "
+                    f"by {token!r} with no '=' between them. A name whose assignment cannot "
+                    f"be read would become an empty collision key, and an empty key silently "
+                    f"misses the collision this check exists for"
+                )
+            pending = token
+            continue
+        name = head or pending
+        if not name:
+            raise ComposeError(
+                f"cannot read '{directive} {' '.join(tokens)}': found '=' with no name "
+                f"before it"
+            )
+        names.append(name)
+        pending = None
+        awaiting_value = not tail
+    if pending is not None:
+        raise ComposeError(
+            f"cannot read '{directive} {' '.join(tokens)}': {pending!r} has no '=' and no "
+            f"value"
+        )
+    return names
 
 
 def _directive_keys(code: str, depth: int) -> list[tuple]:
@@ -154,18 +236,31 @@ def _directive_keys(code: str, depth: int) -> list[tuple]:
     if lower.startswith(".temp"):
         return [("temp",)]
     if lower.startswith(".option"):
-        # `.option scale=1.0u` 와 `.option scale 1.0u` 둘 다 이름만 본다.
+        # `.option` 만 문법이 둘이다: 대입(`scale=1.0u`)과 맨 플래그(`noacct`).
+        # 그래서 `_assignment_names` 를 쓸 수 없고, 띄어쓴 `scale 1.0u` 에서
+        # `1.0u` 가 이름인지 값인지가 **원리상 모호**하다. 가르는 근거는 사실
+        # 하나다: 옵션 이름은 식별자이므로 숫자로 시작할 수 없다. 그래서 숫자로
+        # 시작하는 토큰은 앞 옵션의 값이지 이름이 아니다. 두 식별자가 나란히
+        # 오면(`.option a b`) 둘 다 플래그로 읽는다 - 과탐지는 시끄럽고,
+        # 미탐지는 조용하다.
         keys = []
+        awaiting_value = False
         for token in tokens[1:]:
-            keys.append(("option", token.split("=")[0].lower()))
+            if awaiting_value:
+                awaiting_value = False
+                continue
+            head, sep, tail = token.partition("=")
+            if sep:
+                if head:
+                    keys.append(("option", head.lower()))
+                awaiting_value = not tail
+                continue
+            if token[:1].isalpha() or token.startswith("_"):
+                keys.append(("option", token.lower()))
         return keys
     if lower.startswith(".param"):
-        keys = []
-        for token in tokens[1:]:
-            if "=" in token:
-                keys.append(("param", token.split("=")[0]))
-        return keys
-    if lower.startswith(".include") or lower.startswith(".lib"):
+        return [("param", name) for name in _assignment_names(tokens[1:], ".param")]
+    if lower.startswith(".inc") or lower.startswith(".lib"):
         return [("include", path) for path in _include_paths(code)]
     return []
 
@@ -208,7 +303,9 @@ def compose(fragments, *, title: str) -> ComposedDeck:
             if lower == ".end" or lower.startswith(".end "):
                 end_lines.append((fragment.name, code))
                 continue
-            if depth == 0 and (lower.startswith(".include") or lower.startswith(".lib")):
+            # `.inc` 는 `.include` 의 약어다. 접두사를 철자대로만 보면 한 글자
+            # 차이로 이 게이트를 통째로 우회하고 `includes_checked` 는 0 을 적는다.
+            if depth == 0 and (lower.startswith(".inc") or lower.startswith(".lib")):
                 for path in _include_paths(code):
                     includes_checked += 1
                     if not os.path.isabs(path):
@@ -222,6 +319,19 @@ def compose(fragments, *, title: str) -> ComposedDeck:
             for key in _directive_keys(code, depth):
                 directives_checked += 1
                 owner = directive_owner.get(key)
+                if owner == fragment.name:
+                    # 같은 조각 안에서의 중복. 조각 **순서**의 모호함은 여기
+                    # 없다 - 저자가 한 파일 안에서 순서를 골랐다. 그래도 나중
+                    # 것이 조용히 이기는 것은 같으므로 검사는 남기되, 사유가
+                    # 다르므로 문장도 다르다. 예전에는 "declared by both
+                    # fragment 'a' and 'a'"로 나왔다.
+                    raise ComposeError(
+                        f"'{key[0]} {key[1] if len(key) > 1 else ''}'".rstrip(" '")
+                        + f"' is declared twice inside fragment {fragment.name!r}: the "
+                        f"later one silently wins for .param/.temp and the earlier one "
+                        f"for .model/.option/.subckt, so which value the deck runs with "
+                        f"is decided by the directive, not by the order you wrote"
+                    )
                 if owner is not None:
                     raise ComposeError(
                         f"'{key[0]} {key[1] if len(key) > 1 else ''}'".rstrip(" '")

@@ -54,7 +54,7 @@ from analogcoder.netlist import (
 )
 from analogcoder.simulators.base import SimulatorBackend
 from analogcoder.simulators.ngspice import NgspiceBackend
-from analogcoder.spec import TargetSpec, load_spec
+from analogcoder.spec import TargetSpec, load_spec, refuse_composed_testbenches
 from analogcoder.structure import derive_structure
 
 logger = logging.getLogger(__name__)
@@ -486,6 +486,14 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
     knob_names = _parse_knob_names(getattr(args, "knobs", None))
 
     spec = load_spec(args.slot_spec)
+    refuse_composed_testbenches(
+        spec,
+        consumer="topology curation",
+        detail=(
+            "block extraction, curation.py's direct simulations and the corner sweep all "
+            "read the text at that path."
+        ),
+    )
     netlist_texts: dict[str, str] = {}
     for tb in spec.testbenches:
         with open(tb.netlist_path) as f:

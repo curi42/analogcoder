@@ -235,6 +235,18 @@ def deck_for_corner(tb, netlist_text: str, corner, benchmark_dir: str, nominal=N
     사건을 **테스트벤치마다 한 번, 무조건** 적기 때문이다. 두 경로가 서로 다른
     타입을 내면 그 기록이 한쪽에서만 남는다."""
     if tb.fragments is None:
+        # 벨트-앤-브레이스. `spec._reject_unrealisable_corners`가 선언 자리에서
+        # 막지만, 좌표 없는 코너가 다른 경로(체크포인트 재개, 손으로 만든
+        # CornerPoint)로 여기 닿으면 셋을 전부 `None`으로 포매팅하고 `states`는
+        # `applied`로 적힌다 - 재작성이 일어났음을 증명해야 할 기록이 돌지 못하는
+        # 덱에 성공을 증명한다. 포매팅하느니 멈춘다.
+        if corner.process is None:
+            raise CornerRenderError(
+                f"corner {corner.corner_id!r} carries no coordinates, and testbench "
+                f"{tb.name!r} is single-file: there is nothing to substitute into the "
+                f"process include, the '.temp' or the supply line. A corner declared by "
+                f"label is realised by filling a composed testbench's corner_slot"
+            )
         return render_corner_report(
             netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
         )

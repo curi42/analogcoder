@@ -124,6 +124,41 @@ def test_a_param_declared_inside_a_subckt_does_not_collide_with_another_scope():
     assert deck.records["directives_checked"] >= 2
 
 
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        (".param rf = 10k", ".param rf=20k"),      # 띄어쓴 쪽이 왼쪽
+        (".param rf=10k", ".param rf = 20k"),      # 오른쪽
+        (".param rf = 10k", ".param rf = 20k"),    # 양쪽
+        (".param rf =10k", ".param rf= 20k"),      # 반쪽씩 붙은 두 표기
+    ],
+)
+def test_a_spaced_param_assignment_still_collides(left, right):
+    """`.param rf = 10k`는 ngspice가 받는 표기이고, 토큰 단위로 읽으면 `=`를
+    담은 토큰이 `"="` 하나뿐이라 이름이 **빈 문자열**이 된다. 그러면 같은 이름을
+    선언한 두 조각이 충돌로 잡히지 않는다 - 실측(ngspice-46)으로 그 덱은 조용히
+    돌고 **나중** 것이 이긴다. 게이트가 놓치면서 `directives_checked`는 2를
+    적으므로, 기록은 "둘을 보고 통과시켰다"로 읽힌다."""
+    with pytest.raises(ComposeError, match="param"):
+        compose([_frag("a", left + "\n"), _frag("b", right + "\n")], title="t")
+
+
+def test_two_spaced_params_with_different_names_do_not_collide():
+    """같은 결함의 반대편. 이름이 전부 빈 문자열이 되면 서로 다른 이름을 선언한
+    두 조각이 **거짓 충돌**한다."""
+    deck = compose(
+        [_frag("a", ".param rf = 10k\n"), _frag("b", ".param cc = 2p\n")], title="t"
+    )
+    assert deck.records["directives_checked"] == 2
+
+
+def test_a_param_line_that_cannot_be_parsed_is_refused():
+    """읽을 수 없는 표기는 빈 키를 내는 대신 거부한다. 빈 키는 조용히 놓치는
+    쪽으로 닫히는데, 이 모듈의 실패 방향은 반대여야 한다."""
+    with pytest.raises(ComposeError, match="param"):
+        compose([_frag("a", ".param rf\n")], title="t")
+
+
 # --- §4 상대 include (cwd 가리기) ------------------------------------------
 
 
@@ -133,6 +168,38 @@ def test_a_relative_include_is_refused():
     with pytest.raises(ComposeError) as exc:
         compose([_frag("a", '.include "pdk_corner.inc"\n')], title="t")
     assert "absolute" in str(exc.value)
+
+
+def test_the_inc_abbreviation_is_the_same_statement():
+    """`.inc`는 `.include`의 약어이고 `netlist._INCLUDE_RE`가 이미 아는 형태다.
+    접두사 문자열로 판정하면 한 글자 차이로 절대경로 게이트를 통째로 우회하고,
+    `includes_checked`는 0을 적는다 - 검사가 아무것도 안 했다는 뜻인데 통과로
+    읽힌다."""
+    with pytest.raises(ComposeError, match="absolute"):
+        compose([_frag("a", '.inc "pdk_corner.inc"\n')], title="t")
+
+
+def test_the_inc_abbreviation_collides_with_the_spelled_out_form():
+    with pytest.raises(ComposeError, match="include"):
+        compose(
+            [_frag("a", '.inc "/abs/pdk/corner.inc"\n'), _frag("b", '.include "/abs/pdk/corner.inc"\n')],
+            title="t",
+        )
+
+
+def test_a_lib_section_definition_is_not_a_file_reference():
+    """`.lib <섹션>` … `.endl`은 **정의** 형태이고 파일을 가리키지 않는다 -
+    파일을 가리키는 것은 인자 둘짜리 **호출** 형태뿐이다. `netlist.py`가 그
+    구별을 실제 프로덕션 덱으로 확인해 적어 두고, 복제하면 갈라진다고
+    경고까지 해 두었다. `compose.py`는 그것을 손으로 복제해서 갈라졌다."""
+    deck = compose([_frag("a", ".lib tt\n.param x=1\n.endl\nR1 a b 1k\n")], title="t")
+    assert deck.records["includes_checked"] == 0
+
+
+def test_a_lib_call_still_needs_an_absolute_path():
+    """반대 방향 - 인자 둘짜리 호출 형태는 파일을 가리키므로 계속 잡힌다."""
+    with pytest.raises(ComposeError, match="absolute"):
+        compose([_frag("a", ".lib 'corners.lib' tt\n")], title="t")
 
 
 def test_an_absolute_include_passes_and_is_counted():

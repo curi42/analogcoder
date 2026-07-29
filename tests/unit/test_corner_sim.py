@@ -638,6 +638,55 @@ async def test_by_testbench_carries_the_agent_result(tmp_path):
     assert set(result) >= {"status", "measurements", "by_testbench", "corner_worst", "probe"}
 
 
+def test_a_composed_testbench_logs_its_render_even_when_only_nominal_is_selected(tmp_path):
+    """`_log_corner_render`의 조기 반환 근거는 "NOMINAL은 렌더링을 거치지
+    않으므로 적을 것이 없다"인데, **조합 경로에서는 그것이 거짓이다.**
+    `_run_point`는 조합형에서 NOMINAL도 조합한다 - 디스크에 있는 것은 tunable
+    조각뿐이고 그것만으로는 회로가 아니기 때문이다.
+
+    그래서 선택 집합이 NOMINAL뿐인 조합형 테스트벤치는 덱을 조합해 놓고
+    `corner_render`를 하나도 남기지 않았다. "조합했고 괜찮다"와 "조합 경로가
+    통째로 사라졌다"가 같은 침묵이 되는데, 그것은 같은 커밋이 `mode` 칸을 넣은
+    이유 그 자체다."""
+    from analogcoder.corner_sim import _log_corner_render
+    from analogcoder.spec import CornerPoint, FragmentRef, Testbench
+
+    core = tmp_path / "core.cir"
+    core.write_text("R1 in out 1k\nR2 out 0 1k\n")
+    corner_file = tmp_path / "c_a.inc"
+    corner_file.write_text(".temp 27\n")
+    signals = tmp_path / "signals.cir"
+    signals.write_text("Vdd vdd 0 DC 1.8\n")
+
+    tb = Testbench(
+        name="tb",
+        netlist_path=str(core),
+        analyses=["op"],
+        control_block=SPEC_CONTROL_BLOCK,
+        criteria=[Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)],
+        fragments=(
+            FragmentRef(kind="file", path=str(signals)),
+            FragmentRef(kind="corner_slot"),
+            FragmentRef(kind="file", path=str(core), tunable=True),
+        ),
+    )
+    nominal = CornerPoint(corner_id="sign_off_a", payload=str(corner_file))
+    events = []
+
+    _log_corner_render(
+        tb,
+        core.read_text(),
+        CornerSet(corners=(NOMINAL,), probe_order=()),
+        str(tmp_path),
+        lambda name, payload: events.append((name, payload)),
+        nominal_corner=nominal,
+    )
+
+    assert [name for name, _ in events] == ["corner_render"]
+    assert events[0][1]["mode"] == "composed"
+    assert events[0][1]["states"]["corner_slot_filled"] == 1
+
+
 async def test_a_corner_run_gets_the_corner_rendered_deck_and_nominal_the_deck_itself(tmp_path):
     # 코너가 렌더링되지 않으면 축소 집합은 **똑같은 덱 여러 개**가 되고 이
     # 하위 프로젝트 전체가 조용히 아무 일도 하지 않는다. 경로만 비교하는

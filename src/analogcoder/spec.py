@@ -633,10 +633,36 @@ def _load_testbench(tb: dict, spec_dir: str) -> Testbench:
 def _reject_unrealisable_corners(testbenches: list[Testbench], pvt: PVTCorners | None) -> None:
     """조합형 테스트벤치와 선언된 코너가 서로 실현 가능한지.
 
-    셋 다 같은 실패 모양을 막는다: **N개 코너가 전부 같은 조건을 돌면서
+    전부 같은 실패 모양을 막는다: **N개 코너가 전부 같은 조건을 돌면서
     코너별 값으로 보고되는 것.** `netlist_startup.cir`의 45코너가 실은 15조건이던
-    사고와 같은 계열이고, 그때 아무 로그도 다르지 않았다."""
+    사고와 같은 계열이고, 그때 아무 로그도 다르지 않았다.
+
+    **판정 단위는 스펙이 아니라 (코너, 테스트벤치) 짝이다.** 두 실현 경로가
+    있고 각각이 코너에게 요구하는 것이 다르다 - 재작성 경로는 좌표를, 조합
+    경로는 payload 를 요구한다. 한 스펙이 두 종류의 테스트벤치를 함께 선언할 수
+    있으므로, 스펙 단위로 "조합형이 하나라도 있는가"를 물으면 남은 짝이 검사
+    없이 통과한다."""
     composed = [tb for tb in testbenches if tb.fragments is not None]
+    single_file = [tb for tb in testbenches if tb.fragments is None]
+
+    # 라벨 코너 -> 재작성 경로. 아래 `missing` 검사(좌표 코너 -> 슬롯)의 거울짝이고,
+    # 오래 한쪽만 있었다. 좌표가 없는 코너가 `render_corner_report`에 닿으면 셋을
+    # 전부 `None`으로 쓴다 - `pdk_corner_None.inc`, `.temp None`, `DC None` - 그리고
+    # `states`는 셋 다 `applied`로 적힌다. 재작성이 일어났음을 증명해야 할 기록이
+    # 돌지 못하는 덱에 대해 성공을 증명하는 것이고, 그 줄들이 아예 없는 덱이면 셋 다
+    # `absent`가 되면서 모든 코너가 같은 덱을 돈다.
+    if pvt is not None and single_file:
+        coordinateless = [c.corner_id for c in pvt.corners if c.process is None]
+        if coordinateless:
+            raise ValueError(
+                f"corner(s) {coordinateless} carry no coordinates while testbench(es) "
+                f"{[tb.name for tb in single_file]} are single-file: the rewrite path has "
+                f"nothing to substitute and would write None into the process include, the "
+                f"'.temp' and the supply line while reporting all three as applied. A corner "
+                f"declared by label can only be realised by a composed testbench that names "
+                f"it in a corner_slot"
+            )
+
     if not composed:
         return
     slotted = [tb for tb in composed if tb.corner_slot_index is not None]
@@ -670,6 +696,32 @@ def _reject_unrealisable_corners(testbenches: list[Testbench], pvt: PVTCorners |
             f"There is no unrendered deck in the composed model - the deck does not exist "
             f"until a corner is chosen - and picking one by name or position is a guess"
         )
+
+
+def refuse_composed_testbenches(spec: "TargetSpec", *, consumer: str, detail: str) -> None:
+    """조합형 테스트벤치를 **경로**로 소비하는 진입점에서의 거부.
+
+    `Testbench.netlist_path`는 조합형에서 버전 관리되는 **tunable 조각**을
+    가리킨다 - 자극도 코너도 없는, 회로가 아닌 파일이다. 그것을 조용히 도는
+    쪽이 훨씬 나쁘다는 근거는 실측이다: 조각 뷰에서 `check_stimulus_untouched`가
+    자극 변경을 approved=True로 통과시키고(게이트가 **열린 채** 실패한다),
+    `signal_path`가 `AMP drives vdd`라는 거짓 구조 주장을 되살리며,
+    `.option scale`이 다른 조각에 실려 있으면 같은 제안의 면적 판정이 뒤집힌다.
+
+    **거부가 한 자리에만 적혀 있으면 다음 진입점이 조용히 그 경계를 넘는다.**
+    실제로 그랬다 - `cli._run`에는 있고 `cli_curate`에는 없었다. 같은 규칙을
+    두 곳이 각자 적는 것은 `compose._include_paths`가 `netlist.py`의 규칙을
+    손으로 복제했다가 두 방향으로 갈라진 것과 같은 모양이므로, 문장은 하나다."""
+    composed = [tb.name for tb in spec.testbenches if tb.fragments is not None]
+    if not composed:
+        return
+    raise ValueError(
+        f"composed testbench(es) {composed} are not wired into {consumer} yet: {detail} "
+        f"For a composed testbench Testbench.netlist_path is the versioned tunable "
+        f"fragment - a file with no stimulus and no corner, which is not a runnable deck. "
+        f"The corner sweep path does compose (see pvt.deck_for_corner), so this refusal "
+        f"is the boundary, not the feature's limit."
+    )
 
 
 def load_spec(path: str) -> TargetSpec:
