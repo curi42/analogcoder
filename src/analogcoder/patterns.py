@@ -35,6 +35,33 @@ def _nets(fact: ComponentFact) -> dict[str, str]:
     return {t.name: net for t, net in zip(fact.terminals, fact.nodes)}
 
 
+def _is_mos_cap(fact: ComponentFact) -> bool:
+    """드레인과 소스가 같은 넷에 묶인 MOS인가. 그렇다면 그 소자는
+    트랜지스터가 아니라 **2단자 커패시터**다 - 사실이지 추측이 아니다:
+    Vds가 구조적으로 0이면 채널 전류가 흐를 수 없고, 남는 단자 임피던스는
+    게이트 용량뿐이다. 두 판은 게이트 넷과 묶인 d/s 넷이다.
+
+    이 모듈은 이미 같은 사실을 쓰고 있었지만 한 매처 안에서만 썼다
+    (current_mirror의 `na["d"] != na["s"]` 배제 - 그 주석이 sky130의
+    "d=s=b를 한 넷에 묶는" 관용구를 명시한다). 여기로 끌어올리는 이유는
+    두 가지다:
+
+      * 이 소자를 MOS 목록에 남겨 두면 _source_fanout이 부풀어, 그 넷을
+        tail로 쓰는 진짜 차동쌍이 "팬아웃 == 2"에서 탈락한다.
+      * 밀러 매처에 캡으로 올릴 때, 같은 소자가 MOS 목록에도 있으면
+        {g,d}가 곧 자신의 두 판이라 자기 자신을 이득단으로 골라
+        PatternMatch.__post_init__의 치명적 ValueError를 낸다.
+
+    **모델 이름은 보지 않는다.** sky130의 MOS 캡은 모델명이
+    pfet_01v8이라 device_class가 pfet이고, 생산 덱의 MOS 캡은 모델명에
+    cap이 들어 있다 - 같은 서브스트링 규칙이 정반대 방향으로 틀린
+    두 사례가 CLAUDE.md에 이미 적혀 있다. 연결이 사실이고 이름은 관례다."""
+    if not _is_mos(fact):
+        return False
+    nets = _nets(fact)
+    return nets["d"] == nets["s"]
+
+
 def _same_kind(a: ComponentFact, b: ComponentFact) -> bool:
     """같은 소자 종류인가. 모델 이름이 있으면 그것으로, 없으면 ctype으로 본다.
     nfet과 pfet을 짝지으면 안 되므로 이 비교는 느슨해서는 안 된다."""
@@ -91,7 +118,11 @@ def _source_fanout(net: str, mos: list[ComponentFact]) -> int:
 
 def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
     matches: list[PatternMatch] = []
-    mos = [f for f in block.components if _is_mos(f)]
+    # 드레인/소스가 묶인 소자는 트랜지스터 목록에 넣지 않는다 - _is_mos_cap
+    # 참고. 세 MOS 매처 전부가 그 소자를 도통하는 소자로 다루면 안 되고,
+    # _source_fanout도 그것을 세면 안 된다.
+    mos = [f for f in block.components if _is_mos(f) and not _is_mos_cap(f)]
+    mos_caps = [f for f in block.components if _is_mos_cap(f)]
 
     for a, b in combinations(mos, 2):
         na, nb = _nets(a), _nets(b)
@@ -183,7 +214,14 @@ def _find_in_block(block: BlockStructure) -> list[PatternMatch]:
 
     # 밀러 보상: 커패시터가 어떤 이득단의 입력 게이트와 출력 드레인을 잇는다.
     # 직렬 저항이 끼어 있으면 저항 너머까지 한 단계 따라간다.
-    caps = [f for f in block.components if f.ctype == "C" or (f.device_class == "cap")]
+    # MOS 캡도 캡이다. sky130 덱에서 이것을 빼면 밀러 매처가 실재하는
+    # 보상망 위에서 조용히 0건을 낸다(bandgap 여섯 덱 전부가 그랬다) -
+    # 네 증폭기 모두 Xcc(MOS 캡) + XRz가 X6의 입출력을 잇는데도.
+    # _two_terminal_nets가 두 판을 그대로 낸다: MOS의 위치 순서가 d g s b
+    # 이므로 nodes[0]은 묶인 d/s 넷, nodes[1]은 게이트 - 정확히 두 판이다.
+    caps = [
+        f for f in block.components if f.ctype == "C" or f.device_class == "cap"
+    ] + mos_caps
     resistors = [f for f in block.components if f.ctype == "R" or (f.device_class == "res")]
     for cap in caps:
         endpoints = _two_terminal_nets(cap)

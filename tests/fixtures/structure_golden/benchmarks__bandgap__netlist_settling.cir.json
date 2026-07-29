@@ -2825,6 +2825,42 @@
       ]
     ],
     [
+      "miller_compensation",
+      "BUF_N",
+      [
+        "BUF_N.X6",
+        "BUF_N.XRz",
+        "BUF_N.Xcc"
+      ]
+    ],
+    [
+      "miller_compensation",
+      "BUF_P",
+      [
+        "BUF_P.X6",
+        "BUF_P.XRz",
+        "BUF_P.Xcc"
+      ]
+    ],
+    [
+      "miller_compensation",
+      "ERRAMP",
+      [
+        "ERRAMP.X6",
+        "ERRAMP.XRz",
+        "ERRAMP.Xcc"
+      ]
+    ],
+    [
+      "miller_compensation",
+      "TRIMAMP",
+      [
+        "TRIMAMP.X6",
+        "TRIMAMP.XRz",
+        "TRIMAMP.Xcc"
+      ]
+    ],
+    [
       "stacked_pair",
       "BUF_N",
       [

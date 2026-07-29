@@ -452,3 +452,80 @@ def test_pattern_finding_is_deterministic():
     s = derive_structure(deck, "t")
 
     assert find_patterns(s) == find_patterns(s)
+
+
+# --- §3.10: 드레인과 소스가 한 넷에 묶인 MOS는 트랜지스터가 아니라 캡이다 ---
+
+def test_a_pdk_moscap_carries_the_miller_match_on_the_shipped_bandgap_deck():
+    # bandgap 여섯 덱 전부에서 miller_compensation이 0건이었다. 회로를 읽으면
+    # 네 증폭기 모두 실제로 보상망을 갖고 있다: TRIMAMP의
+    # `Xcc nz outA nz nz pfet`(게이트 outA, 나머지 세 단자가 nz)와
+    # `XRz vout nz 0 res_high_po`가 X6(g=outA, d=vout)의 입출력을 잇는
+    # 밀러+널링저항이고, CLAUDE.md 자신이 그 보상망의 실측 성능을 적는다.
+    # 즉 0건은 "그 자리에 없어서 침묵"이 아니라 거짓 음성이었다.
+    #
+    # 원인은 caps 목록이 ctype=="C" 또는 device_class=="cap"만 모으는데
+    # sky130 MOS 캡의 모델명이 pfet_01v8이라 pfet으로 분류되는 것이다.
+    # 이것은 CLAUDE.md에 이미 적힌 거울상 사건이다 - 거기서는 모델명에
+    # cap이 들어간 MOSFET이 캡으로 잘못 잡혔고, 여기서는 캡으로 쓰인 MOS의
+    # 모델명에 cap이 없어 안 잡힌다. 어느 쪽도 모델명으로 풀 문제가 아니다:
+    # 드레인과 소스가 같은 넷이면 Vds가 구조적으로 0이라 채널 전류가 흐를 수
+    # 없고, 남는 것은 게이트 용량뿐이다. 그것이 사실이고 이름은 관례다.
+    from analogcoder.structure import derive_structure
+
+    text = open("benchmarks/bandgap/netlist.cir").read()
+    matches = [
+        m for m in find_patterns(derive_structure(text, "bandgap"))
+        if m.kind == "miller_compensation"
+    ]
+
+    by_block = {m.block: m.members for m in matches}
+    assert set(by_block) == {"TRIMAMP", "ERRAMP", "BUF_N", "BUF_P"}
+    assert by_block["TRIMAMP"] == ("TRIMAMP.X6", "TRIMAMP.XRz", "TRIMAMP.Xcc")
+
+
+def test_a_moscap_hung_on_a_rail_is_still_not_miller_compensation():
+    # 같은 덱의 BGR_CORE.Xcc는 `vss ampout vss vss`, 즉 레일에 매단 MOS 캡이고
+    # 이득단의 입출력을 잇지 않는다. 캡 목록을 넓히면서 이것까지 잡으면
+    # 거짓 양성이다 - 재현율을 위해 거짓 양성을 들이지 않는다는 것이 이
+    # 모듈의 수용 기준이다.
+    from analogcoder.structure import derive_structure
+
+    text = open("benchmarks/bandgap/netlist.cir").read()
+    matches = [
+        m for m in find_patterns(derive_structure(text, "bandgap"))
+        if m.kind == "miller_compensation"
+    ]
+
+    assert not any(m.block == "BGR_CORE" for m in matches)
+
+
+def test_a_shorted_mos_does_not_count_toward_source_fanout():
+    # 드레인과 소스가 묶인 소자를 트랜지스터 목록에 남겨 두면 _source_fanout이
+    # 부풀어, 그 레일을 tail로 쓰는 진짜 차동쌍이 "팬아웃 == 2" 조건에서
+    # 탈락한다. 즉 이 분류 오류는 밀러 매처만이 아니라 차동쌍 매처도
+    # 조용히 죽인다.
+    deck = (
+        "* t\n"
+        "M1 nx vinn tail vss NMOS W=48 L=1\n"
+        "M2 ny vinp tail vss NMOS W=48 L=1\n"
+        "Mc tail vg tail vss NMOS W=4 L=4\n"
+        ".end\n"
+    )
+
+    assert ("diff_pair", ("M1", "M2")) in _kinds(deck)
+
+
+def test_a_shorted_mos_is_never_the_gain_stage_of_its_own_miller_match():
+    # 캡 목록을 넓힐 때의 즉각적인 위험: MOS 캡은 게이트와 드레인이 곧
+    # 자신의 두 판이므로, 그 소자가 트랜지스터 목록에도 남아 있으면
+    # {g,d} == {판1,판2}를 자기 자신이 만족해 자기 자신과 짝지어진다.
+    # PatternMatch.__post_init__이 그것을 치명적 ValueError로 막으므로,
+    # 분류를 안 고치고 캡 목록만 넓히면 bandgap 덱에서 실행이 죽는다.
+    deck = (
+        "* t\n"
+        "Xcc nz outA nz nz sky130_fd_pr__pfet_01v8 L=40 W=40\n"
+        ".end\n"
+    )
+
+    assert find_patterns(derive_structure(deck, "t")) == []
