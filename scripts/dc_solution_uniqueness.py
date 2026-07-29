@@ -30,6 +30,12 @@ UGBW 가 13배 다르고, `vout` 은 양쪽 다 0.55 V 라 **DC 출력으로는 
 3. **`.nodeset` 줄을 출력에서 되읽으면 내가 넣은 값을 측정값으로 보고한다.**
    1·2 때문에 `print` 가 죽은 상태에서 정규식이 덱 반향을 잡아 "다섯 해가 전부
    다르다"는 결과를 만들었다. 값이 내가 넣은 값과 **정확히** 같았던 것이 단서다.
+4. **공급이 시간 의존 소스인 덱에서는 `op` 자체가 뜻이 없다.** `netlist_startup.cir`
+   의 공급은 PWL 램프이고 `op` 는 그것을 **t=0**, 즉 **0 V** 에서 평가한다. 이
+   스크립트는 거기서 "다중 해가 있다"를 **네 행에 걸쳐 보고했고**, 같은 덱을
+   단독으로 다시 돌리면 전부 무효가 나왔다 - 재현조차 안 되는 숫자였다. 지금은
+   `_refuse_reason` 이 그 덱을 **거부**하고, 거부는 요약에서 무효와 **다른 칸**에
+   적힌다.
 
 그래서 이 스크립트는 프로브가 안 나온 것을 **세어서 보고하고**, 한 줄의 프로브가
 전부 없으면 그 줄을 "같은 해"가 아니라 **무효**로 적는다. 데이터가 없는 것을
@@ -37,7 +43,8 @@ UGBW 가 13배 다르고, `vout` 은 양쪽 다 0.55 V 라 **DC 출력으로는 
 
 사용:
 
-    .venv/bin/python scripts/dc_solution_uniqueness.py
+    .venv/bin/python scripts/dc_solution_uniqueness.py            # 밴드갭 덱 전부
+    .venv/bin/python scripts/dc_solution_uniqueness.py <덱경로>    # 하나만
 """
 
 import os
@@ -50,9 +57,25 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(_HERE)
 sys.path.insert(0, os.path.join(REPO, "src"))
 
-from analogcoder.netlist import apply_changes, resolve_includes  # noqa: E402
+from analogcoder.netlist import apply_changes, parse_netlist, resolve_includes  # noqa: E402
 
-DECK = os.path.join(REPO, "benchmarks", "bandgap", "netlist.cir")
+_BG = os.path.join(REPO, "benchmarks", "bandgap")
+
+# **밴드갭의 모든 테스트벤치 덱.** 하나만 재고 "밴드갭은 유일하다"고 적으면 그
+# 주장이 실제로 재지 않은 덱까지 덮는다. 여섯 덱이 같은 `BANDGAP`/`BGR_CORE`
+# 본체를 공유하므로 유일성 논증이 이어질 것으로 **예상**되지만, 예상은 측정이
+# 아니다 - 그리고 `netlist_seed_topology.cir` 은 실제로 다르다(BUF_P 의 본체가
+# BUF_N 의 것으로 바뀐, 굶은 NMOS 폴드).
+DECKS = [
+    os.path.join(_BG, name) for name in (
+        "netlist.cir",
+        "netlist_loops.cir",
+        "netlist_psrr.cir",
+        "netlist_settling.cir",
+        "netlist_startup.cir",
+        "netlist_seed_topology.cir",
+    )
+]
 
 # 바이어스 체인의 노드들. `BANDGAP` 본체 안에서 nbias/ncas/pbias/pcas 가 네
 # 증폭기 **전부**에 분배되므로 여기가 갈리면 회로 전체가 갈린다. 최상위
@@ -129,10 +152,60 @@ def _run(text: str, nudge: str) -> dict:
     return vals
 
 
-def main() -> int:
-    base = resolve_includes(open(DECK).read(), os.path.dirname(DECK))
-    print(f"덱: {os.path.relpath(DECK, REPO)}")
-    print(f"초기추정 {len(NUDGES)}종 x 크기 {len(SIZES)}종, 허용오차 {REL_TOLERANCE:g} 상대\n")
+# SPICE 의 시간 의존 소스 함수들. `op` 는 이들을 **t=0 에서** 평가한다.
+_TIME_DEPENDENT = ("pwl", "pulse", "sin", "sine", "exp", "sffm", "am", "trnoise", "trrandom")
+
+
+def _refuse_reason(text: str) -> str | None:
+    """`op` 기반 유일성 측정이 이 덱에서 뜻을 갖는가. 아니면 이유를 돌려준다.
+
+    **이것을 넣은 이유가 이 스크립트의 네 번째 조용한 실패다.**
+    `benchmarks/bandgap/netlist_startup.cir` 의 공급은 `Vdd vdd 0 PWL(0 0 100n
+    1.8 1 1.8)` 이고, `op` 는 PWL 을 **t=0** 에서 평가하므로 그 덱의 동작점은
+    **공급이 0 V 인 죽은 회로**다. 그 상태는 회로가 실제로 쓰는 상태가 아니다 -
+    그 테스트벤치는 과도 해석을 위해 존재한다. 그런데 이 스크립트는 거기서
+    "다중 해가 있다"를 **네 행에 걸쳐 보고했고**, 같은 덱을 단독으로 다시 돌리면
+    전부 무효가 나왔다. 재현되지도 않는 숫자를 발견으로 적는 것이 이 저장소가
+    반복해서 지불한 것이다.
+
+    **이름으로 공급을 알아보지 않는다** - 그것은 이 저장소가 금지한 추측이다
+    (`^Vdd` 로 레일을 알아보는 것과 같은 자리). 판정하는 사실은 "최상위 독립
+    전압원 중 시간 의존 함수를 쓰는 것이 있는가" 이고, 그것은 파싱으로 결정된다.
+
+    **그래서 이 거부는 일부러 넓다, 그리고 그 값을 명시한다.** 시간 의존 소스가
+    **공급**이면 `op` 는 무의미하지만, 그것이 **자극**(계단 입력 등)이고 공급은
+    DC 라면 `op` 는 계단 이전의 정당한 상태다. 둘을 가르려면 "어느 소스가
+    공급인가" 를 알아야 하고 그것이 바로 금지된 추측이다. 그래서 닫히는 쪽으로
+    실패한다 - 비용은 실측 하나를 버리는 것이고(`netlist_settling.cir` 이 그
+    경우다: 거부 이전에 돌렸을 때 다섯 초기추정 전부 일치했다), 그 비용을
+    **거부** 칸에 적어 무효와 구별한다. 되살리려면 공급을 파싱으로 식별하는
+    방법이 먼저 필요하고, 그것은 코너 모델 일반화 작업과 같은 문제다.
+    """
+    parsed = parse_netlist(text)
+    offenders = []
+    for comp in parsed.top_components:
+        if comp.ctype not in ("V", "I"):
+            continue
+        # 값 토큰 전체를 본다 - `DC 0 AC 1 PWL(...)` 처럼 섞일 수 있다.
+        blob = " ".join([comp.value or ""] + list(comp.nodes[2:])).lower()
+        if any(fn + "(" in blob.replace(" (", "(") for fn in _TIME_DEPENDENT):
+            offenders.append(comp.refdes)
+    if offenders:
+        return (
+            f"최상위 소스 {', '.join(offenders)} 가 시간 의존 함수를 쓴다. "
+            f"`op` 는 그것을 t=0 에서 평가하므로 이 덱의 동작점은 회로가 실제로 "
+            f"쓰는 상태가 아니다 - 이 측정은 여기서 뜻을 갖지 않는다"
+        )
+    return None
+
+
+def _one_deck(deck_path: str) -> tuple[list, list, list]:
+    base = resolve_includes(open(deck_path).read(), os.path.dirname(deck_path))
+    print(f"###### 덱: {os.path.relpath(deck_path, REPO)}\n")
+    reason = _refuse_reason(base)
+    if reason is not None:
+        print(f"  거부: {reason}\n")
+        return None
 
     split_rows, void_rows, agree_rows = [], [], []
     for size_name, changes in SIZES.items():
@@ -176,15 +249,49 @@ def main() -> int:
             print(f"  (초기추정 {len(NUDGES)}종 전부 같은 해 — 이 크기에서 유일하다는 증거)")
         print()
 
-    print(f"판정: 다중 해 {len(split_rows)}행 / 일치 {len(agree_rows)}행 / "
+    print(f"  요약: 다중 해 {len(split_rows)}행 / 일치 {len(agree_rows)}행 / "
           f"무효 {len(void_rows)}행")
     if split_rows:
         print(f"  **다중 해가 있다**: {', '.join(split_rows)}")
     if void_rows:
         print(f"  판정 불가(해가 아예 안 나옴): {', '.join(void_rows)}")
-    if agree_rows and not split_rows:
+    print()
+    return split_rows, void_rows, agree_rows
+
+
+def main() -> int:
+    decks = sys.argv[1:] or DECKS
+    print(f"초기추정 {len(NUDGES)}종 x 크기 {len(SIZES)}종 x 덱 {len(decks)}개, "
+          f"허용오차 {REL_TOLERANCE:g} 상대\n")
+
+    totals = {}
+    for deck in decks:
+        totals[os.path.basename(deck)] = _one_deck(deck)
+
+    print("=" * 72)
+    # **거부는 무효와 다른 사실이다.** "이 측정이 여기서 뜻을 갖지 않는다"와
+    # "재 봤는데 값이 안 나왔다"를 같은 칸에 적으면, 앞의 것이 뒤의 것처럼
+    # 읽히면서 덱에 문제가 있다는 인상을 남긴다.
+    refused = [d for d, r in totals.items() if r is None]
+    scored = {d: r for d, r in totals.items() if r is not None}
+    any_split = [d for d, (s, _, _) in scored.items() if s]
+    all_void = [d for d, (s, v, a) in scored.items() if not a and not s]
+    agreed = [d for d, (s, _, a) in scored.items() if a and not s]
+    print(f"전체 판정: 덱 {len(totals)}개 = 측정 {len(scored)}개 + 거부 {len(refused)}개")
+    print(f"  측정한 것 중: 다중 해 {len(any_split)} / 일치 {len(agreed)} / "
+          f"전부무효 {len(all_void)}")
+    for deck, r in totals.items():
+        if r is None:
+            print(f"  {deck:<32} 거부   (op 가 뜻을 갖지 않는 덱)")
+            continue
+        s, v, a = r
+        mark = "다중해" if s else ("무효" if not a else "일치")
+        print(f"  {deck:<32} {mark:<6} (다중 {len(s)} / 일치 {len(a)} / 무효 {len(v)})")
+    if any_split:
+        print(f"\n  **다중 해가 있는 덱**: {', '.join(any_split)}")
+    elif agreed:
         print(f"""
-  {len(agree_rows)}개 크기 전부에서, 바이어스를 0 V 까지 밀어도 같은 해로 온다.
+  {len(agreed)}개 덱 전부에서, 바이어스를 0 V 까지 밀어도 같은 해로 온다.
   이것은 "유일함이 증명됐다"가 아니다 - {len(NUDGES)}개 방향으로 밀어서 안
   갈렸다는 것이고, `two_stage_opamp` 의 전환이 고립된 크기에서 일어난 것을 보면
   촘촘한 크기 훑기가 더 강한 증거다. 그러나 축퇴 상태(바이어스 꺼짐) 쪽으로
