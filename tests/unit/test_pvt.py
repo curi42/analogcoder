@@ -373,7 +373,14 @@ class _SequencedBackend:
     """Returns one measurements dict per sim_backend.run() call, in order -
     unlike _StubBackend above (which only ever varies one measurement key),
     this lets a test control every measurement produced at each corner, for
-    each testbench, across the whole sweep."""
+    each testbench, across the whole sweep.
+
+    **호출 순서로 점을 식별하므로, 이것을 쓰는 스윕은 `max_workers=1`로 고정해야
+    한다.** 이 대역이 보는 것은 렌더링된 덱 하나뿐이고, 여기 쓰이는 합성 스펙의
+    덱("* netlist\\n.end\\n")에는 include도 Vdd도 없어 **모든 코너가 글자 그대로
+    같게 렌더링된다** - 내용으로는 점을 구분할 방법이 없다. 그래서 순서 고정이
+    대역의 한계를 정직하게 적는 방식이고, 병렬 경로가 값을 바꾸지 않는다는 주장은
+    실제 ngspice로 재는 test_sweep_cache_parallel_ngspice.py가 진다."""
 
     def __init__(self, measurements):
         self.measurements = list(measurements)
@@ -407,7 +414,7 @@ def test_the_sweep_exposes_every_corner_s_own_measurements(tmp_path):
     )
     backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}])
 
-    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend)
+    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend, max_workers=1)
 
     assert [e["measurements"]["g"] for e in sweep["per_corner"]] == [50.0, 41.0]
     assert sweep["per_corner"][0]["corner"]["process"] == "tt"
@@ -433,7 +440,7 @@ def test_each_corner_entry_carries_its_own_severity(tmp_path):
     )
     backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}])  # criterion is g >= 40
 
-    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend)
+    sweep = run_full_pvt_sweep({"tb": "* netlist\n.end\n"}, spec, backend, max_workers=1)
 
     assert sweep["per_corner"][0]["severity"] == pytest.approx(0.25)  # (50-40)/40
     assert sweep["per_corner"][1]["severity"] == pytest.approx(0.025)  # (41-40)/40
@@ -469,7 +476,9 @@ def test_per_corner_measurements_merge_across_testbenches(tmp_path):
     # Outer loop is testbenches, inner is corners: tb1/tt, tb1/ss, tb2/tt, tb2/ss.
     backend = _SequencedBackend([{"g": 50.0}, {"g": 41.0}, {"i": 100.0}, {"i": 90.0}])
 
-    sweep = run_full_pvt_sweep({"tb1": "* netlist\n.end\n", "tb2": "* netlist\n.end\n"}, spec, backend)
+    sweep = run_full_pvt_sweep(
+        {"tb1": "* netlist\n.end\n", "tb2": "* netlist\n.end\n"}, spec, backend, max_workers=1
+    )
 
     assert sweep["per_corner"][0]["measurements"] == {"g": 50.0, "i": 100.0}
     assert sweep["per_corner"][1]["measurements"] == {"g": 41.0, "i": 90.0}

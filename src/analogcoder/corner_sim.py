@@ -7,6 +7,8 @@ from analogcoder.corner_selection import NOMINAL, CornerSet, label, next_probe, 
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.pvt import CornerPoint, render_corner_netlist, worst_case_measurements
 from analogcoder.simulators.base import RawSimResult
+from analogcoder.simulators.cache import attach_log_event
+from analogcoder.simulators.parallel import map_points
 
 
 @dataclass
@@ -98,7 +100,7 @@ def _run_point(
 
 
 def build_corner_simulate(
-    agent_simulate, sim_backend, state, corner_state: CornerState, log_event
+    agent_simulate, sim_backend, state, corner_state: CornerState, log_event, max_workers=None
 ) -> Callable:
     """기존 simulate_fn 계약을 지키면서, 판정을 선택 코너들의 최악값으로 바꾼다.
 
@@ -110,7 +112,15 @@ def build_corner_simulate(
     더 도는 비용은 그 차이를 판정에서 빼기 위한 값이다.
 
     반환 dict는 기존 키(status/measurements/by_testbench)에 corner_worst와
-    probe를 **더한다** - 추가 키이므로 기존 소비자는 영향받지 않는다."""
+    probe를 **더한다** - 추가 키이므로 기존 소비자는 영향받지 않는다.
+
+    **선택 코너와 탐침은 한 테스트벤치 안에서 함께 병렬로 돈다.** 그 점들은
+    서로 독립이고 각자 자기 임시 디렉터리를 판다. 테스트벤치 **바깥** 루프는
+    순차로 남는다 - 그 안에 LLM 호출(`agent_simulate`)이 있고, 코너의 control
+    block은 그 호출이 수렴시킨 것을 써야 하기 때문이다. 결과는 점으로 색인해
+    모으고 아래에서 `cs.corners` 순서대로 다시 읽으므로 완료 순서는 status에도
+    측정값에도 닿지 않는다."""
+    attach_log_event(sim_backend, log_event)
 
     async def simulate_fn(netlist_texts, spec):
         benchmark_dir = os.path.dirname(spec.canonical.netlist_path)
@@ -165,15 +175,42 @@ def build_corner_simulate(
                 # 폴백은 에이전트가 아무것도 주지 않았을 때만이다.
                 control_block = agent_result.get("control_block") or tb.control_block
 
-                for point in cs.corners:
-                    raw = _run_point(
+                def _point_task(point, _tb=tb, _cb=control_block):
+                    return _run_point(
                         sim_backend,
-                        netlist_texts[tb.name],
+                        netlist_texts[_tb.name],
                         point,
-                        control_block,
+                        _cb,
                         benchmark_dir,
-                        paths[tb.name],
+                        paths[_tb.name],
                     )
+
+                # 탐침도 같은 배치에 넣는다 - 선택 코너와 마찬가지로 독립이고,
+                # 따로 돌리면 테스트벤치마다 병렬 구간이 끝난 뒤 직렬 꼬리가
+                # 하나씩 붙는다. 다만 **예외 처리는 갈라진다**: 선택 코너의
+                # 예외는 판정 경로라 그대로 올려보내고, 탐침의 예외는 삼켜
+                # 기록만 남긴다. 그래서 탐침 태스크만 자기 안에서 잡는다.
+                probing_here = probe_point is not None and probe_error is None
+
+                def _probe_task(point, _run=_point_task):
+                    try:
+                        return _run(point)
+                    except Exception as exc:  # noqa: BLE001 - 탐침은 무엇으로도 실행을 멈추지 못한다
+                        return exc
+
+                # payload는 `(태스크 함수, 점)` - 선택 코너와 탐침이 서로 다른
+                # 예외 정책을 갖기 때문에 함수를 payload에 실어 보낸다.
+                items = [(("corner", i), (_point_task, point)) for i, point in enumerate(cs.corners)]
+                if probing_here:
+                    items.append((("probe", 0), (_probe_task, probe_point)))
+
+                raws = map_points(lambda payload: payload[0](payload[1]), items, max_workers)
+
+                # 완료 순서가 아니라 **선언 순서**로 읽는다. status는 "처음 만난
+                # 비성공"이므로, 완료 순서로 읽으면 같은 스윕이 실행마다 다른
+                # 코너를 사유로 적는다.
+                for i, point in enumerate(cs.corners):
+                    raw = raws[("corner", i)]
                     per_point[point].update(raw.measurements)
                     # 어느 점에서 난 실패인지를 status 문자열에 싣는다.
                     # optimizer._run_simulation은 이 값을 그대로 사유에 적으므로,
@@ -183,7 +220,7 @@ def build_corner_simulate(
                     if status == "success" and raw.status != "success":
                         status = f"{raw.status} at {label(point)} in testbench {tb.name}"
 
-                if probe_point is not None and probe_error is None:
+                if probing_here:
                     # 탐침은 판정에 참여하지 않으므로, 실패해도 이 반복을 멈출
                     # 근거가 없다. 그 반복의 탐침 **결과**를 없던 것으로 하고
                     # (판정도 승격도 없다) 기록만 남긴다. 남은 테스트벤치의
@@ -191,17 +228,9 @@ def build_corner_simulate(
                     # 나머지가 "측정값 없음"으로 실패해 크래시를 근거로 코너를
                     # 승격시킨다. 회전은 그대로 진행된 채 커밋되므로, 터진
                     # 코너는 다음 한 바퀴 뒤에 다시 온다.
-                    try:
-                        raw = _run_point(
-                            sim_backend,
-                            netlist_texts[tb.name],
-                            probe_point,
-                            control_block,
-                            benchmark_dir,
-                            paths[tb.name],
-                        )
-                    except Exception as exc:  # noqa: BLE001 - 탐침은 무엇으로도 실행을 멈추지 못한다
-                        probe_error = f"{type(exc).__name__}: {exc}"
+                    raw = raws[("probe", 0)]
+                    if isinstance(raw, BaseException):
+                        probe_error = f"{type(raw).__name__}: {raw}"
                     else:
                         probe_measurements.update(raw.measurements)
 

@@ -5,6 +5,8 @@ import tempfile
 from dataclasses import dataclass
 
 from analogcoder.judge_tools import evaluate_criteria
+from analogcoder.simulators.cache import attach_log_event
+from analogcoder.simulators.parallel import map_points
 from analogcoder.spec import Criterion, PVTCorners
 
 
@@ -194,7 +196,24 @@ def corner_severity(measurements: dict, criteria: list[Criterion]) -> float:
     return worst
 
 
-def run_full_pvt_sweep(netlist_texts: dict[str, str], spec, sim_backend) -> dict:
+def _simulate_rendered(sim_backend, rendered: str, control_block: str):
+    """한 점을 자기 임시 디렉터리에서 돌린다.
+
+    임시 디렉터리가 호출마다 새로 파이는 것이 **워커 격리 그 자체**다 -
+    ngspice는 중간 파일을 쓰고, NgspiceBackend는 CWD를 덱이 놓인 디렉터리로
+    잡는다. 병렬화를 위해 새로 만든 격리가 아니라 원래 있던 격리이고, 그래서
+    include 해석 규칙도 그대로다(최상위 include는 cli.py에서 이미 절대 경로로
+    바뀌어 들어온다)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        netlist_path = os.path.join(tmpdir, "corner.cir")
+        with open(netlist_path, "w") as f:
+            f.write(rendered)
+        return sim_backend.run(netlist_path, {"control_block": control_block})
+
+
+def run_full_pvt_sweep(
+    netlist_texts: dict[str, str], spec, sim_backend, max_workers: int | None = None, log_event=None
+) -> dict:
     """Runs spec.pvt_corners' full cross product against every testbench,
     directly via sim_backend (no LLM agent involved - corner variation is
     purely mechanical). Returns the worst-case-per-criterion result in the
@@ -203,29 +222,46 @@ def run_full_pvt_sweep(netlist_texts: dict[str, str], spec, sim_backend) -> dict
     worst-case value, for diagnostics, and a per_corner breakdown (parallel
     to all_corners(spec.pvt_corners)) exposing each corner's own merged
     measurements and severity - the data a later probe-ordering task needs
-    and that worst_case_measurements alone discards."""
+    and that worst_case_measurements alone discards.
+
+    **모든 (테스트벤치, 코너) 점은 서로 독립이므로 한 풀에서 함께 돈다.**
+    이 함수가 순차 이중 루프였을 때 45코너 스윕이 286초였고, 최적화의 코너
+    확정 런은 그것을 여섯 번 돌아 1790초였다. 병렬화가 바꾸는 것은 실행
+    순서뿐이다: 결과는 `(테스트벤치 이름, 코너 인덱스)`로 색인해 모으고 아래에서
+    **선언 순서대로** 다시 읽으므로, 완료 순서는 어떤 값에도 닿지 않는다.
+    `max_workers=1`이면 풀을 만들지 않고 순차로 돈다(A/B의 대조군)."""
     benchmark_dir = os.path.dirname(spec.canonical.netlist_path)
     corners = all_corners(spec.pvt_corners)
+    attach_log_event(sim_backend, log_event)
     # Indexed by corner, filled in across the testbench loop below: one
     # corner's full measurement set is spread across testbench iterations
     # (the loop is testbenches-outside, corners-inside), so this has to be
     # merged incrementally rather than built per testbench.
     per_corner_merged: list[dict] = [{} for _ in corners]
 
-    combined_measurements: dict[str, float] = {}
-    combined_worst_corners: dict[str, dict] = {}
+    # 렌더링은 순차로, 시뮬레이션만 병렬로. 렌더링은 정규식 몇 개라 비용이 없고,
+    # 여기서 만들어 두면 워커가 spec/netlist_texts를 건드리지 않는다.
+    points = []
     for tb in spec.testbenches:
         netlist_text = netlist_texts[tb.name]
-        per_corner_measurements = []
         for index, corner in enumerate(corners):
             rendered = render_corner_netlist(
                 netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
             )
-            with tempfile.TemporaryDirectory() as tmpdir:
-                netlist_path = os.path.join(tmpdir, "corner.cir")
-                with open(netlist_path, "w") as f:
-                    f.write(rendered)
-                result = sim_backend.run(netlist_path, {"control_block": tb.control_block})
+            points.append(((tb.name, index), (rendered, tb.control_block)))
+
+    raw_results = map_points(
+        lambda payload: _simulate_rendered(sim_backend, payload[0], payload[1]),
+        points,
+        max_workers,
+    )
+
+    combined_measurements: dict[str, float] = {}
+    combined_worst_corners: dict[str, dict] = {}
+    for tb in spec.testbenches:
+        per_corner_measurements = []
+        for index, _corner in enumerate(corners):
+            result = raw_results[(tb.name, index)]
             per_corner_measurements.append(result.measurements)
             per_corner_merged[index].update(result.measurements)
 
