@@ -111,6 +111,30 @@ def parse_knob(text: str) -> dict:
     }
 
 
+def parse_corner_regime(text: str):
+    """`argmax` 또는 `coverage:<epsilon>:<tau>`.
+
+    **읽을 수 없으면 거부한다.** 조용히 argmax 로 떨어지면 두 쪽이 같은
+    체제로 돌면서 기록에는 다른 이름이 실리고, 격자의 셀 하나가 통째로
+    거짓이 된다."""
+    from analogcoder.spec import CoverageConfig
+
+    if text == "argmax":
+        return None
+    parts = text.split(":")
+    if len(parts) != 3 or parts[0] != "coverage":
+        raise ValueError(
+            f"unreadable corner regime {text!r}: use 'argmax' or 'coverage:<eps>:<tau>'"
+        )
+    try:
+        epsilon, tau = float(parts[1]), float(parts[2])
+    except ValueError:
+        raise ValueError(
+            f"unreadable corner regime {text!r}: epsilon and tau must be numbers"
+        ) from None
+    return CoverageConfig(epsilon=epsilon, tau=tau)
+
+
 def load_deck(spec):
     """스펙이 선언한 모든 테스트벤치의 넷리스트 원문.
 
@@ -229,13 +253,27 @@ def _steps_from_history(state) -> list[dict]:
     return steps
 
 
-def run_side(side: str, strategy_name: str, args, ranking: list[dict], out_dir: str) -> dict:
+def run_side(
+    side: str,
+    strategy_name: str,
+    args,
+    ranking: list[dict],
+    out_dir: str,
+    corner_regime=None,
+) -> dict:
     """한쪽을 돌리고 기록을 만든다.
 
     `record`와 `meta`를 가르는 것이 중요하다. record는 **결정론적이어야 하는**
     모든 것이고, meta는 그렇지 않은 것(벽시계, 경로)이다. 자기 검사는 record만
     비교한다 - meta를 섞으면 검사가 언제나 실패해 아무 말도 하지 않게 된다."""
     spec = load_spec(args.spec)
+    if corner_regime is not None:
+        from dataclasses import replace as _replace
+
+        from analogcoder.spec import CornerReduction
+
+        base = spec.corner_reduction or CornerReduction()
+        spec.corner_reduction = _replace(base, coverage=corner_regime)
     texts = load_deck(spec)
     run_dir = os.path.join(out_dir, f"{side}_{strategy_name}")
     os.makedirs(run_dir, exist_ok=True)
@@ -265,6 +303,10 @@ def run_side(side: str, strategy_name: str, args, ranking: list[dict], out_dir: 
     record = {
         "side": side,
         "strategy": strategy_name,
+        "corner_regime": (
+            "argmax" if corner_regime is None
+            else f"coverage:{corner_regime.epsilon}:{corner_regime.tau}"
+        ),
         "spec": os.path.relpath(args.spec, os.getcwd()),
         "knob_ranking": ranking,
         "step_budget": args.max_steps,
@@ -360,6 +402,15 @@ def main(argv=None) -> int:
         default=[],
         help=f"전략 이름 두 개. 고를 수 있는 것: {', '.join(sorted(SEARCH_STRATEGIES))}",
     )
+    parser.add_argument(
+        "--corner-regime",
+        action="append",
+        type=parse_corner_regime,
+        default=[],
+        metavar="argmax|coverage:EPS:TAU",
+        help="쪽마다의 코너 체제. 전략과 마찬가지로 정확히 두 번 준다. "
+             "생략하면 양쪽 다 argmax.",
+    )
     parser.add_argument("--max-steps", type=int, default=optimizer_module.MAX_OPTIMIZE_STEPS,
                         help="시뮬레이션 예산(탐색 단계 수). 양쪽에 같은 값이 간다.")
     parser.add_argument("--sim-timeout", type=int, default=300)
@@ -385,6 +436,10 @@ def main(argv=None) -> int:
             "--knob을 최소 하나 주어야 한다. 순위를 고정하지 않으면 LLM을 부르게 되고, "
             "그러면 이 하니스가 존재하는 이유가 사라진다"
         )
+    if not args.corner_regime:
+        args.corner_regime = [None, None]
+    if len(args.corner_regime) != 2:
+        parser.error("--corner-regime을 정확히 두 번 주어야 한다 (또는 아예 주지 않는다)")
 
     name = args.name or f"{args.strategy[0]}__vs__{args.strategy[1]}"
     out_dir = os.path.join(args.out_dir, name)
@@ -405,14 +460,15 @@ def main(argv=None) -> int:
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    a = run_side("a", args.strategy[0], args, args.knob, out_dir)
-    b = run_side("b", args.strategy[1], args, args.knob, out_dir)
+    a = run_side("a", args.strategy[0], args, args.knob, out_dir, args.corner_regime[0])
+    b = run_side("b", args.strategy[1], args, args.knob, out_dir, args.corner_regime[1])
     print_table(a, b)
 
     identical = _records_match(a["record"], b["record"])
     should_assert = args.assert_identical
     if should_assert is None:
-        should_assert = args.strategy[0] == args.strategy[1]
+        should_assert = (args.strategy[0] == args.strategy[1]
+                         and args.corner_regime[0] == args.corner_regime[1])
 
     comparison = {
         "spec": a["record"]["spec"],
