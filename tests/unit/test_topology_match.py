@@ -352,3 +352,117 @@ def test_the_port_subset_relaxation_admits_nothing_today():
         assert reasons[("BGR_CORE", topology_id)] == "ports"
         for block in ("ERRAMP", "TRIMAMP", "BUF_N", "BUF_P"):
             assert reasons[(block, topology_id)] == "models"
+
+
+# --- 포트 규칙이 실제로 무엇을 허용하는가 (감사 §3.4 / §6 첫 항목) -------------
+#
+# CLAUDE.md는 포트 규칙을 "bidirectional set equality"로 적고 단방향 검사를
+# 결함으로 서술하지만, `bc53d9e`가 그것을 **의도적으로** 부분집합으로 완화했다.
+# 아래 두 테스트는 그 완화가 실제로 무엇을 만드는지 - CLAUDE.md가 실패
+# 시나리오로 적은 바로 그 모양("5포트 본문이 9포트 블록에 들어가 바이어스 포트
+# 네 개가 남는다")이 오늘 도달 가능하다는 것 - 을 못박는다.
+
+
+def test_a_five_port_body_really_does_land_in_a_nine_port_block():
+    """CLAUDE.md가 결함으로 적은 시나리오를 스왑 적용까지 끝까지 재현한다.
+
+    실측: 5포트 본문이 9포트 블록의 후보가 되고, 스왑 후 `.subckt` 헤더는
+    여전히 9포트를 선언하며 새 본문은 그중 네 개(nbias/ncas/pbias/pcas)를
+    안 쓴다. **다만 그 넷들은 뜨지 않는다** - 부동 넷 검사가 통과한 이유가
+    곧 그것이다: 같은 스코프의 다른 인스턴스(Xu2)가 같은 넷을 참조한다.
+    즉 CLAUDE.md의 시나리오는 도달 가능하되 결론(조용히 뜬 노드가 된다)이
+    틀렸다 - 뜨는 갈래는 `_leftover_ports_float_reason`이 거부한다.
+    """
+    from analogcoder.netlist import apply_topology_swap, parse_netlist
+
+    cands, _ = compatible_swaps({"tb": DECK_9_SHARED_BIAS}, LIB, set())
+    assert SwapCandidate(block_path="AMP", topology_id="five_port") in cands
+
+    swapped = apply_topology_swap(DECK_9_SHARED_BIAS, "AMP", FIVE_PORT.subckt_body)
+    parsed = parse_netlist(swapped)
+    sub = parsed.subckts["AMP"]
+
+    # 헤더는 그대로 9포트를 선언한다 (apply_topology_swap은 본문만 바꾼다).
+    assert sub.ports == ["vinp", "vinn", "vout", "vdd", "vss", "nbias", "ncas", "pbias", "pcas"]
+    used_inside = {n for c in sub.components for n in c.nodes}
+    assert [p for p in sub.ports if p not in used_inside] == ["nbias", "ncas", "pbias", "pcas"]
+
+    # 그러나 호출부의 그 넷들은 형제 인스턴스가 여전히 참조한다 - 뜬 넷이 아니다.
+    top_users: dict[str, int] = {}
+    for comp in parsed.top_components:
+        for net in comp.nodes:
+            top_users[net] = top_users.get(net, 0) + 1
+    for net in ("nbias", "ncas", "pbias", "pcas"):
+        assert top_users[net] >= 2
+
+
+def test_a_leftover_port_colliding_with_an_internal_node_of_the_new_body_is_rejected():
+    """부동 넷 검사가 원리적으로 못 보는 반대 갈래: 남는 포트의 **이름**이
+    새 본문의 내부 노드 이름과 겹치면, 스왑 후 그 노드는 내부 노드가 아니라
+    헤더가 선언한 포트가 되어 호출부가 넘긴 외부 넷에 묶인다 - 뜨는 것이
+    아니라 **단락**이다.
+
+    이것은 가상의 형태가 아니다: 출하 라이브러리의 `miller_basic` /
+    `miller_nulling_resistor` 본문은 내부 노드 `nbias`/`pbias`를 쓰고,
+    bandgap의 네 앰프(9포트)의 남는 포트가 정확히 `nbias`/`ncas`/`pbias`/
+    `pcas`다. 오늘은 `models` 규칙이 먼저 거부해서 도달하지 않을 뿐이다
+    (아래 test_the_leftover_collision_check_is_silent_on_every_shipped_spec).
+    """
+    collide = Topology(
+        id="collide", description="d", addresses=[],
+        ports=["vinp", "vinn", "vout", "vdd", "vss"], assumes_scale=1e-6,
+        provenance="authored", verified_at="nominal",
+        # pbias는 이 본문의 **내부** 노드다 - ports에 없다.
+        subckt_body="M1 pbias vinp vdd vss NMOSG W=2 L=1\nM2 vout vinn pbias vss NMOSG W=2 L=1\n",
+    )
+    cands, rej = compatible_swaps({"tb": DECK_9_SHARED_BIAS}, {"collide": collide}, set())
+    assert cands == []
+    assert _reasons(rej, "collide") == {"leftover_port_collision"}
+    detail = next(r.detail for r in rej if r.topology_id == "collide")
+    assert "pbias" in detail
+
+
+def test_the_leftover_collision_check_is_silent_on_every_shipped_spec():
+    """이 검사가 아무것도 안 할 때의 모양을 못박는다.
+
+    실측(감사 재현): 오늘 출하 12개 스펙 전체에서 남는 포트를 가진
+    (테스트벤치, 블록, 토폴로지) 삼중은 **256개**이고 그 **256개 전부**가
+    이름 충돌을 갖는다 - 즉 `_leftover_ports_float_reason`은 한 번도 충돌
+    없는 쌍 위에서 불린 적이 없다. 그런데도 `leftover_port_collision` 기각은
+    **0건**인데, `models` 규칙이 먼저 거부하기 때문이다 (5포트 항목 둘 다
+    `sky130_fd_pr__cap_mim_m3_1`을 쓰는데 bandgap 덱은 MOS 캡만 쓴다).
+
+    그래서 충돌 검사는 `models`/`scale` **뒤에** 놓여 있다 - 앞에 놓으면
+    오늘 256번 발화해서 "이 검사가 실제로 문제가 되는 쌍을 잡았다"와
+    "어차피 models가 잡을 쌍 위에서 울렸다"가 구별되지 않는다. 순서를
+    바꾸지 말 것. 라이브러리나 덱이 바뀌어 models가 통과하는 순간 이 검사가
+    살아난다.
+    """
+    from pathlib import Path
+
+    from analogcoder.netlist import parse_netlist
+    from analogcoder.topologies import TOPOLOGY_LIBRARY
+    from analogcoder.topology_match import _wrap_topology_body
+
+    text = Path("benchmarks/bandgap/netlist_loops.cir").read_text()
+    cands, rej = compatible_swaps({"loops": text}, TOPOLOGY_LIBRARY, set())
+    assert [r for r in rej if r.reason == "leftover_port_collision"] == []
+
+    # 충돌은 실재한다 - 오직 순서 때문에 안 보일 뿐이라는 것까지 못박는다.
+    for topology_id in ("miller_basic", "miller_nulling_resistor"):
+        topology = TOPOLOGY_LIBRARY[topology_id]
+        body = _wrap_topology_body(topology).subckts["TMP"]
+        internal = {n for c in body.components for n in c.nodes} - set(topology.ports)
+        assert {"nbias", "pbias"} <= internal
+        for block in ("ERRAMP", "TRIMAMP", "BUF_N", "BUF_P"):
+            leftover = set(parse_netlist(text).subckts[block].ports) - set(topology.ports)
+            assert internal & leftover == {"nbias", "pbias"}
+            assert (
+                next(
+                    r.reason
+                    for r in rej
+                    if r.block_path == block and r.topology_id == topology_id
+                )
+                == "models"
+            )
+    assert not any(c.topology_id.startswith("miller_") for c in cands)

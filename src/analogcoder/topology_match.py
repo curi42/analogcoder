@@ -30,6 +30,28 @@
    인스턴스가 이 테스트벤치 어디에도 없으면(정의만 있고 아무도 부르지 않는
    블록) 남는 포트가 안전한지 판정할 근거가 없으므로 추측하지 않고
    거부한다.
+
+   **부동 넷 검사가 원리적으로 못 보는 반대 갈래가 하나 있다** - 남는 포트의
+   *이름*이 새 본문의 **내부 노드** 이름과 겹치는 경우다. 그러면 스왑 후 그
+   노드는 내부 노드가 아니라 헤더가 선언한 포트가 되어 호출부가 넘긴 외부
+   넷에 그대로 묶인다 - 뜨는 것이 아니라 반대로 **단락**이다. 부동 넷 검사는
+   "그 넷을 다른 소자도 쓰는가"만 묻기 때문에 이 갈래에서는 항상 통과한다.
+   그래서 별도 검사 `_leftover_port_collision_reason`을 두고 사유 코드도
+   따로 쓴다(`leftover_port_collision`) - 부동과 단락은 서로 다른 사실이고,
+   같은 코드로 접으면 `topology_unavailable`이 사유 코드를 갖게 된 바로 그
+   이유를 다시 잃는다.
+   **이것은 가상의 형태가 아니다.** 실측: 출하 라이브러리의 `miller_basic`/
+   `miller_nulling_resistor` 본문은 내부 노드 `nbias`/`pbias`를 쓰고,
+   bandgap의 네 앰프(9포트)의 남는 포트가 정확히 `nbias`/`ncas`/`pbias`/
+   `pcas`다. 12개 출하 스펙 전체에서 남는 포트를 가진 (테스트벤치, 블록,
+   토폴로지) 삼중은 **256개이고 그 256개 전부가 이름 충돌을 갖는다** - 즉
+   부동 넷 검사는 오늘까지 충돌 없는 쌍 위에서 불린 적이 한 번도 없다.
+   그런데도 `leftover_port_collision` 기각은 **0건**인데, 아래 규칙 2
+   (`models`)가 먼저 거부하기 때문이다(5포트 항목 둘 다
+   `sky130_fd_pr__cap_mim_m3_1`을 쓰는데 bandgap 덱은 MOS 캡만 쓴다).
+   충돌 검사를 규칙 2/3 **뒤에** 둔 것은 그래서 의도적이다: 앞에 두면 오늘
+   256번 발화해서 "실제로 문제가 되는 쌍을 잡았다"와 "어차피 models가 잡을
+   쌍 위에서 울렸다"가 구별되지 않는다. 순서를 "정돈"하지 말 것.
 2. 모델: 토폴로지 본문이 쓰는 모델 이름 집합이 덱 전체(모든 스코프)가
    인스턴스화하는 모델 이름 집합의 부분집합이어야 한다. 역방향은 요구하지
    않는다. `.include`를 따라가지 않아도 판정 가능한 이유는, 덱이 이미 그
@@ -72,8 +94,8 @@ class SwapCandidate:
 class SwapRejection:
     block_path: str
     topology_id: str
-    # "ports" | "models" | "scale" | "missing_in_testbench" | "identical_body"
-    # | "already_tried"
+    # "ports" | "leftover_port_collision" | "models" | "scale"
+    # | "missing_in_testbench" | "identical_body" | "already_tried"
     reason: str
     detail: str
 
@@ -182,6 +204,35 @@ def _leftover_ports_float_reason(
                     f"that scope references {net!r} - it would float if this port were dropped"
                 )
     return None
+
+
+def _leftover_port_collision_reason(
+    topology: Topology,
+    block_path: str,
+    leftover_ports: list[str],
+) -> str | None:
+    """남는 포트의 **이름**이 새 본문의 내부 노드 이름과 겹치는지 본다. 겹치지
+    않으면 None, 겹치면 `SwapRejection.detail`에 실을 문자열.
+
+    `_leftover_ports_float_reason`의 거울상이다. 그쪽은 "이 포트를 새 본문이
+    안 쓰면 바깥 넷이 뜨는가"를 묻는데, 이름이 겹치면 새 본문은 그 포트를
+    **쓴다** - 다만 내부 노드로 쓰려 했을 뿐이다. 스왑은 `.subckt` 헤더를
+    건드리지 않으므로 그 이름은 여전히 포트이고, 호출부가 넘긴 외부 넷(예:
+    공유 바이어스 레일)이 본문 내부 노드에 직결된다. 부동 넷 검사는 "그 넷을
+    다른 소자도 쓰는가"만 묻기 때문에 이 경우 항상 통과한다.
+
+    내부 노드 = 본문이 참조하는 노드 중 토폴로지가 선언한 포트가 아닌 것.
+    이름에서 의미를 추측하지 않는다 - 파싱된 노드 이름의 집합 연산뿐이다."""
+    body = _wrap_topology_body(topology).subckts["TMP"].components
+    internal_nodes = {node for component in body for node in component.nodes} - set(topology.ports)
+    collisions = sorted(internal_nodes & set(leftover_ports))
+    if not collisions:
+        return None
+    return (
+        f"internal node(s) {collisions} of topology {topology.id!r} collide with leftover "
+        f"port(s) of block {block_path!r}; after the swap they would not be internal nodes "
+        f"but declared ports tied to whatever net the caller passes - a short, not a float"
+    )
 
 
 def _component_key(component: Component) -> tuple:
@@ -333,6 +384,27 @@ def compatible_swaps(
                     )
                     is_compatible = False
                     continue
+
+                # 남는 포트의 이름이 새 본문의 내부 노드와 겹치는지 - 부동 넷
+                # 검사의 거울상(단락). **models/scale 뒤에 두는 것이 의도적이다**:
+                # 오늘 12개 스펙에서 남는 포트를 가진 삼중 256개가 전부 이름
+                # 충돌을 갖고 전부 models로 먼저 거부되므로, 앞에 두면 이 검사가
+                # 256번 울리면서 "실제로 문제가 되는 쌍을 잡았다"와 "어차피
+                # models가 잡을 쌍 위에서 울렸다"가 구별되지 않는다. 모듈
+                # 독스트링 규칙 1의 마지막 문단 참조 - 순서를 정돈하지 말 것.
+                if leftover_ports:
+                    collision_reason = _leftover_port_collision_reason(topology, block_path, leftover_ports)
+                    if collision_reason is not None:
+                        rejections.append(
+                            SwapRejection(
+                                block_path=block_path,
+                                topology_id=topology_id,
+                                reason="leftover_port_collision",
+                                detail=f"{collision_reason} (testbench {tb!r})",
+                            )
+                        )
+                        is_compatible = False
+                        continue
 
             if is_compatible:
                 # 세 규칙을 전부 통과한 뒤에만 no-op 여부를 본다 - ports가
