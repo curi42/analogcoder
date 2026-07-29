@@ -199,7 +199,14 @@ def coverage_seed(sweep: dict, criteria: list, coverage) -> tuple[list, dict]:
         if not values:
             continue
         worst = _worst_of(values, criterion.operator)
-        scale = abs(worst) if worst else 1.0
+        # scale에 `or 1.0` 같은 대체 상수를 두지 않는다 - 최악값이 정확히
+        # 0.0이면 scale도 0.0이 되어, 그 값과 정확히 같은 코너만 덮인다
+        # (ε * 0.0 == 0.0). 대체 상수를 넣으면 그 기준에서만 ε이 상대
+        # 허용오차에서 절대 허용오차로 조용히 바뀌고, 그 상수는 어떤 실측에서도
+        # 유도되지 않은 추측이 된다 - 이 저장소가 COMPARISON_REL_TOLERANCE에서
+        # 이미 거부한 패턴이다. 닫히는 방향으로 실패한다: 씨앗이 커질 뿐이고,
+        # 빠져야 할 코너가 빠지는 일은 없다 - 잠긴 제약이 요구하는 바로 그 방향.
+        scale = abs(worst)
         for i, value in enumerate(values):
             if abs(value - worst) <= coverage.epsilon * scale:
                 sets[i].add(criterion.name)
@@ -226,12 +233,21 @@ def coverage_seed(sweep: dict, criteria: list, coverage) -> tuple[list, dict]:
 
 
 def _argmax_points(sweep: dict, criteria: list, points: list, measurements: list) -> list:
-    """오늘의 씨앗이 골랐을 코너들. `dropped`를 계산하기 위해서만 쓴다."""
+    """오늘의 씨앗이 골랐을 코너들. `dropped`를 계산하기 위해서만 쓴다.
+
+    `pvt.worst_case_measurements`가 정하는 규칙을 그대로 따라야 한다 - 오늘의
+    씨앗(`seed_from_sweep`)은 그 함수가 만든 `worst_case_corners`에서 오기
+    때문이다. 그 함수는 측정값이 **어느 코너에도** 없는 기준을 `continue`로
+    통째로 건너뛴다(`worst_corners`에 항목 자체를 남기지 않는다) - "모든
+    코너에 없다"와 "일부 코너에만 없다"(`missing[0]`으로 그 코너를 지목)는
+    서로 다른 사실이다. 여기서 전자를 후자처럼 다루면, 오늘의 씨앗에는 실제로
+    없던 코너를 `_argmax_points`가 지어내고, 그 코너가 `dropped`에 실려
+    "실재하지 않는 이유로 코너 하나가 빠졌다"는 거짓을 보고하게 된다."""
     chosen = []
     for criterion in criteria:
         values = [m.get(criterion.measurement) for m in measurements]
-        if not values:
-            continue
+        if not values or all(_is_missing(v) for v in values):
+            continue  # 이 기준은 오늘의 씨앗에 코너를 전혀 남기지 않는다
         missing = [i for i, v in enumerate(values) if _is_missing(v)]
         index = missing[0] if missing else values.index(
             _worst_of(values, criterion.operator)

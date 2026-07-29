@@ -362,3 +362,37 @@ def test_an_empty_per_corner_yields_an_empty_seed_rather_than_guessing():
 
     assert chosen == []
     assert record["covered"] == 0 and record["total"] == 1
+
+
+def test_a_criterion_whose_worst_is_zero_is_covered_only_by_an_exact_tie():
+    """`scale = abs(worst)`이므로 최악값이 0이면 허용오차도 0이다 - 정확히
+    같은 값만 덮는다. 예전에는 `or 1.0` 로 떨어져서 ε 이 그 기준에서만
+    **절대** 허용오차가 됐고, 그 1.0 은 아무 데서도 유도되지 않은 상수였다.
+    닫히는 방향으로 실패한다: 씨앗이 커질 뿐 빠져야 할 코너가 빠지지 않는다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"z": 0.0}),
+        (SS, {"z": -0.002}),
+    ])}
+    crit = Criterion(name="resid", measurement="z", operator="<=", threshold=1.0)
+
+    chosen, record = coverage_seed(sweep, [crit], CoverageConfig(epsilon=0.01, tau=1.0))
+
+    assert chosen == [FS]          # 최악은 <= 이므로 최대값, 즉 0.0 인 FS
+    assert record["covered"] == 1
+
+
+def test_a_measurement_absent_from_every_corner_names_no_dropped_corner():
+    """`dropped` 는 '오늘의 씨앗이 골랐을 코너'와 비교한 결과다. 오늘의 씨앗은
+    `worst_case_corners` 에서 오고, `pvt.worst_case_measurements` 는 어느 코너에도
+    측정값이 없는 기준을 **통째로 건너뛴다**. `_argmax_points` 가 그것을
+    `missing[0]` 에 귀속시키면 실재하지 않는 이유로 코너 하나가 dropped 에
+    실린다 - 이 게이트의 무력 상태를 보이게 하는 바로 그 칸이 거짓이 된다."""
+    sweep = {"per_corner": _per_corner([
+        (FS, {"g": 45.0}),
+        (SS, {"g": 41.0}),
+    ])}
+    ghost = Criterion(name="ghost", measurement="nowhere", operator=">=", threshold=1.0)
+
+    _chosen, record = coverage_seed(sweep, [_GAIN, ghost], CoverageConfig(epsilon=0.0, tau=1.0))
+
+    assert record["dropped"] == []
