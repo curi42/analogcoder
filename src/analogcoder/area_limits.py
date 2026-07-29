@@ -498,7 +498,9 @@ class AreaCheckResult:
     states: dict[str, str]
 
 
-def _last_write_wins(proposed_changes: list[dict]) -> list[dict]:
+def _last_write_wins(
+    baseline_components: dict[str, Component], proposed_changes: list[dict]
+) -> list[dict]:
     """한 제안 안에 같은 (refdes, param)이 두 번 있으면 **마지막 것만** 남긴다.
 
     apply_changes가 변경들을 순서대로 적용하면서 같은 물리 줄의 같은 토큰을
@@ -513,12 +515,30 @@ def _last_write_wins(proposed_changes: list[dict]) -> list[dict]:
     합치는 규칙을 여기 한 줄로 두는 이유가 그것이다 - 곱 계산 자리에 흩어
     두면 다음 사람이 다시 재발명한다.
 
-    키는 문자열 그대로다. 같은 소자를 서로 다른 표기로 쓴 두 항목(`M6`과
-    `AMP.M6`)은 합쳐지지 않는데, 그것은 apply_changes도 두 번 적용하는
-    별개의 사실이고 여기서 추측으로 이어 붙일 것이 아니다."""
-    collapsed: dict[tuple[str, str], dict] = {}
+    **키는 소자의 정체성이다, 문자열이 아니다.** 같은 소자를 서로 다른 표기로
+    쓴 두 항목(`M6`과 `AMP.M6`)도 하나로 합쳐진다. 이것은 추측이 아니라 실행이
+    확인한 사실이다 - `apply_changes(deck, [{M6,W,200u}, {AMP.M6,W,44u}])` 뒤
+    덱에 남는 줄은 `M6 … W=44u …` **하나**이고(1.1x), 두 write가 같은 물리 줄을
+    덮으므로 합친 경우와 정확히 같다. 그런데 문자열로 키를 잡던 판은 두 항목을
+    곱해 `grows area by 5.00x`로 **거짓 거부**했고 그 문자열이 튜너 프롬프트로
+    갔다 - 이 함수가 없애려던 바로 그 경로다.
+
+    (이 자리에는 한때 "합쳐지지 않는다, apply_changes도 두 번 적용하는 별개의
+    사실이므로"라고 적혀 있었다. 위 실행이 그 근거를 반증한다. 근거가 틀린 채로
+    남아 있으면 다음 사람이 그것을 읽고 같은 결론을 다시 내린다.)
+
+    정체성은 `baseline_components`가 준다 - 두 표기가 **같은 `Component`
+    객체**로 매핑된다. 해소되지 않는 refdes는 문자열 키로 남긴다(합칠 근거가
+    없으므로 추측하지 않는다)."""
+    collapsed: dict[tuple, dict] = {}
     for change in proposed_changes:
-        key = (change["refdes"], change["param"])
+        component = baseline_components.get(change["refdes"])
+        # 해소되면 소자 정체성, 아니면 문자열. `id()`가 아니라 객체 자체를
+        # 키에 넣지 않는 이유는 `Component`가 해시 가능하지 않을 수 있기
+        # 때문이고, `baseline_components`가 이 호출 동안 살아 있으므로
+        # `id()`의 재사용 위험은 없다.
+        identity = id(component) if component is not None else change["refdes"]
+        key = (identity, change["param"])
         collapsed.pop(key, None)
         collapsed[key] = change
     return list(collapsed.values())
@@ -547,7 +567,7 @@ def evaluate_area_growth(
     groups: dict[tuple, _Group] = {}
     states: dict[str, str] = {}
 
-    for change in _last_write_wins(proposed_changes):
+    for change in _last_write_wins(baseline_components, proposed_changes):
         refdes = change["refdes"]
         param = change["param"]
         state_key = f"{refdes}.{param}"

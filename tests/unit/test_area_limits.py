@@ -1094,16 +1094,67 @@ def test_the_same_refdes_and_param_twice_in_one_proposal_is_not_counted_twice():
 
 
 def test_a_duplicated_change_is_judged_on_the_value_that_survives_in_the_deck():
-    # 값이 다른 중복이면 마지막 것만 덱에 남으므로, 게이트도 마지막 것만 본다.
+    """**두 값이 서로 다른 판정을 받아야 이 테스트가 무언가를 잡는다.**
+    이전 판은 72u/76u(1.8x/1.9x)를 썼는데 둘 다 2.0x 티어를 통과하므로
+    first-write-wins 구현에서도 통과했다 - 이름이 주장하는 사실을 하나도
+    고정하지 않았다(감사 §3.15가 다른 모듈에서 지적한 바로 그 모양).
+
+    72u(1.8x, 통과)와 100u(2.5x, 거부)를 쓰면 어느 쪽이 살아남았는지가
+    판정으로 드러난다. 곱셈 구현(1.8 x 2.5 = 4.5x)과도 다른 값이므로
+    ratio^2 회귀도 같이 잡는다."""
     components = index_baseline_components(NETLIST_WITH_SUBCKT)
 
     result = evaluate_area_growth(
         components,
         [
             {"refdes": "AMP.M6", "param": "W", "new_value": "72u"},
-            {"refdes": "AMP.M6", "param": "W", "new_value": "76u"},
+            {"refdes": "AMP.M6", "param": "W", "new_value": "100u"},
         ],
     )
 
+    assert result.approved is False
+    assert "2.50x" in result.feedback
+
+
+def test_the_same_device_under_two_spellings_is_one_device():
+    """`M6`과 `AMP.M6`는 같은 물리 줄을 가리킨다 - 직접 실행으로 확인했다:
+    `apply_changes(deck, [{M6,W,200u}, {AMP.M6,W,44u}])` 뒤 덱에 남는 줄은
+    `W=44u` **하나**다(1.1x). 그런데 게이트는 두 항목을 곱해
+    `grows area by 5.00x`로 **거짓 거부**했고, 그 문자열이 튜너 프롬프트로
+    갔다 - 이 수정이 없애려던 바로 그 경로다.
+
+    `_last_write_wins`의 옛 독스트링은 이 둘이 합쳐지지 않는 근거로
+    "apply_changes도 두 번 적용하는 별개의 사실"이라고 적었는데, 위 실행이
+    그것을 반증한다. 추측이 아니라 사실로 잇는다: `baseline_components`가
+    두 표기를 **같은 `Component` 객체**로 매핑하므로 소자 정체성이 키다."""
+    components = index_baseline_components(NETLIST_WITH_SUBCKT)
+    assert components.get("M6") is components.get("AMP.M6")
+
+    result = evaluate_area_growth(
+        components,
+        [
+            {"refdes": "M6", "param": "W", "new_value": "200u"},
+            {"refdes": "AMP.M6", "param": "W", "new_value": "44u"},
+        ],
+    )
+
+    # 덱에 남는 것은 44u = 1.1x 뿐이다.
     assert result.approved is True
     assert result.feedback is None
+
+
+def test_two_genuinely_different_devices_are_still_two():
+    """정체성으로 합치는 것이 **서로 다른 소자**를 합쳐 버리면 안 된다 -
+    그러면 게이트가 성장을 놓친다."""
+    components = index_baseline_components(NETLIST_WITH_SUBCKT)
+
+    result = evaluate_area_growth(
+        components,
+        [
+            {"refdes": "AMP.M6", "param": "W", "new_value": "44u"},
+            {"refdes": "AMP.M6", "param": "L", "new_value": "3u"},
+        ],
+    )
+
+    # 같은 소자의 서로 다른 파라미터는 곱해진다(1.1 x 3.0 = 3.3x).
+    assert result.approved is False
