@@ -266,12 +266,33 @@ def run_side(
     `record`와 `meta`를 가르는 것이 중요하다. record는 **결정론적이어야 하는**
     모든 것이고, meta는 그렇지 않은 것(벽시계, 경로)이다. 자기 검사는 record만
     비교한다 - meta를 섞으면 검사가 언제나 실패해 아무 말도 하지 않게 된다."""
+    if corner_regime is not None:
+        # **거부를 `main()`에만 두지 않는다.** `main()`의 인자 검증은 이
+        # 스크립트를 CLI로 부를 때만 지난다 - 이 모듈을 직접 import해서
+        # `run_side`를 부르면(예: 다른 스크립트, 노트북, 미래의 하니스) 그
+        # 검증을 완전히 건너뛴다. `run_side` 자신은 `corner_regime`을 record의
+        # 라벨에만 쓰고(`build_agents`에 넘기지 않는다 - 아래를 보라) 실제 코너
+        # 선택에는 전혀 반영하지 않으므로, 조용히 통과시키면 두 쪽이 실제로는
+        # 같은(argmax) 코너로 돌면서 기록에는 서로 다른 체제 이름이 실려
+        # 격자의 셀 하나가 통째로 거짓이 된다 - 이 저장소가 세는 조용히
+        # 무력한 게이트 #11이 정확히 이 모양이었다.
+        raise ValueError(
+            f"run_side()가 argmax가 아닌 코너 체제({corner_regime!r})를 받았다: "
+            "이 하니스는 run_optimization을 직접 부르고 corner_reduction의 "
+            "중간-루프 코너 축소(corner_sim.build_corner_simulate)를 거치지 "
+            "않으므로 coverage 체제를 실제로 적용할 수 없다 - corner_regime은 "
+            "record의 라벨에만 쓰이고 회로가 도는 방식은 전혀 바뀌지 않는다. "
+            "run_side가 cli.py처럼 corner_selection.seed_from_sweep / "
+            "corner_sim.build_corner_simulate 를 거치도록 고쳐야 이 값을 "
+            "받을 수 있다."
+        )
     spec = load_spec(args.spec)
-    # **coverage로 spec.corner_reduction을 고쳐 쓰지 않는다.** `main()`이 이미
-    # coverage 체제를 시작 전에 거부하므로 `corner_regime`은 여기서 항상
-    # None이다 - 그 스펙 변형(dataclasses.replace)이 여기 남아 있으면
-    # `run_optimization`이 애초에 읽지도 않는 필드를 조용히 고쳐 놓고, record의
-    # `corner_regime` 문자열만 다른 이름을 다는 것을 다시 열어 두는 셈이 된다.
+    # **coverage로 spec.corner_reduction을 고쳐 쓰지 않는다.** 위 가드와
+    # `main()`의 인자 검증이 함께 coverage 체제를 시작 전에 거부하므로
+    # `corner_regime`은 이 지점에서 항상 None이다 - 그 스펙 변형
+    # (dataclasses.replace)이 여기 남아 있으면 `run_optimization`이 애초에
+    # 읽지도 않는 필드를 조용히 고쳐 놓고, record의 `corner_regime` 문자열만
+    # 다른 이름을 다는 것을 다시 열어 두는 셈이 된다.
     texts = load_deck(spec)
     run_dir = os.path.join(out_dir, f"{side}_{strategy_name}")
     os.makedirs(run_dir, exist_ok=True)
@@ -406,8 +427,18 @@ def main(argv=None) -> int:
         type=parse_corner_regime,
         default=[],
         metavar="argmax|coverage:EPS:TAU",
+        # **coverage:EPS:TAU는 파싱만 된다 - 오늘은 받아들여지지 않는다.**
+        # 예전 문구는 metavar가 coverage 형식을 광고하면서 help는 아무 말도
+        # 안 해서, "받는 것처럼" 보이고 실제로는 main()이 거부하는 격차가
+        # 있었다. run_side가 run_optimization을 직접 부르고
+        # corner_reduction의 중간-루프 축소를 거치지 않는 한(cli.py처럼
+        # seed_from_sweep/corner_sim.build_corner_simulate를 타지 않는 한)
+        # coverage는 시작 전에 거부된다 - 그 사실을 문구 자체에 적는다.
         help="쪽마다의 코너 체제. 전략과 마찬가지로 정확히 두 번 준다. "
-             "생략하면 양쪽 다 argmax.",
+             "생략하면 양쪽 다 argmax. coverage:EPS:TAU 형식은 파싱은 되지만 "
+             "이 하니스가 아직 corner_reduction의 중간-루프 축소를 거치지 "
+             "않으므로 argmax가 아니면 시작 전에 거부된다(reject) - "
+             "run_side가 cli.py처럼 seed_from_sweep을 거치게 된 뒤에 열린다.",
     )
     parser.add_argument("--max-steps", type=int, default=optimizer_module.MAX_OPTIMIZE_STEPS,
                         help="시뮬레이션 예산(탐색 단계 수). 양쪽에 같은 값이 간다.")

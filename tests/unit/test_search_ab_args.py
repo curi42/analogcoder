@@ -55,6 +55,42 @@ def test_a_coverage_regime_is_refused_by_the_cli(tmp_path):
         main(argv)
 
 
+def test_run_side_itself_refuses_a_non_argmax_regime(tmp_path):
+    """T3(a): 거부가 `main()`에만 있으면 이 모듈을 직접 import해서 `run_side`를
+    부르는 경로가 뚫린다 - 두 쪽이 같은 회로를 돌면서 기록의 `corner_regime`
+    문자열만 다른 체제라고 주장하게 된다(#11이 정확히 이 모양이었다).
+    `run_side`는 스펙을 읽기도 전에 이 자리에서 스스로 거부해야 한다."""
+    from search_ab import run_side
+
+    from analogcoder.spec import CoverageConfig
+
+    class FakeArgs:
+        spec = "does-not-need-to-exist.yaml"
+        max_steps = 5
+        sim_timeout = 10
+
+    with pytest.raises(ValueError):
+        run_side(
+            "a", "coordinate_descent", FakeArgs(), [],
+            str(tmp_path), CoverageConfig(epsilon=0.03, tau=1.0),
+        )
+
+
+def test_help_text_admits_that_coverage_is_rejected_before_it_is_wired_up(capsys):
+    """T3(b): `metavar`와 help가 coverage를 받아들이는 것처럼 광고하는데
+    `main()`은 그것을 거부한다 - 문구가 사실과 맞아야 한다. `parse_corner_regime`
+    자체는 계속 coverage 문자열을 파싱할 수 있어야 하므로(위 테스트들), 여기서
+    확인하는 것은 CLI가 사용자에게 하는 약속이 실제 동작과 맞는지다."""
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    help_text = capsys.readouterr().out
+    assert "coverage" in help_text
+    # coverage가 오늘 실제로 거부된다는 사실이 help 문구 자체에 있어야 한다 -
+    # "받는 것처럼" 광고만 하고 그 뒤 main()이 조용히 막는 것은 문구가 거짓말을
+    # 하는 것과 같다.
+    assert "거부" in help_text or "reject" in help_text.lower()
+
+
 def test_argmax_on_both_sides_is_still_accepted_by_the_parser(tmp_path):
     """회귀 안전선: 위 테스트가 --corner-regime 자체를 항상 거부하도록
     지나치게 넓게 고쳐지지 않았는지 확인한다."""
