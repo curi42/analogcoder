@@ -17,6 +17,8 @@ from analogcoder.cli import (
     _run,
     build_arg_parser,
 )
+from analogcoder.corner_selection import CornerSet
+from analogcoder.pvt import CornerPoint
 
 # 최적화 단계가 시뮬레이션 결과를 어떻게 읽는지를 그대로 상대로 삼는다.
 # cli.py가 만드는 status를 optimizer가 실제로 거절하는지까지 확인하지 않으면,
@@ -1368,6 +1370,120 @@ async def test_a_failure_that_adds_no_new_corner_is_reported_as_a_path_disagreem
     # 사유는 원래의 스윕 실패도 함께 말해야 한다 - 불일치는 그 위에 얹힌 사실이다.
     assert "one or more criteria failed" in result["failure_reason"]
     assert len(_history_events(run_dir, "corner_path_disagreement")) == 1
+
+
+def _judged_snapshot_build_corner_simulate(promoted_raw: dict | None = None):
+    """corner_sim.build_corner_simulate 자리에 들어가는 대역.
+
+    실제 build_corner_simulate는 매 simulate_fn 호출마다 판정 직전 집합을
+    corner_state.last_judged_corners에 스냅샷하고, 탐침이 실패하면 *그 뒤에*
+    corner_set을 승격한다. 이 테스트들은 run_orchestration 자체를 대역으로
+    바꾸므로 실제 simulate_fn은 한 번도 불리지 않는다 - 그래서 그 동작을
+    여기서 손으로 재현한다: 호출 시점에 스냅샷을 찍고(`promoted_raw`가 있으면
+    그 찍는 시점 *이후에* 승격을 흉내 낸다), corner_state.corner_set과
+    last_judged_corners를 실제 코드가 만들 수 있는 모양으로 정확히 갈라 둔다.
+    반환하는 simulate_fn이 불리면 이 가정이 깨진 것이므로 즉시 실패시킨다."""
+
+    def factory(agent_simulate_fn, sim_backend, state, corner_state, log_event, max_workers=None):
+        corner_state.last_judged_corners = frozenset(
+            cli.label(p) for p in corner_state.corner_set.corners
+        )
+        if promoted_raw is not None:
+            new_point = CornerPoint(
+                process=promoted_raw["process"],
+                voltage=promoted_raw["voltage"],
+                temperature=promoted_raw["temperature"],
+            )
+            corner_state.corner_set = CornerSet(
+                corners=(*corner_state.corner_set.corners, new_point),
+                probe_order=tuple(
+                    p for p in corner_state.corner_set.probe_order if p != new_point
+                ),
+            )
+
+        async def simulate_fn(netlist_texts, spec):
+            raise AssertionError(
+                "simulate_fn should never be called - run_orchestration is mocked "
+                "in this test, so reaching here means the test's assumptions broke"
+            )
+
+        return simulate_fn
+
+    return factory
+
+
+@pytest.mark.asyncio
+async def test_a_corner_already_judged_when_it_failed_stays_a_path_disagreement(tmp_path):
+    # (a) 갈래: 실패한 코너가 **마지막 판정 시점에도 이미** 집합 안에 있었다면
+    # (탐침 승격이 끼어들지 않았다면) 이것은 진짜 경로 불일치이고, 새 진단이
+    # 이 경우를 재진입으로 바꿔서는 안 된다. last_judged_corners를 명시적으로
+    # 채워서 "판정한 적 없다"는 핑계가 성립하지 않는 상태를 만든다 - 그냥
+    # None으로 두면(기존 test_a_failure_that_adds_no_new_corner_...와 동일)
+    # 이 테스트가 실제로 무엇을 가르는지 증명하지 못한다.
+    run_dir = str(tmp_path / "runs" / "c_reentry_a")
+    entry = _sweep({"gain": _wc("fs", 41.0)})            # 씨앗 = {NOMINAL, fs}
+    verdict = _sweep({"gain": _wc("fs", 12.0)}, failing=["gain"])   # 이미 집합 안이고 이미 판정됨
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], orch_calls)),
+        patch("analogcoder.cli.build_corner_simulate",
+              new=_judged_snapshot_build_corner_simulate(promoted_raw=None)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 1
+    assert result["corner_reduction"]["attempts"] == 0
+    assert result["corner_reduction"]["path_disagreement"] is not None
+    assert result["corner_reduction"]["path_disagreement"]["criteria"] == ["gain"]
+    assert len(_history_events(run_dir, "corner_path_disagreement")) == 1
+    assert _history_events(run_dir, "corner_probe_promotion_reentry") == []
+    assert result["status"] == "FAIL"
+
+
+@pytest.mark.asyncio
+async def test_a_corner_promoted_after_the_last_judgment_re_enters_instead_of_a_false_path_disagreement(
+    tmp_path,
+):
+    # (b) 갈래: 탐침이 실패한 코너를 승격시켰지만 그 이터레이션의 판정자는
+    # 승격 **이전** 집합으로 판정했다(corner_sim.py 실측 동작). 그 코너에서
+    # 판정 스윕이 실패하면 corner_set 안에는 이미 있으니 grown_with는 더할
+    # 것이 없다고 답하지만, 그 코너는 last_judged_corners에는 없다 - 새
+    # 정보이므로 경로 불일치가 아니라 재진입해야 한다.
+    run_dir = str(tmp_path / "runs" / "c_reentry_b")
+    entry = _sweep({"gain": _wc("fs", 41.0)})             # 씨앗 = {NOMINAL, fs}
+    promoted = _wc("ss", 12.0, voltage=1.98, temperature=125.0)
+    # 판정 스윕은 승격된(그러나 아직 판정된 적 없는) ss에서 실패한다.
+    verdict_fail = _sweep({"pm": promoted}, failing=["pm"])
+    verdict_pass = _sweep({"pm": _wc("ss", 55.0, voltage=1.98, temperature=125.0)})
+
+    sweep_calls: list = []
+    orch_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail, verdict_pass], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence(
+                  [_pass_result(run_dir), _pass_result(run_dir)], orch_calls
+              )),
+        patch("analogcoder.cli.build_corner_simulate",
+              new=_judged_snapshot_build_corner_simulate(promoted_raw=promoted)),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert len(orch_calls) == 2                       # 재진입이 실제로 일어났다
+    assert result["corner_reduction"]["path_disagreement"] is None
+    assert _history_events(run_dir, "corner_path_disagreement") == []
+    reentry_events = _history_events(run_dir, "corner_probe_promotion_reentry")
+    assert len(reentry_events) == 1
+    assert reentry_events[0]["criteria"] == ["pm"]
+    assert reentry_events[0]["corners"] == ["ss/1.98/125.0"]
+    assert "new information" in result.get("failure_reason", "") or result["status"] == "PASS"
+    assert result["status"] == "PASS"
 
 
 @pytest.mark.asyncio

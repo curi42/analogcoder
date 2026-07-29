@@ -972,10 +972,60 @@ async def _run(args) -> dict:
             # 주장을 하게 된다.
             attributed = [(name, raw_label(worst[name])) for name in failing_names if name in worst]
             if attributed:
-                # **경로 불일치.** 실패한 코너가 전부 이미 중간 루프의 집합 안에
-                # 있다면, 두 실행 경로가 같은 덱의 같은 코너를 두고 서로 다른 말을
-                # 하고 있는 것이다. 재시도해 봐야 같은 정보로 같은 결과를 낼 뿐이니
-                # 무한 루프가 될 자리를 진단으로 바꾼다.
+                # **"지금 집합 안"과 "마지막으로 판정한 시점의 집합 안"은 다른
+                # 사실이다.** 탐침 승격은 그 코너를 *다음* 이터레이션을 위해
+                # corner_set에 넣지만, 그 이터레이션의 판정자는 승격 **이전**
+                # 집합으로 판정한다(corner_sim.build_corner_simulate). 그래서
+                # 마지막 판정 이후에 승격된 코너는 지금 집합에는 있어도 아직
+                # 한 번도 판정된 적이 없다 - 거기서 실패가 나는 것은 두 경로가
+                # 의견이 갈린 것이 아니라, 중간 루프가 그 코너를 판정 대상에
+                # 넣은 적이 없다는 것뿐이다. last_judged_corners가 None이면
+                # (corner_sim이 아예 한 번도 안 돌았다는 뜻은 오늘 이 자리에
+                # 도달하지 않지만) 판단할 근거가 없으므로 안전한 방향인 기존
+                # 경로 불일치로 접는다.
+                judged = corner_state.last_judged_corners
+                stale = [
+                    (name, corner) for name, corner in attributed
+                    if judged is not None and corner not in judged
+                ]
+                if stale:
+                    # (b) **탐침 승격 재진입.** corner_set은 이미 그 코너를
+                    # 담고 있으므로 grown_with가 더할 것은 없지만, 그 코너는
+                    # 아직 판정된 적이 없는 새 정보다 - retry_budget 안에서
+                    # 재진입한다. 다음 라운드에는 그 코너가 실제로 판정
+                    # 대상이므로 (a) 경로 불일치이거나 수렴, 둘 중 하나다.
+                    promotion_reentry = {
+                        "criteria": [name for name, _ in stale],
+                        "corners": [corner for _, corner in stale],
+                    }
+                    state.log_event("corner_probe_promotion_reentry", promotion_reentry)
+                    pairs = ", ".join(f"{name} at {corner}" for name, corner in stale)
+                    result["failure_reason"] += (
+                        f" - {pairs} entered the mid-loop corner set via probe "
+                        f"promotion after the judge last saw it; this is new "
+                        f"information, not a repeated disagreement, so the run "
+                        f"re-enters with the corner now judged"
+                    )
+                    attempt += 1
+                    state.log_event(
+                        "corner_set_grown",
+                        {
+                            "attempt": attempt,
+                            "added": [],
+                            "failing_criteria": failing_names,
+                            "size": len(corner_state.corner_set.corners),
+                            "area_baseline_reanchored": True,
+                            "area_baselines_so_far": attempt + 1,
+                            "reason": "probe_promotion",
+                        },
+                    )
+                    _save(BOUNDARY_ATTEMPT)
+                    continue
+                # (a) **경로 불일치.** 실패한 코너가 전부 마지막으로 판정한
+                # 시점에도 이미 집합 안에 있었다면, 두 실행 경로가 같은 덱의
+                # 같은 코너를 두고 서로 다른 말을 하고 있는 것이다. 재시도해
+                # 봐야 같은 정보로 같은 결과를 낼 뿐이니 무한 루프가 될 자리를
+                # 진단으로 바꾼다.
                 path_disagreement = {
                     "criteria": [name for name, _ in attributed],
                     "corners": [corner for _, corner in attributed],
@@ -984,9 +1034,10 @@ async def _run(args) -> dict:
                 pairs = ", ".join(f"{name} at {corner}" for name, corner in attributed)
                 result["failure_reason"] += (
                     f" - path disagreement: every failing corner was already in the "
-                    f"mid-loop corner set ({pairs}), so the mid-loop and the verdict "
-                    f"sweep judged the same deck at the same corner differently; "
-                    f"retrying would re-run identical information"
+                    f"mid-loop corner set at the time it was last judged ({pairs}), "
+                    f"so the mid-loop and the verdict sweep judged the same deck at "
+                    f"the same corner differently; retrying would re-run identical "
+                    f"information"
                 )
             else:
                 # 실패한 기준 어느 것에도 최악 코너가 붙지 않았다.

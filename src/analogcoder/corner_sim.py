@@ -25,6 +25,22 @@ class CornerState:
     필요하고, cli.py의 재진입 루프는 같은 상자를 계속 들고 있어야 한다."""
 
     corner_set: CornerSet
+    # **판정자가 실제로 본 코너 집합의 스냅샷 - 승격 이전.**
+    #
+    # "지금 corner_set 안"과 "마지막으로 판정한 시점에 corner_set 안"은 다른
+    # 사실이다. 탐침이 실패하면 그 코너는 *다음* 이터레이션을 위해 승격되지만,
+    # 같은 이터레이션의 판정자는 승격 이전 집합의 최악값을 받는다(아래
+    # simulate_fn, `worst_case_measurements` 호출 직후). 그래서 승격된 코너는
+    # 판정을 받은 적이 한 번도 없는 채로 corner_set 안에 들어와
+    # 있을 수 있다 - cli.py가 판정 스윕의 실패를 "경로 불일치"로 오진하지
+    # 않으려면 이 구별이 필요하다(그 코너에서 중간 루프와 판정 스윕이 실제로
+    # 다른 말을 했는지, 아니면 중간 루프가 애초에 그 코너를 본 적이 없는지).
+    #
+    # 코너가 아니라 **라벨 문자열**의 frozenset으로 담는다 - cli.py가
+    # `worst_case_corners`에서 되읽는 것도 `raw_label`이 만드는 같은 문자열이고
+    # (`label`/`raw_label`은 바이트 동일을 약속한다), CornerPoint 객체를
+    # 재구성하는 것보다 그 계약을 그대로 재사용하는 편이 안전하다.
+    last_judged_corners: "frozenset[str] | None" = None
     # **최적화 탐색이 도는 동안 회전을 멈춘다.**
     #
     # 최적화기는 이 상자를 메인 루프와 **일부러** 공유한다(선택 집합이 갈라지면
@@ -305,6 +321,12 @@ def build_corner_simulate(
             measurements, corner_worst = worst_case_measurements(
                 list(cs.corners), [per_point[p] for p in cs.corners], spec.all_criteria
             )
+
+            # **이 판정이 실제로 본 집합을 승격 이전에 찍어 둔다.** 아래에서
+            # 탐침이 실패하면 `cs`가 승격되어 재배정되지만, 방금 계산한
+            # measurements/corner_worst는 승격 이전 집합의 최악값이다 - 스냅샷은
+            # 그 사실을 그대로 담아야 한다.
+            corner_state.last_judged_corners = frozenset(label(p) for p in cs.corners)
 
             # 탐침의 판정·승격·기록은 테스트벤치 루프가 **끝난 뒤** 정확히 한 번이다.
             # 루프 안으로 들어가면 테스트벤치 하나 분량의 측정값으로 판정하게 되어
