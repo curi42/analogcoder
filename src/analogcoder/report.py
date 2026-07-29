@@ -156,6 +156,47 @@ def _topology_lines(swaps: list | None) -> list[str]:
     return lines
 
 
+def _resume_lines(resumed_from: dict | None) -> list[str]:
+    """재개한 실행에만 그린다. 재개하지 않았으면 빈 목록 - 최적화/코너 축소
+    섹션과 같은 규칙이다(돌지 않은 단계에 빈 섹션을 그리면 "돌았는데 아무것도
+    못 했다"로 읽힌다).
+
+    **result.json 쪽은 반대다**: `resumed_from`은 재개하지 않은 실행에도
+    `null`로 항상 실린다. "재개 안 함"과 "필드가 사라짐"이 같은 모양이면 안
+    되기 때문이고, `topology_swaps`가 항상 실리는 것과 같은 이유다.
+
+    버려진 줄 수를 함께 적는 이유: 부분 런이 온전한 런처럼 측정 데이터에 들어간
+    것이 D1 측정이 무효가 된 원인의 절반이었다. 재개 여부가 결과에서 안 보이면
+    이 기능은 측정 장치를 고치는 게 아니라 망가뜨린다."""
+    if not resumed_from:
+        return []
+
+    lines = [
+        "",
+        "## Resume",
+        "",
+        f"**Resumed at:** the `{resumed_from.get('boundary')}` boundary "
+        f"(attempt {resumed_from.get('attempt')}, iteration {resumed_from.get('outer_iter')})",
+        f"**Checkpoint:** `{resumed_from.get('checkpoint_path')}`",
+    ]
+    discarded = resumed_from.get("discarded_lines")
+    # 빈 범위([40, 40])는 "버린 것이 없다"이지 "40-39번 줄"이 아니다.
+    if discarded and discarded[1] > discarded[0]:
+        lines.append(
+            f"**Abandoned history lines:** {discarded[1] - discarded[0]} "
+            f"(`history.jsonl` lines {discarded[0]}-{discarded[1] - 1}) - the log is not "
+            f"truncated; `analogcoder.history.read_events` drops that range so a "
+            f"half-finished iteration is not counted twice"
+        )
+    else:
+        lines.append(
+            "**Abandoned history lines:** 0 - the run died before writing any event "
+            "past the checkpoint"
+        )
+    lines.append(f"**Resumes so far (this run dir):** {resumed_from.get('resume_count')}")
+    return lines
+
+
 def write_report_md(run_dir: str, result: dict) -> str:
     lines = [
         "# Run Report",
@@ -174,6 +215,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
     for c in result["final_criteria"]:
         mark = "PASS" if c["pass"] else "FAIL"
         lines.append(f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} (margin {c['margin']})")
+    lines += _resume_lines(result.get("resumed_from"))
     lines += _topology_lines(result.get("topology_swaps"))
     lines += _optimization_lines(result.get("optimization"))
     lines += _corner_reduction_lines(result.get("corner_reduction"))

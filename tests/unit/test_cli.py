@@ -99,7 +99,7 @@ def _orchestration(result, captured: dict | None = None):
     현재 덱 대신 원본을 넘기는 배선 실수가 그 상태에서는 아무 테스트도 깨지
     않고, 실제 실행에서는 튜닝 결과를 통째로 버린 덱이 확정되고 보고된다."""
 
-    async def fake(initial_netlist_texts, spec, state, agents):
+    async def fake(initial_netlist_texts, spec, state, agents, **kwargs):
         state.push_netlist_version(initial_netlist_texts)
         state.push_netlist_version({name: TUNED_TEXT for name in initial_netlist_texts})
         if captured is not None:
@@ -279,7 +279,7 @@ async def test_run_passes_one_netlist_text_per_testbench_to_run_orchestration(tm
 
     captured = {}
 
-    async def fake_run_orchestration(initial_netlist_texts, spec, state, agents):
+    async def fake_run_orchestration(initial_netlist_texts, spec, state, agents, **kwargs):
         state.push_netlist_version(initial_netlist_texts)
         captured["texts"] = initial_netlist_texts
         return {
@@ -1050,7 +1050,7 @@ def _orchestration_sequence(results, calls: list):
     만드는데, cli는 그 dict를 제자리에서 고친다(status를 FAIL로 뒤집는다).
     같은 객체를 두 번 주면 첫 시도의 FAIL이 두 번째 시도의 결과에 남는다."""
 
-    async def fake(initial_netlist_texts, spec, state, agents):
+    async def fake(initial_netlist_texts, spec, state, agents, **kwargs):
         calls.append(dict(initial_netlist_texts))
         state.push_netlist_version(initial_netlist_texts)
         state.push_netlist_version({name: TUNED_TEXT for name in initial_netlist_texts})

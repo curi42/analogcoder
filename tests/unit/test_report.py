@@ -287,3 +287,59 @@ def test_write_report_md_says_nothing_about_topology_when_no_swap_happened(tmp_p
     with open(path) as f:
         content = f.read()
     assert "Topology" not in content
+
+
+# ---------------------------------------------------------------- 재개
+
+
+def test_a_run_that_was_not_resumed_draws_no_resume_section(tmp_path):
+    """`resumed_from`은 결과에 **항상** 실리지만(null 포함), 리포트는 재개한
+    실행에만 섹션을 그린다 - 최적화/코너 축소 섹션과 같은 규칙이다."""
+    result = {**SAMPLE_RESULT, "resumed_from": None}
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "## Resume" not in content
+
+
+def test_a_resumed_run_says_where_it_resumed_and_what_was_abandoned(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "resumed_from": {
+            "boundary": "outer_iteration",
+            "attempt": 0,
+            "outer_iter": 3,
+            "checkpoint_path": "runs/abc123/checkpoint.json",
+            "discarded_lines": [42, 53],
+            "discarded_events": 11,
+            "resume_count": 1,
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "## Resume" in content
+    assert "outer_iteration" in content
+    assert "iteration 3" in content
+    assert "Abandoned history lines:** 11" in content
+    assert "lines 42-52" in content
+    assert "Resumes so far (this run dir):** 1" in content
+
+
+def test_a_resume_that_abandoned_nothing_says_so(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "resumed_from": {
+            "boundary": "attempt",
+            "attempt": 1,
+            "outer_iter": None,
+            "checkpoint_path": "runs/abc123/checkpoint.json",
+            "discarded_lines": [40, 40],
+            "discarded_events": 0,
+            "resume_count": 2,
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "Abandoned history lines:** 0" in content

@@ -1,0 +1,454 @@
+"""중단된 실행을 **측정 가능한 것**으로 바꾸는 체크포인트.
+
+편의 기능이 아니다. 실측 근거 두 개:
+
+- `after/two_stage-2` 실행이 iteration 3에서 agent execution error로 죽어
+  `iterations_used: 2`로 끝났다. 1348초가 통째로 버려졌고, D1 측정에서 그 부분
+  실행이 온전한 실행과 나란히 평균에 들어갈 뻔했다.
+- 온전한 실행 비용: `two_stage_opamp` 10 iteration = 6161 s(~103분), bandgap
+  코너 앵커 최적화 = 1790 s. 이 규모에서 중단은 재현 비용이 시간 단위다.
+
+**재개는 경계에서만 한다.** 세 경계뿐이고, 이터레이션 중간 재개는 범위 밖이다 -
+LLM 호출을 리플레이해야 하고 그건 새 정합성 문제를 만든다. 경계 재개의 최악은
+이터레이션 하나를 다시 도는 것이고, 그건 받아들일 수 있는 값이다.
+
+1. `orchestrator.run_orchestration`의 outer iteration 시작
+2. `cli`의 코너 축소 재진입 attempt 시작
+3. 메인 루프 종료 -> 최적화 단계 진입
+
+**최적화 단계는 자체 버전 스택과 이분 탐색을 갖고 있으므로 재개 시 처음부터
+다시 돈다** - 경계 3에서 재개하면 메인 루프만 건너뛴다. 이 결정은 의도적이며,
+"최적화 도중 재개"를 나중에 넣으려는 시도는 그 단계의 버전 스택/이분 탐색
+불변식을 통째로 다시 논증해야 한다.
+
+**파생 가능한 것은 담지 않는다**: `baseline_components`(netlist_v0에서 다시
+만든다), `structure`/`paths`(넷리스트에서), `measurement_by_criterion` /
+`nets_by_measurement`(spec에서). 담으면 두 소스가 어긋날 자리가 생기고, 이
+저장소는 그런 어긋남으로 이미 여러 번 값을 치렀다.
+"""
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass, field, replace
+
+from analogcoder.attempt_log import Attempt
+from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.pvt import CornerPoint
+from analogcoder.state import RunState
+
+CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_FILENAME = "checkpoint.json"
+
+BOUNDARY_OUTER_ITERATION = "outer_iteration"
+BOUNDARY_ATTEMPT = "attempt"
+BOUNDARY_OPTIMIZATION = "optimization"
+BOUNDARIES = (BOUNDARY_OUTER_ITERATION, BOUNDARY_ATTEMPT, BOUNDARY_OPTIMIZATION)
+
+
+class CheckpointRejected(Exception):
+    """재개를 거부한다 - 크래시가 아니라 무엇이 왜 어긋났는지 말하는 오류.
+
+    추측하지 않는다. 스펙이 바뀌었는데 중간부터 이으면 두 회로/두 기준의
+    측정이 한 결과에 섞인다 - 이 저장소가 `push_netlist_version`을 원자적으로
+    만든 것과 정확히 같은 이유다.
+    """
+
+
+@dataclass
+class LoopProgress:
+    """`run_orchestration`이 outer iteration 경계에서 반송하는 상태 **전부**.
+
+    `entry_netlist_paths`가 여기 있는 이유: 면적 게이트의 기준선은 이 호출이
+    **받은** 덱에서 잡힌다(`index_baseline_components(initial_netlist_texts)`).
+    재진입한 attempt는 원본이 아니라 직전 attempt가 끝낸 덱을 받으므로,
+    재개할 때 원본 파일을 다시 읽으면 기준선이 조용히 달라진다.
+    """
+
+    outer_iter: int
+    entry_netlist_paths: dict[str, str]
+    tried_topologies: set[tuple[str, str]] = field(default_factory=set)
+    consecutive_rollbacks: int = 0
+    tuning_history: list[Attempt] = field(default_factory=list)
+    topology_swaps: list[dict] = field(default_factory=list)
+    judge_result: dict = field(default_factory=dict)
+
+
+@dataclass
+class Checkpoint:
+    boundary: str
+    spec_path: str
+    spec_sha256: str
+    netlist_sha256: dict[str, str]
+    testbench_names: list[str]
+    netlist_versions: dict[str, list[str]]
+    # 이 시점의 history.jsonl 줄 수. 재개할 때 이 값부터 파일 끝까지가
+    # **버려진 이터레이션의 부분 이벤트**이며, resume 이벤트가 그 범위를
+    # 선언한다. 로그는 자르지 않는다 - 증거를 파괴하는 것은 답이 아니다.
+    history_lines: int
+    attempt: int = 0
+    all_topology_swaps: list[dict] = field(default_factory=list)
+    corner_set: CornerSet | None = None
+    # 시도별로 코너 집합에 더해진 코너 이름들. `corner_set`에서 파생되지
+    # **않는다** - 집합은 합쳐진 결과만 들고 있고, 어느 시도가 무엇을 더했는지는
+    # 거기서 되읽을 수 없다. 재개한 실행의 result가 이것을 잃으면 리포트가
+    # "성장 없음"이라고 말하면서 집합은 자라 있다.
+    grown_labels: list[list[str]] = field(default_factory=list)
+    progress: LoopProgress | None = None
+    orchestration_result: dict | None = None
+    schema_version: int = CHECKPOINT_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------- 해시
+
+
+def file_digest(path) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def spec_fingerprint(spec_path, spec) -> tuple[str, dict[str, str], list[str]]:
+    """스펙 파일 해시, 테스트벤치별 **원본 파일** 해시, 테스트벤치 이름.
+
+    해시는 `resolve_includes`를 거치기 **전** 파일 바이트에서 잡는다. 거친
+    뒤 텍스트는 `.include`가 절대경로로 바뀌어 있어서 cwd가 다른 자리에서
+    재개하면 같은 덱인데도 달라진다 - 그것은 회로가 바뀐 것이 아니므로
+    거부 사유가 되어서는 안 된다.
+    """
+    return (
+        file_digest(spec_path),
+        {tb.name: file_digest(tb.netlist_path) for tb in spec.testbenches},
+        [tb.name for tb in spec.testbenches],
+    )
+
+
+def build_checkpoint(
+    *,
+    boundary: str,
+    spec_path: str,
+    spec,
+    netlist_versions: dict[str, list[str]],
+    history_lines: int,
+    attempt: int = 0,
+    all_topology_swaps: list[dict] | None = None,
+    corner_set: CornerSet | None = None,
+    grown_labels: list[list[str]] | None = None,
+    progress: LoopProgress | None = None,
+    orchestration_result: dict | None = None,
+) -> Checkpoint:
+    spec_sha, netlist_sha, names = spec_fingerprint(spec_path, spec)
+    return Checkpoint(
+        boundary=boundary,
+        spec_path=os.path.abspath(spec_path),
+        spec_sha256=spec_sha,
+        netlist_sha256=netlist_sha,
+        testbench_names=list(names),
+        netlist_versions={name: list(paths) for name, paths in netlist_versions.items()},
+        history_lines=history_lines,
+        attempt=attempt,
+        all_topology_swaps=[dict(s) for s in (all_topology_swaps or [])],
+        corner_set=corner_set,
+        grown_labels=[list(g) for g in (grown_labels or [])],
+        progress=progress,
+        orchestration_result=orchestration_result,
+    )
+
+
+# ---------------------------------------------------------------- 직렬화
+
+
+def _attempt_payload(attempt: Attempt) -> dict:
+    return {
+        "outer_iter": attempt.outer_iter,
+        "retry": attempt.retry,
+        "refdes": attempt.refdes,
+        "param": attempt.param,
+        "old_value": attempt.old_value,
+        "new_value": attempt.new_value,
+        "outcome": attempt.outcome,
+        "reason": attempt.reason,
+        "detail": attempt.detail,
+        # deltas는 쌍의 튜플이다(frozen 안의 dict은 여전히 바뀌므로). JSON에는
+        # 리스트의 리스트로 나가고 되돌아올 때 다시 튜플이 된다 - Attempt가
+        # frozen이라 값 동등성으로 비교되며, 리스트로 되살리면 같은 시도가
+        # 같지 않게 된다.
+        "deltas": [[name, value] for name, value in attempt.deltas],
+        "regressed": list(attempt.regressed),
+    }
+
+
+def _attempt_from_payload(raw: dict) -> Attempt:
+    return Attempt(
+        outer_iter=raw["outer_iter"],
+        retry=raw["retry"],
+        refdes=raw["refdes"],
+        param=raw["param"],
+        old_value=raw["old_value"],
+        new_value=raw["new_value"],
+        outcome=raw["outcome"],
+        reason=raw.get("reason"),
+        detail=raw.get("detail"),
+        deltas=tuple((name, value) for name, value in raw.get("deltas", [])),
+        regressed=tuple(raw.get("regressed", [])),
+    )
+
+
+def _corner_payload(point: CornerPoint | None):
+    if point is NOMINAL:
+        return None
+    return {
+        "process": point.process,
+        "voltage": point.voltage,
+        "temperature": point.temperature,
+    }
+
+
+def _corner_from_payload(raw) -> CornerPoint | None:
+    if raw is None:
+        return NOMINAL
+    return CornerPoint(
+        process=raw["process"], voltage=raw["voltage"], temperature=raw["temperature"]
+    )
+
+
+def _corner_set_payload(corner_set: CornerSet | None):
+    if corner_set is None:
+        return None
+    return {
+        "corners": [_corner_payload(c) for c in corner_set.corners],
+        "probe_order": [_corner_payload(c) for c in corner_set.probe_order],
+        "probe_index": corner_set.probe_index,
+    }
+
+
+def _corner_set_from_payload(raw) -> CornerSet | None:
+    if raw is None:
+        return None
+    # **생성자를 거친다.** CornerSet.__post_init__의 네 불변식이 이 하위
+    # 프로젝트 전체가 딛고 선 기반이고, 그 docstring이 예상한 뒷문이 정확히
+    # "재개된 실행을 위한 역직렬화"다. probe_order에 이미 corners 안에 있는
+    # 코너가 남으면 next_probe가 그것을 또 골라 이 프로젝트가 막으려는
+    # 낭비된 시뮬레이션을 만든다.
+    return CornerSet(
+        corners=tuple(_corner_from_payload(c) for c in raw["corners"]),
+        probe_order=tuple(_corner_from_payload(c) for c in raw["probe_order"]),
+        probe_index=raw.get("probe_index", 0),
+    )
+
+
+def _progress_payload(progress: LoopProgress | None):
+    if progress is None:
+        return None
+    return {
+        "outer_iter": progress.outer_iter,
+        "entry_netlist_paths": dict(progress.entry_netlist_paths),
+        # set도 tuple도 JSON에 없다 - 리스트의 리스트로 왕복시킨다. 정렬해서
+        # 내보내는 것은 같은 상태가 같은 바이트를 내게 하기 위해서다.
+        "tried_topologies": sorted([list(pair) for pair in progress.tried_topologies]),
+        "consecutive_rollbacks": progress.consecutive_rollbacks,
+        "tuning_history": [_attempt_payload(a) for a in progress.tuning_history],
+        "topology_swaps": [dict(s) for s in progress.topology_swaps],
+        "judge_result": progress.judge_result,
+    }
+
+
+def _progress_from_payload(raw) -> LoopProgress | None:
+    if raw is None:
+        return None
+    return LoopProgress(
+        outer_iter=raw["outer_iter"],
+        entry_netlist_paths=dict(raw["entry_netlist_paths"]),
+        tried_topologies={(pair[0], pair[1]) for pair in raw.get("tried_topologies", [])},
+        consecutive_rollbacks=raw.get("consecutive_rollbacks", 0),
+        tuning_history=[_attempt_from_payload(a) for a in raw.get("tuning_history", [])],
+        topology_swaps=[dict(s) for s in raw.get("topology_swaps", [])],
+        judge_result=raw.get("judge_result") or {},
+    )
+
+
+def to_payload(checkpoint: Checkpoint) -> dict:
+    return {
+        "schema_version": checkpoint.schema_version,
+        "boundary": checkpoint.boundary,
+        "spec_path": checkpoint.spec_path,
+        "spec_sha256": checkpoint.spec_sha256,
+        "netlist_sha256": dict(checkpoint.netlist_sha256),
+        "testbench_names": list(checkpoint.testbench_names),
+        "netlist_versions": {n: list(p) for n, p in checkpoint.netlist_versions.items()},
+        "history_lines": checkpoint.history_lines,
+        "attempt": checkpoint.attempt,
+        "all_topology_swaps": [dict(s) for s in checkpoint.all_topology_swaps],
+        "corner_set": _corner_set_payload(checkpoint.corner_set),
+        "grown_labels": [list(g) for g in checkpoint.grown_labels],
+        "progress": _progress_payload(checkpoint.progress),
+        "orchestration_result": checkpoint.orchestration_result,
+    }
+
+
+def from_payload(payload: dict) -> Checkpoint:
+    return Checkpoint(
+        boundary=payload["boundary"],
+        spec_path=payload["spec_path"],
+        spec_sha256=payload["spec_sha256"],
+        netlist_sha256=dict(payload.get("netlist_sha256", {})),
+        testbench_names=list(payload["testbench_names"]),
+        netlist_versions={n: list(p) for n, p in payload["netlist_versions"].items()},
+        history_lines=payload["history_lines"],
+        attempt=payload.get("attempt", 0),
+        all_topology_swaps=[dict(s) for s in payload.get("all_topology_swaps", [])],
+        corner_set=_corner_set_from_payload(payload.get("corner_set")),
+        grown_labels=[list(g) for g in payload.get("grown_labels", [])],
+        progress=_progress_from_payload(payload.get("progress")),
+        orchestration_result=payload.get("orchestration_result"),
+        schema_version=payload.get("schema_version", CHECKPOINT_SCHEMA_VERSION),
+    )
+
+
+# ---------------------------------------------------------------- 원자적 쓰기
+
+
+def checkpoint_path(run_dir) -> str:
+    return os.path.join(run_dir, CHECKPOINT_FILENAME)
+
+
+def write_checkpoint(run_dir, checkpoint: Checkpoint) -> str:
+    """임시 파일에 쓰고 `os.replace`로 원자 교체한다 - **협상 불가**.
+
+    이 기능의 판정 규칙이 정확히 "임의 지점에서 강제 종료"다. 파일을 직접
+    덮어쓰면 찢어진 JSON이 남을 수 있고, 그러면 재개가 크래시하거나 - 더
+    나쁘게 - 부분적으로 읽힌다. 파일은 하나를 덮어쓴다(이력이 아니라 현재
+    상태이므로 누적할 이유가 없다).
+
+    실측: 이 함수를 루프에서 돌리며 서로 다른 10개 시점에 `SIGKILL`을 보냈고
+    (0.15 s ~ 1.17 s), 10번 모두 `checkpoint.json`이 온전한 JSON으로 읽혔다.
+    그중 6번은 `checkpoint.json.tmp`가 남아 있었다 - open 과 replace 사이에서
+    죽은 것이며, **그 파일은 아무도 읽지 않고** 다음 쓰기가 `"w"`로 잘라
+    덮어쓴다. 남은 `.tmp`를 보고 "체크포인트가 찢어졌다"고 읽지 마라.
+    """
+    path = checkpoint_path(run_dir)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(to_payload(checkpoint), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # 찢어진 임시 파일을 남기지 않는다. 실패해도 `path`는 손대지 않았으므로
+        # 직전 체크포인트는 그대로다.
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+    return path
+
+
+def read_payload(run_dir) -> dict | None:
+    path = checkpoint_path(run_dir)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------- 재개 거부
+
+
+def rejection_reason(payload: dict | None, run_dir, spec_path, spec) -> str | None:
+    """재개하면 안 되는 이유. 없으면 None.
+
+    추측하지 않는다 - 하나라도 어긋나면 재개하지 않고 무엇이 왜 어긋났는지
+    말한다.
+    """
+    if payload is None:
+        return (
+            f"{checkpoint_path(run_dir)} 가 없다 - 이 run-dir 은 체크포인트를 남긴 "
+            f"실행의 것이 아니다 (체크포인트는 outer iteration 경계에서 처음 쓰인다)"
+        )
+
+    version = payload.get("schema_version")
+    if version != CHECKPOINT_SCHEMA_VERSION:
+        return (
+            f"checkpoint schema version {version!r} != {CHECKPOINT_SCHEMA_VERSION} - "
+            f"이 체크포인트는 다른 버전의 코드가 썼다"
+        )
+
+    boundary = payload.get("boundary")
+    if boundary not in BOUNDARIES:
+        return f"unknown checkpoint boundary {boundary!r}; expected one of {list(BOUNDARIES)}"
+
+    spec_sha, netlist_sha, names = spec_fingerprint(spec_path, spec)
+
+    if payload.get("spec_sha256") != spec_sha:
+        return (
+            f"spec 파일 내용이 체크포인트에 기록된 것과 다르다 ({spec_path}): "
+            f"{payload.get('spec_sha256')} -> {spec_sha}. 스펙이 바뀐 채로 중간부터 "
+            f"이으면 두 기준의 측정이 한 결과에 섞인다"
+        )
+
+    if list(payload.get("testbench_names", [])) != names:
+        return (
+            f"testbench_names 가 지금 스펙과 다르다: "
+            f"{payload.get('testbench_names')} -> {names}"
+        )
+
+    if dict(payload.get("netlist_sha256", {})) != netlist_sha:
+        changed = sorted(
+            name
+            for name, digest in netlist_sha.items()
+            if payload.get("netlist_sha256", {}).get(name) != digest
+        )
+        return (
+            f"netlist 파일 내용이 체크포인트에 기록된 것과 다르다 ({', '.join(changed)}) - "
+            f"바뀐 회로에 중간부터 이으면 두 회로의 측정이 한 결과에 섞인다"
+        )
+
+    missing = []
+    for paths in payload.get("netlist_versions", {}).values():
+        missing += [p for p in paths if not os.path.exists(p)]
+    progress = payload.get("progress") or {}
+    missing += [
+        p for p in (progress.get("entry_netlist_paths") or {}).values() if not os.path.exists(p)
+    ]
+    if missing:
+        return (
+            f"체크포인트가 가리키는 넷리스트 버전 파일이 디스크에 없다: "
+            f"{', '.join(sorted(set(missing)))}"
+        )
+
+    return None
+
+
+def load_checkpoint(run_dir, spec_path, spec) -> Checkpoint:
+    payload = read_payload(run_dir)
+    reason = rejection_reason(payload, run_dir, spec_path, spec)
+    if reason is not None:
+        raise CheckpointRejected(reason)
+    return from_payload(payload)
+
+
+def restore_state(state: RunState, checkpoint: Checkpoint) -> RunState:
+    """버전 스택을 되돌려 놓는다. **디스크를 훑지 않는다** - 체크포인트가 적은
+    목록 그대로여야 버전 번호가 중단 없이 돈 실행과 같아진다.
+
+    복사해서 넣는 이유: state가 이어서 append하는데 그것이 체크포인트 객체의
+    리스트를 함께 바꾸면, 같은 실행 안에서 다시 쓰는 체크포인트가 이미 지나간
+    상태를 담게 된다.
+    """
+    state.netlist_versions = {
+        name: list(paths) for name, paths in checkpoint.netlist_versions.items()
+    }
+    return state
+
+
+def snapshot_progress(progress: LoopProgress) -> LoopProgress:
+    """체크포인트에 담을 **스냅샷**. 루프는 계속 같은 객체를 바꿔 나가므로
+    얕게 넘기면 나중 변화가 이미 쓴 체크포인트에 소급된다 - 특히
+    `topology_swaps`의 레코드는 `outcome`이 나중에 채워진다."""
+    return replace(
+        progress,
+        entry_netlist_paths=dict(progress.entry_netlist_paths),
+        tried_topologies=set(progress.tried_topologies),
+        tuning_history=list(progress.tuning_history),
+        topology_swaps=[dict(s) for s in progress.topology_swaps],
+        judge_result=dict(progress.judge_result or {}),
+    )

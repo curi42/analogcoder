@@ -12,8 +12,20 @@ from analogcoder.agents.optimizer import propose_candidates
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
+from analogcoder.checkpoint import (
+    BOUNDARY_ATTEMPT,
+    BOUNDARY_OPTIMIZATION,
+    BOUNDARY_OUTER_ITERATION,
+    CheckpointRejected,
+    build_checkpoint,
+    checkpoint_path,
+    load_checkpoint,
+    restore_state,
+    write_checkpoint,
+)
 from analogcoder.corner_selection import grown_with, label, seed_from_sweep
 from analogcoder.corner_sim import CornerState, build_corner_simulate
+from analogcoder.history import count_events, discarded_ranges, line_count, read_events
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
@@ -41,6 +53,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=f"override one agent's model; AGENT is one of {', '.join(AGENT_NAMES)}",
     )
     parser.add_argument("--run-dir", default=None)
+    # **재개는 기본 동작이 아니다.** 플래그 없이 기존 run-dir을 다시 가리키면
+    # 오늘 그대로 처음부터 돈다 - 조용히 이어가면 사용자가 새 실행을 기대한
+    # 자리에서 절반짜리 실행이 완성되고, 그것이 온전한 실행처럼 측정에 들어간다.
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume the run in --run-dir from its checkpoint (rejects if anything drifted)",
+    )
     return parser
 
 
@@ -129,6 +149,44 @@ def _reduction_off_reason(corner_capable: bool, reduction) -> str:
     return "corner_reduction.enabled is false in the spec"
 
 
+def _reused_baseline_sweep(history_path) -> dict | None:
+    """재개한 실행이 다시 쓰는 **진입** PVT 스윕. 이력에 없으면 None.
+
+    이 스윕의 입력은 스펙이 가리키는 원본 덱이고, 재개는 스펙/넷리스트 해시가
+    같을 때만 허용된다 - 그래서 다시 돌면 같은 값이 나온다. 그런데 bandgap의
+    45 코너 스윕은 286초이고, 최적화의 여유분은 이 스윕에서 읽는다. 아무것도
+    배우지 않는 재실행에 그 시간을 다시 치를 이유가 없다.
+
+    버려진 이터레이션의 이벤트는 read_events가 이미 떨어뜨린다. 진입 스윕은
+    어떤 체크포인트보다 먼저 쓰이므로 버려진 범위에 들어갈 수 없다.
+    """
+    if not os.path.exists(history_path):
+        return None
+    for event in reversed(read_events(history_path)):
+        if event.get("step") == "pvt_baseline_sweep":
+            return {k: v for k, v in event.items() if k != "step"}
+    return None
+
+
+def _entry_texts(resume_progress, initial_netlist_texts, attempt, state) -> dict[str, str]:
+    """이 attempt의 run_orchestration에 넘길 덱.
+
+    재개가 아니면 오늘 그대로: attempt 0은 원본, 재진입은 **수렴된 덱**이다.
+
+    경계 1에서 재개하면 그 attempt가 실제로 **받았던** 덱을 파일에서 되읽는다.
+    면적 게이트의 기준선은 이 인자에서 잡히므로(`index_baseline_components`),
+    원본을 다시 읽으면 재진입한 attempt의 성장 한도가 조용히 달라진다. 그
+    경로들은 체크포인트가 적어 두고, load_checkpoint가 존재 여부까지 검사한다.
+    """
+    if resume_progress is not None:
+        texts = {}
+        for name, path in resume_progress.entry_netlist_paths.items():
+            with open(path) as f:
+                texts[name] = f.read()
+        return texts
+    return initial_netlist_texts if attempt == 0 else state.current_netlist_texts()
+
+
 def _build_agent_backend(args, model: str | None = None) -> AgentBackend:
     if args.agent_backend == "claude":
         return ClaudeSDKBackend(model=model or getattr(args, "claude_model", DEFAULT_CLAUDE_MODEL))
@@ -164,7 +222,48 @@ async def _run(args) -> dict:
             initial_netlist_texts[tb.name] = resolve_includes(f.read(), os.path.dirname(tb.netlist_path))
 
     run_dir = args.run_dir or os.path.join("runs", uuid.uuid4().hex[:8])
+
+    # **거부는 아무것도 시작하기 전에.** load_checkpoint는 어긋난 것이 하나라도
+    # 있으면 CheckpointRejected를 던지고, main()이 그것을 사유와 함께 찍고
+    # 끝낸다 - 크래시가 아니라 무엇이 왜 어긋났는지 말하는 오류다.
+    checkpoint = load_checkpoint(run_dir, args.spec, spec) if getattr(args, "resume", False) else None
+
     state = RunState(run_dir=run_dir, testbench_names=[tb.name for tb in spec.testbenches])
+
+    resumed_from = None
+    if checkpoint is not None:
+        restore_state(state, checkpoint)
+        # 크래시한 이터레이션의 **부분** 이벤트가 로그에 남아 있다. 자르지
+        # 않는다 - 증거를 파괴하는 것은 답이 아니다. 대신 버려진 줄 범위를
+        # 선언하고, analogcoder.history.read_events가 읽을 때 떨어뜨린다.
+        # 이것이 없으면 measure_repeat_rate.py와 paired_tuner_probe.py가
+        # 버려진 시도의 제안을 실제 제안으로 센다 - D1을 무효로 만든 것과 같은
+        # 부류의 결함이다.
+        discarded = [checkpoint.history_lines, line_count(state.history_path)]
+        discarded_events = count_events(state.history_path, discarded[0], discarded[1])
+        state.log_event(
+            "resume",
+            {
+                "boundary": checkpoint.boundary,
+                "attempt": checkpoint.attempt,
+                "outer_iter": checkpoint.progress.outer_iter if checkpoint.progress else None,
+                "checkpoint_path": checkpoint_path(run_dir),
+                "discarded_lines": discarded,
+                "discarded_events": discarded_events,
+            },
+        )
+        resumed_from = {
+            "boundary": checkpoint.boundary,
+            "attempt": checkpoint.attempt,
+            "outer_iter": checkpoint.progress.outer_iter if checkpoint.progress else None,
+            "checkpoint_path": checkpoint_path(run_dir),
+            "discarded_lines": discarded,
+            "discarded_events": discarded_events,
+            # 이 run-dir이 지금까지 재개된 횟수(이번 것 포함). 두 번 재개된
+            # 실행이 한 번짜리와 같아 보이면 안 된다.
+            "resume_count": len(discarded_ranges(read_events(state.history_path, drop_discarded=False))),
+        }
+
     # 내용 주소 캐시로 감싼다. 실행 하나가 같은 (덱, control block, 코너,
     # 시뮬레이터)를 여러 번 재는 자리가 실제로 있다 - 최적화의 이분 탐색은 이미
     # 스윕한 버전을 되짚고, 롤백 직후의 다음 외부 이터레이션은 되돌아간 덱을
@@ -253,13 +352,42 @@ async def _run(args) -> dict:
 
     baseline_sweep = None
     if corner_capable:
-        baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
-        state.log_event("pvt_baseline_sweep", baseline_sweep)
+        # 재개할 때는 이력에 남은 진입 스윕을 다시 쓴다. 이 스윕의 입력은
+        # **원본 덱**이고 스펙 해시가 이미 검증됐으므로 다시 돌면 같은 값이
+        # 나온다 - bandgap 45 코너 기준 286초를 아무것도 배우지 않고 다시
+        # 치르는 것이다. 재개가 아니면 오늘 그대로 돈다.
+        reused = _reused_baseline_sweep(state.history_path) if checkpoint is not None else None
+        if reused is not None:
+            baseline_sweep = reused
+            state.log_event(
+                "pvt_baseline_sweep_reused",
+                {"corners": len(reused.get("per_corner", [])), "overall_pass": reused.get("overall_pass")},
+            )
+        else:
+            baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+            state.log_event("pvt_baseline_sweep", baseline_sweep)
 
     corner_state = None
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
     simulate_for_run = simulate_fn
-    if reduction_active:
+    if reduction_active and checkpoint is not None and checkpoint.corner_set is not None:
+        # 씨앗을 **다시 뽑지 않는다.** 코너 집합은 attempt마다 자라므로
+        # 진입 스윕에서 다시 씨앗을 뽑으면 재진입이 배운 코너가 통째로
+        # 사라지고, 재개한 실행이 중단 없이 돈 실행보다 덜 보는 집합으로
+        # 판정하게 된다.
+        corner_state = CornerState(checkpoint.corner_set)
+        state.log_event(
+            "corner_set_restored",
+            {
+                "corners": [label(c) for c in corner_state.corner_set.corners],
+                "outside": len(corner_state.corner_set.probe_order),
+                "probe_index": corner_state.corner_set.probe_index,
+            },
+        )
+        simulate_for_run = build_corner_simulate(
+            agent_simulate_fn, sim_backend, state, corner_state, state.log_event
+        )
+    elif reduction_active:
         try:
             corner_state = CornerState(seed_from_sweep(baseline_sweep, spec))
         except ValueError as exc:
@@ -278,6 +406,9 @@ async def _run(args) -> dict:
                 "iterations_used": 0,
                 "final_criteria": [],
                 "failure_reason": f"could not seed the mid-loop corner set: {reason}",
+                # 이 이른 반환에도 실린다 - 어느 갈래로 끝나든 결과는 자기가
+                # 재개된 것인지 말해야 한다.
+                "resumed_from": resumed_from,
                 "corner_reduction": {
                     "active": False,
                     "reason": f"seeding the corner set from the entry sweep failed: {reason}",
@@ -345,8 +476,10 @@ async def _run(args) -> dict:
     # 로그에 안 보였다. 재진입 시점마다 corner_set_grown에 남기고, 실행이 쓴
     # 기준선 개수를 result["corner_reduction"]["area_baselines"]에 싣는다.
     retry_budget = reduction.retry_budget if reduction_active else 0
-    attempt = 0
-    grown_labels: list[list[str]] = []
+    attempt = checkpoint.attempt if checkpoint is not None else 0
+    grown_labels: list[list[str]] = (
+        [list(g) for g in checkpoint.grown_labels] if checkpoint is not None else []
+    )
     path_disagreement: dict | None = None
     unattributed_failures: dict | None = None
     reentry_skipped: dict | None = None
@@ -365,18 +498,75 @@ async def _run(args) -> dict:
     # 덱**을 옳게 설명하고(그리고 시도별이라는 사실이
     # corner_reduction.attempts로 공개된다), topology_swaps는 **이어서 넘겨지는
     # 덱의 구조**를 설명한다. 누적 덱에 시도별 기록을 붙이는 것이 어긋남이다.
-    all_topology_swaps: list[dict] = []
+    all_topology_swaps: list[dict] = (
+        [dict(s) for s in checkpoint.all_topology_swaps] if checkpoint is not None else []
+    )
+
+    def _save(boundary: str, *, progress=None, orchestration_result=None) -> None:
+        """경계 하나에서 체크포인트를 원자적으로 갈아 끼운다.
+
+        cli 쪽 상태(attempt, 누적 스왑, 코너 집합, 성장 이력)와
+        run_orchestration이 넘겨 준 루프 상태를 한 파일에 함께 담는다 - 재개는
+        둘 다 있어야 성립하고, 두 파일로 나누면 그 둘이 어긋날 자리가 생긴다.
+        """
+        write_checkpoint(
+            run_dir,
+            build_checkpoint(
+                boundary=boundary,
+                spec_path=args.spec,
+                spec=spec,
+                netlist_versions=state.netlist_versions,
+                history_lines=line_count(state.history_path),
+                attempt=attempt,
+                all_topology_swaps=all_topology_swaps,
+                corner_set=corner_state.corner_set if corner_state is not None else None,
+                grown_labels=grown_labels,
+                progress=progress,
+                orchestration_result=orchestration_result,
+            ),
+        )
+
+    # 경계 1(outer iteration)과 경계 3(최적화 진입)에서 재개하면 그 시도의
+    # run_orchestration 호출만 달라진다. 경계 2(attempt 시작)는 아무것도 담을
+    # 것이 없다 - 그 지점의 상태가 곧 아래 루프 머리의 상태다.
+    resume_progress = (
+        checkpoint.progress if checkpoint is not None and checkpoint.boundary == BOUNDARY_OUTER_ITERATION else None
+    )
+    resume_result = (
+        checkpoint.orchestration_result
+        if checkpoint is not None and checkpoint.boundary == BOUNDARY_OPTIMIZATION
+        else None
+    )
 
     while True:
-        result = await run_orchestration(
-            # 재진입은 **수렴된 덱에서 시작한다** - 롤백하지 않는다. 되돌리면
-            # 방금 루프가 해낸 튜닝을 통째로 버리고 같은 실패를 다시 찾게 된다.
-            # (최적화 배선이 같은 이유로 같은 값을 넘긴다 - 아래 주석 참조.)
-            initial_netlist_texts if attempt == 0 else state.current_netlist_texts(),
-            spec,
-            state,
-            agents,
-        )
+        if resume_result is not None:
+            # 경계 3에서 재개했다. 메인 루프는 이미 끝났고 그 결과(누적 스왑까지
+            # 합쳐진 것)가 체크포인트에 있다 - 다시 돌리면 이미 통과한 루프를
+            # 통째로 다시 치른다. **최적화 단계는 여기서부터 처음부터 돈다**:
+            # 자체 버전 스택과 이분 탐색을 갖고 있어 중간 재개가 그 불변식을
+            # 다시 논증하게 만들기 때문이다.
+            result = resume_result
+            orch_status = result["status"]
+            resume_result = None
+            fresh_orchestration = False
+        else:
+            fresh_orchestration = True
+            result = await run_orchestration(
+                # 재진입은 **수렴된 덱에서 시작한다** - 롤백하지 않는다. 되돌리면
+                # 방금 루프가 해낸 튜닝을 통째로 버리고 같은 실패를 다시 찾게 된다.
+                # (최적화 배선이 같은 이유로 같은 값을 넘긴다 - 아래 주석 참조.)
+                _entry_texts(resume_progress, initial_netlist_texts, attempt, state),
+                spec,
+                state,
+                agents,
+                resume=resume_progress,
+                save_checkpoint=lambda progress: _save(
+                    BOUNDARY_OUTER_ITERATION, progress=progress
+                ),
+            )
+            # 재개 상태는 **한 번만** 쓴다. 남겨 두면 다음 attempt가 지난
+            # 시도의 이터레이션 번호에서 시작한다.
+            resume_progress = None
 
         # **이 시도의 오케스트레이션 결과는 여기서만 온전하다.** 아래에서
         # result["status"]는 FAIL로 덮이고 failure_reason에는 스윕 사유가
@@ -384,24 +574,34 @@ async def _run(args) -> dict:
         # 여기서 남기지 않으면 attempt 0의 "agent execution error: rate limited"는
         # **어디에도** 흔적이 남지 않는다 - 재진입이 붙으면서 버려지는 결과가
         # 하나에서 최대 세 개로 늘었다.
-        orch_status = result["status"]
-        state.log_event(
-            "orchestration_attempt",
-            {
-                "attempt": attempt,
-                "status": orch_status,
-                "iterations_used": result.get("iterations_used"),
-                "failure_reason": result.get("failure_reason"),
-            },
-        )
-        # `attempt`를 함께 박는다. `outer_iter`는 시도마다 1부터 다시 세고
-        # `tried_topologies`도 시도마다 리셋되므로, 한 블록이 다른 시도에서
-        # 정당하게 다시 스왑될 수 있다 - 그러면 누적 목록에 같은 블록·같은
-        # outer_iter의 레코드가 둘 생기고 시도 번호 없이는 구별되지 않는다.
-        all_topology_swaps += [
-            {"attempt": attempt, **swap} for swap in result.get("topology_swaps", [])
-        ]
-        result["topology_swaps"] = list(all_topology_swaps)
+        #
+        # 경계 3에서 재개했으면 이 이벤트도 누적도 이미 끝나 있다. 다시 하면
+        # 이력에 같은 시도가 두 번 적히고 스왑이 두 번 누적된다 - 버려진
+        # 이벤트의 이중 계수와 같은 부류의 결함이다.
+        if fresh_orchestration:
+            orch_status = result["status"]
+            state.log_event(
+                "orchestration_attempt",
+                {
+                    "attempt": attempt,
+                    "status": orch_status,
+                    "iterations_used": result.get("iterations_used"),
+                    "failure_reason": result.get("failure_reason"),
+                },
+            )
+            # `attempt`를 함께 박는다. `outer_iter`는 시도마다 1부터 다시 세고
+            # `tried_topologies`도 시도마다 리셋되므로, 한 블록이 다른 시도에서
+            # 정당하게 다시 스왑될 수 있다 - 그러면 누적 목록에 같은 블록·같은
+            # outer_iter의 레코드가 둘 생기고 시도 번호 없이는 구별되지 않는다.
+            all_topology_swaps += [
+                {"attempt": attempt, **swap} for swap in result.get("topology_swaps", [])
+            ]
+            result["topology_swaps"] = list(all_topology_swaps)
+
+            # **경계 3.** 메인 루프가 끝났고 최적화 단계는 아직 시작하지 않았다.
+            # 여기서 죽으면 재개는 메인 루프를 통째로 건너뛰고 최적화부터 다시
+            # 돈다 - two_stage_opamp 기준 최대 103분을 아끼는 자리다.
+            _save(BOUNDARY_OPTIMIZATION, orchestration_result=result)
 
         # 최적화는 PASS 뒤에만 의미가 있고(통과하지 못한 설계의 마진을 더 깎을
         # 이유가 없다), 최종 PVT 스윕 **앞에** 와야 한다 - 그 스윕이 최적화된
@@ -601,6 +801,10 @@ async def _run(args) -> dict:
                 "area_baselines_so_far": attempt + 1,
             },
         )
+        # **경계 2.** 다음 attempt는 아직 아무것도 하지 않았고, 그 시작 상태가
+        # 지금 이 지점이다. 여기서 재개하면 run_orchestration을 평범하게(재개
+        # 없이) 부르므로 중단 없이 돈 실행과 같은 버전을 민다.
+        _save(BOUNDARY_ATTEMPT)
 
     # argmax 이동량은 **판정에 아무 영향을 주지 않는다** - 순수한 기록이다.
     # 진입 스윕과 판정 스윕이 둘 다 있을 때만 잴 수 있으므로, 코너를 못 재는
@@ -609,6 +813,13 @@ async def _run(args) -> dict:
     if baseline_sweep is not None and final_sweep is not None:
         drift = _argmax_drift(baseline_sweep, final_sweep)
         state.log_event("corner_argmax_drift", drift)
+
+    # **재개하지 않은 실행에도 항상 실린다(null).** "재개 안 함"과 "필드가
+    # 사라짐"이 같은 모양이면 안 된다 - topology_swaps가 항상 실리는 것과 같은
+    # 이유이고, 부분 런이 온전한 런처럼 측정 데이터에 들어간 것이 D1 측정을
+    # 무효로 만든 원인의 절반이었다. 재개 여부가 결과에서 안 보이면 이 기능은
+    # 측정 장치를 고치는 게 아니라 망가뜨린다.
+    result["resumed_from"] = resumed_from
 
     result["corner_reduction"] = {
         "active": reduction_active,
@@ -636,7 +847,14 @@ async def _run(args) -> dict:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
-    result = asyncio.run(_run(args))
+    try:
+        result = asyncio.run(_run(args))
+    except CheckpointRejected as exc:
+        # 거부는 크래시가 아니라 **무엇이 왜 어긋났는지 말하는 오류**다.
+        # result.json도 report.md도 쓰지 않는다 - 실행이 시작조차 하지 않았고,
+        # 시작하지 않은 실행의 산출물을 남기면 그것이 측정에 들어간다.
+        print(f"--resume 거부: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     run_dir = result["run_dir"]
     write_result_json(run_dir, result)

@@ -4,6 +4,7 @@ from typing import Callable
 from analogcoder.agents.backend import AgentExecutionError
 from analogcoder.area_limits import evaluate_area_growth, index_baseline_components
 from analogcoder.attempt_log import ATTEMPT_RENDER_LIMIT, Attempt, deltas_between, regressed_between, render_attempts
+from analogcoder.checkpoint import LoopProgress, snapshot_progress
 from analogcoder.control_block import measurement_nets
 from analogcoder.netlist import (
     apply_changes,
@@ -157,15 +158,35 @@ def _resolve_swap_target(
 
 
 async def run_orchestration(
-    initial_netlist_texts: dict[str, str], spec, state: RunState, agents: OrchestratorAgents
+    initial_netlist_texts: dict[str, str],
+    spec,
+    state: RunState,
+    agents: OrchestratorAgents,
+    resume: LoopProgress | None = None,
+    save_checkpoint: Callable[[LoopProgress], None] | None = None,
 ) -> dict:
+    """`resume`이 있으면 그 outer iteration **시작**부터 이어 돈다.
+
+    이터레이션 중간 재개는 범위 밖이다 - LLM 호출을 리플레이해야 하고 그건 새
+    정합성 문제를 만든다. 경계 재개의 최악은 이터레이션 하나를 다시 도는
+    것이고, 그건 받아들일 수 있는 값이다. 그래서 `save_checkpoint`는 루프 **머리**
+    에서만 불린다: 그 지점의 상태만이 "이 이터레이션은 아직 아무 일도 하지
+    않았다"를 뜻한다.
+
+    `resume` 경로에서는 `push_netlist_version`을 **다시 하지 않는다** - v0가
+    중복 push되어 버전 번호가 어긋나고, 그러면 중단 없이 돈 실행과 같은 덱을
+    돌려주더라도 경로가 달라진다.
+    """
     canonical_name = spec.canonical.name
-    state.push_netlist_version(initial_netlist_texts)
+    if resume is None:
+        entry_netlist_paths = state.push_netlist_version(initial_netlist_texts)
+    else:
+        entry_netlist_paths = dict(resume.entry_netlist_paths)
     outer_iter = 0
-    judge_result: dict = {}
+    judge_result: dict = dict(resume.judge_result) if resume else {}
     # try 밖에서 초기화한다 - 두 except 절이 이것을 읽는데, try 안에서 처음
     # 대입하면 첫 줄에서 터진 실행이 NameError로 바뀐다.
-    topology_swaps: list[dict] = []
+    topology_swaps: list[dict] = [dict(s) for s in resume.topology_swaps] if resume else []
 
     try:
         # No structural precondition on the deck (no more len(subckts) == 1
@@ -174,8 +195,8 @@ async def run_orchestration(
         # actually safe to offer. A pair is a tuple, not a bare topology id,
         # because the same topology can legitimately be tried again against a
         # different block once the first attempt is tried-and-exhausted.
-        tried_topologies: set[tuple[str, str]] = set()
-        consecutive_rollbacks = 0
+        tried_topologies: set[tuple[str, str]] = set(resume.tried_topologies) if resume else set()
+        consecutive_rollbacks = resume.consecutive_rollbacks if resume else 0
         # Intentionally computed once from netlist_v0 and never refreshed after a
         # topology swap: components introduced by a swapped-in topology (e.g. a
         # nulling resistor Rz) have nothing in the original netlist to compare
@@ -183,7 +204,7 @@ async def run_orchestration(
         # rest of the run. This is by-design, not a bug - do not "fix" it.
         baseline_components = index_baseline_components(initial_netlist_texts[canonical_name])
 
-        tuning_history: list[Attempt] = []
+        tuning_history: list[Attempt] = list(resume.tuning_history) if resume else []
 
         # criterion 이름 -> measurement 이름 -> 그 measurement가 보는 넷 집합,
         # 두 단계로 실패 넷을 찾기 위한 매핑. spec의 criteria/control_block에서만
@@ -205,7 +226,27 @@ async def run_orchestration(
             for name, nets in measurement_nets(tb.control_block).items():
                 nets_by_measurement.setdefault(name, set()).update(nets)
 
-        for outer_iter in range(1, MAX_OUTER_ITERATIONS + 1):
+        start_iter = resume.outer_iter if resume else 1
+        for outer_iter in range(start_iter, MAX_OUTER_ITERATIONS + 1):
+            # **경계는 여기 하나다.** 이 지점에서 이 이터레이션은 아직 아무
+            # 일도 하지 않았으므로, 여기 담긴 상태로 재개하면 최악이 이
+            # 이터레이션을 통째로 다시 도는 것이다. 아래 어디에서 죽든 되돌아올
+            # 자리가 이 지점이라는 것이 재개 설계 전체의 잠긴 전제다.
+            if save_checkpoint is not None:
+                save_checkpoint(
+                    snapshot_progress(
+                        LoopProgress(
+                            outer_iter=outer_iter,
+                            entry_netlist_paths=entry_netlist_paths,
+                            tried_topologies=tried_topologies,
+                            consecutive_rollbacks=consecutive_rollbacks,
+                            tuning_history=tuning_history,
+                            topology_swaps=topology_swaps,
+                            judge_result=judge_result,
+                        )
+                    )
+                )
+
             netlist_texts = state.current_netlist_texts()
 
             # 파생은 결정론적 파이썬이므로 매 iteration 다시 계산해도 비용이
