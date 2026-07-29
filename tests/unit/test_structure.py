@@ -152,3 +152,52 @@ def test_an_x_prefixed_sky130_cap_still_classifies_by_its_model_name():
 
     assert xc.device_class == "cap"
     assert [(t.name, t.role) for t in xc.terminals] == [("1", "drive"), ("2", "drive")]
+
+
+NESTED_LEAF_COLLISION = (
+    "* t\n"
+    ".subckt OUTA a b\n"
+    ".subckt LEAF c d\n"
+    "M1 c d 0 0 NMOS W=1 L=1\n"
+    ".ends LEAF\n"
+    "Xl1 a b LEAF\n"
+    "Xl2 a b LEAF\n"
+    "Xl3 a b LEAF\n"
+    ".ends OUTA\n"
+    ".subckt OUTB a b\n"
+    ".subckt LEAF c d\n"
+    "M2 c d 0 0 NMOS W=2 L=1\n"
+    ".ends LEAF\n"
+    "Xl1 a b LEAF\n"
+    ".ends OUTB\n"
+    "Xa n1 n2 OUTA\n"
+    "Xb n1 n2 OUTB\n"
+    ".end\n"
+)
+
+
+def test_instance_counts_are_scoped_to_the_definition_that_is_actually_visible():
+    # §3.12. ParsedNetlist.subckts의 키는 점 경로("OUTER.INNER")인데
+    # instance_counts는 잎 이름으로 색인해 같은 잎 이름을 가진 중첩 정의
+    # 둘을 마지막 하나로 붕괴시켰다. 그 결과 render_structure가
+    # "OUTA.LEAF  0 instance(s)"를 LLM에게 그대로 제시한다 - 실제로는 셋인데.
+    #
+    # 올바른 해소는 SPICE의 스코프 규칙이다(추측이 아니라 사실): .subckt
+    # 안에 중첩된 정의는 그 안에서만 보이므로, 인스턴스가 지목한 이름은
+    # 자기 스코프에서 바깥으로 올라가며 찾는다.
+    s = derive_structure(NESTED_LEAF_COLLISION, "t")
+
+    assert s.blocks["OUTA.LEAF"].instance_count == 3
+    assert s.blocks["OUTB.LEAF"].instance_count == 1
+    assert s.blocks["OUTA"].instance_count == 1
+    assert s.blocks["OUTB"].instance_count == 1
+
+
+def test_an_instance_naming_a_definition_no_scope_can_see_counts_nowhere():
+    # 중첩 정의는 바깥에서 안 보인다. 최상위의 Xz가 LEAF를 지목해도 그것은
+    # OUTA.LEAF도 OUTB.LEAF도 아니다 - 어느 한쪽에 세면 지어낸 사실이 된다.
+    deck = NESTED_LEAF_COLLISION.replace("Xa n1 n2 OUTA\n", "Xa n1 n2 OUTA\nXz n1 n2 LEAF\n")
+    s = derive_structure(deck, "t")
+
+    assert s.blocks["OUTA.LEAF"].instance_count == 3
+    assert s.blocks["OUTB.LEAF"].instance_count == 1

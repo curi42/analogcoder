@@ -150,6 +150,30 @@ def _fact(scope: str | None, component: Component) -> ComponentFact:
     )
 
 
+def _resolve_definition(scope: str | None, name: str, definitions: set[str]) -> str | None:
+    """X 인스턴스가 지목한 정의 이름을 정의 **경로**로 푼다.
+
+    ParsedNetlist.subckts의 키는 점 경로("OUTER.INNER")인데 이 해소를
+    잎 이름으로 하면 잎 이름이 같은 중첩 정의 둘이 마지막 하나로
+    붕괴한다. 그러면 한쪽은 0 instance(s), 다른 쪽은 둘의 합을 받고,
+    render_structure가 그 숫자를 LLM에게 그대로 제시한다("OUTA.LEAF
+    0 instance(s)" - 실제로는 셋인데). area.total_area의 미래 가중합이
+    읽을 값도 이것이다.
+
+    해소는 SPICE의 스코프 규칙 그대로다 - 추측이 아니라 사실이다:
+    .subckt 안에 중첩된 정의는 그 안에서만 보이므로, 인스턴스 자신의
+    스코프에서 바깥으로 한 단계씩 올라가며 찾고 마지막에 전역을 본다.
+    안에서 밖으로 가는 순서가 곧 가림(shadowing) 규칙이다. 어느 스코프
+    에서도 안 보이면 None - 아무 데도 안 센다. 어느 한쪽에 세면
+    지어낸 사실이 된다."""
+    parts = scope.split(".") if scope else []
+    for depth in range(len(parts), -1, -1):
+        candidate = ".".join(parts[:depth] + [name])
+        if candidate in definitions:
+            return candidate
+    return None
+
+
 def derive_structure(netlist_text: str, circuit_name: str) -> NetlistStructure:
     """넷리스트 하나를 스코프별 평면 사실 묶음으로 바꾼다. LLM 애널라이저를
     대체하는 결정론적 파생 - 같은 입력에는 항상 같은 출력을 낸다
@@ -160,15 +184,15 @@ def derive_structure(netlist_text: str, circuit_name: str) -> NetlistStructure:
     scoped: list[tuple[str | None, list[Component]]] = [(None, parsed.top_components)]
     scoped += [(path, subckt.components) for path, subckt in sorted(parsed.subckts.items())]
 
-    # 정의 이름별 인스턴스 수. 인스턴스는 정의를 이름(경로의 마지막 조각)으로
-    # 지목하므로 이름으로 센다 - X 인스턴스의 value가 subckt 이름이다.
-    definition_names = {path.rpartition(".")[2]: path for path in parsed.subckts}
+    # 정의별 인스턴스 수. X 인스턴스의 value가 subckt 이름이지만, 그 이름을
+    # 정의 **경로**로 푸는 데는 인스턴스 자신의 스코프가 필요하다.
+    definitions = set(parsed.subckts)
     instance_counts: dict[str, int] = {path: 0 for path in parsed.subckts}
-    for _scope, components in scoped:
+    for scope, components in scoped:
         for component in components:
             if component.ctype != "X":
                 continue
-            target = definition_names.get(component.value or "")
+            target = _resolve_definition(scope, component.value or "", definitions)
             if target is not None:
                 instance_counts[target] += 1
 
