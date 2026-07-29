@@ -45,19 +45,19 @@ def _wc(corner, value):
 
 
 def test_the_seed_is_the_union_of_every_criterion_s_worst_corner(_spec):
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "psr": _wc(SF, -9.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "psr": _wc(SF, -9.0)}), _spec)
     assert set(cs.corners) == {NOMINAL, FS, SF}
 
 
 def test_two_criteria_sharing_a_worst_corner_do_not_duplicate_it(_spec):
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)}), _spec)
     assert list(cs.corners).count(FS) == 1
 
 
 def test_nominal_is_always_first_even_when_no_criterion_names_it(_spec):
     # 임계값이 덱 그대로의 상태에서 정해졌다. 최악 코너 목록에 안 나온다고
     # 빼면 기존 동작의 기준점이 사라진다.
-    cs = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
     assert cs.corners[0] is NOMINAL
 
 
@@ -65,7 +65,7 @@ def test_a_corner_with_no_measurement_is_that_criterion_s_worst(_spec):
     # value=None은 그 코너에서 측정값이 아예 안 나왔다는 뜻이고,
     # worst_case_corners가 이미 그 코너를 지목하고 있다. 값이 없다고
     # 건너뛰는 변형은 회로가 동작하지 않는 코너를 집합에서 빠뜨린다.
-    cs = seed_from_sweep(_sweep({"gain": _wc(SS, None)}), _spec)
+    cs, _ = seed_from_sweep(_sweep({"gain": _wc(SS, None)}), _spec)
     assert SS in cs.corners
 
 
@@ -76,7 +76,7 @@ def test_a_failing_entry_sweep_still_seeds(_spec):
     # 시작한 실행에서 축소를 통째로 꺼 버린다.
     failing = {"worst_case_corners": {"gain": _wc(FS, 12.0)},
                "per_corner": [], "overall_pass": False}
-    cs = seed_from_sweep(failing, _spec)
+    cs, _ = seed_from_sweep(failing, _spec)
     assert FS in cs.corners
 
 
@@ -90,7 +90,8 @@ def test_the_probe_order_is_most_severe_first(_spec):
             {"corner": {"process": "sf", "voltage": 1.62, "temperature": -40.0}, "severity": 0.01},
         ],
     }
-    assert seed_from_sweep(sweep, _spec).probe_order[0] == SF
+    cs, _ = seed_from_sweep(sweep, _spec)
+    assert cs.probe_order[0] == SF
 
 
 def test_a_corner_already_in_the_set_is_not_also_a_probe(_spec):
@@ -102,7 +103,7 @@ def test_a_corner_already_in_the_set_is_not_also_a_probe(_spec):
             {"corner": {"process": "sf", "voltage": 1.62, "temperature": -40.0}, "severity": 0.5},
         ],
     }
-    cs = seed_from_sweep(sweep, _spec)
+    cs, _ = seed_from_sweep(sweep, _spec)
     assert FS not in cs.probe_order and SF in cs.probe_order
 
 
@@ -400,3 +401,44 @@ def test_a_measurement_absent_from_every_corner_names_no_dropped_corner():
     _chosen, record = coverage_seed(sweep, [_GAIN, ghost], CoverageConfig(epsilon=0.0, tau=1.0))
 
     assert record["dropped"] == []
+
+
+# --------------------------------- seed_from_sweep 배선 (corner_seed 기록)
+
+
+def test_seed_from_sweep_reports_argmax_mode_when_no_coverage_is_declared(_spec):
+    """기록은 **무조건** 나온다. 피복을 쓸 때만 적으면 '오늘 방식으로 골랐다'와
+    '기록하는 코드가 사라졌다'가 같은 침묵이 된다 - 이 저장소가 열 번 센
+    실패 모양이다."""
+    cs, record = seed_from_sweep(_sweep({"gain": _wc(FS, 41.0)}), _spec)
+
+    assert record["mode"] == "argmax"
+    assert record["epsilon"] is None and record["tau"] is None
+    assert record["dropped"] == []
+    assert record["seed_size"] == 1
+    assert cs.corners[0] is NOMINAL
+
+
+def test_seed_from_sweep_uses_coverage_when_the_spec_declares_it():
+    from analogcoder.spec import CornerReduction
+
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs", "sf", "ss"], voltage=[1.62, 1.8, 1.98], temperature=[-40, 27, 125]),
+        all_criteria=[_GAIN, _PM],
+        testbenches=[object(), object()],
+        corner_reduction=CornerReduction(coverage=CoverageConfig(epsilon=0.01, tau=1.0)),
+    )
+    sweep = {
+        "per_corner": _per_corner([(FS, {"g": 41.0, "p": 70.0}),
+                                   (SS, {"g": 41.02, "p": 65.0})]),
+        "worst_case_corners": {},
+    }
+
+    cs, record = seed_from_sweep(sweep, spec)
+
+    assert record["mode"] == "coverage"
+    assert record["epsilon"] == 0.01
+    assert cs.corners == (NOMINAL, SS)
+    # NOMINAL + 씨앗 + 탐침 1
+    assert record["points_per_tb"] == 3
+    assert label(FS) in record["dropped"]

@@ -257,7 +257,7 @@ def _argmax_points(sweep: dict, criteria: list, points: list, measurements: list
     return chosen
 
 
-def seed_from_sweep(sweep: dict, spec) -> CornerSet:
+def seed_from_sweep(sweep: dict, spec) -> tuple[CornerSet, dict]:
     """진입 스윕에서 기준별 최악 코너를 뽑아 합집합. 새 시뮬레이션은 없다.
 
     value가 None인 항목도 포함한다 - 그 코너에서 측정값이 아예 안 나왔다는
@@ -266,18 +266,47 @@ def seed_from_sweep(sweep: dict, spec) -> CornerSet:
     진입 스윕의 overall_pass는 보지 않는다 - 실패한 설계의 최악 코너도
     최악 코너이고, 오히려 중간 루프가 봐야 할 코너다.
 
-    spec 인자는 지정된 인터페이스라서 유지하지만, 이 함수는 그 안의 어떤
-    것도 읽지 않는다 - worst_case_corners의 각 항목이 spec.pvt_corners가
-    선언한 교차곱 안에 실제로 있는지 검증하지 않는다. 오늘은 무해하지만
-    (sweep은 항상 all_corners(spec.pvt_corners)에서 나온 코너로 채워진다),
-    다른 출처의 sweep을 받는 순간 조용히 틀린 코너를 받아들일 수 있다."""
-    chosen: list[CornerPoint] = []
-    for raw in sweep.get("worst_case_corners", {}).values():
-        point = _as_point(raw)
-        if point not in chosen:
-            chosen.append(point)
+    spec 인자는 지정된 인터페이스라서 유지했었으나, worst_case_corners의 각
+    항목이 spec.pvt_corners가 선언한 교차곱 안에 실제로 있는지는 여전히
+    검증하지 않는다 - 오늘은 무해하지만(sweep은 항상
+    all_corners(spec.pvt_corners)에서 나온 코너로 채워진다), 다른 출처의
+    sweep을 받는 순간 조용히 틀린 코너를 받아들일 수 있다.
+
+    **반환형이 `(CornerSet, record)`다.** record 는 `corner_seed` 이벤트에
+    그대로 실리고, 호출부는 그것을 **무조건** 적는다 - 피복을 쓸 때만 적으면
+    "오늘 방식으로 골랐다"와 "기록하는 코드가 사라졌다"가 같은 침묵이 된다.
+
+    `spec` 인자를 이제 **실제로 읽는다**(`corner_reduction.coverage`,
+    `all_criteria`, `testbenches`). 예전 독스트링이 "이 함수는 spec 안의 어떤
+    것도 읽지 않는다"고 적고 있었는데, 그 문장은 이 커밋으로 낡았다."""
+    coverage = getattr(getattr(spec, "corner_reduction", None), "coverage", None)
+    n_tb = len(getattr(spec, "testbenches", ()) or ()) or 1
+
+    if coverage is None:
+        chosen: list = []
+        for raw in sweep.get("worst_case_corners", {}).values():
+            point = _as_point(raw)
+            if point not in chosen:
+                chosen.append(point)
+        record = {
+            "mode": "argmax", "epsilon": None, "tau": None,
+            "covered": len(chosen), "total": len(chosen), "dropped": [],
+        }
+    else:
+        chosen, cover_record = coverage_seed(sweep, list(spec.all_criteria), coverage)
+        record = {
+            "mode": "coverage", "epsilon": coverage.epsilon, "tau": coverage.tau,
+            **cover_record,
+        }
+
     corners = (NOMINAL, *chosen)
-    return CornerSet(corners=corners, probe_order=_probe_order(sweep, corners))
+    cs = CornerSet(corners=corners, probe_order=_probe_order(sweep, corners))
+    record["seed_size"] = len(chosen)
+    # NOMINAL + 씨앗 + 탐침 1. 벽시계는 이 값과 워커 수의 관계로 결정되므로
+    # (테스트벤치가 병렬 바깥이다) 판정 지표는 이것이지 웨이브가 아니다.
+    record["points_per_tb"] = len(corners) + (1 if cs.probe_order else 0)
+    record["testbenches"] = n_tb
+    return cs, record
 
 
 def grown_with(

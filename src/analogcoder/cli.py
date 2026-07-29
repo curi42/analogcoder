@@ -558,7 +558,9 @@ async def _run(args) -> dict:
         )
     elif reduction_active:
         try:
-            corner_state = CornerState(seed_from_sweep(baseline_sweep, spec))
+            seed_cs, seed_record = seed_from_sweep(baseline_sweep, spec)
+            state.log_event("corner_seed", seed_record)
+            corner_state = CornerState(seed_cs)
         except ValueError as exc:
             # 씨앗을 못 뽑으면 축소를 시작할 수 없다. 넷리스트 적용 경로의
             # ValueError와 같은 취급 - 크래시가 아니라 **깨끗한 FAIL**로 끝낸다.
