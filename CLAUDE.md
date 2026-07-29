@@ -374,7 +374,13 @@ that number was measured.
   read as metres, include-only wrapper cells, wrapper instance parameters, and
   now a zero baseline), and the first three were invisible in every run log.
   A new gate ships with the record of when it did nothing, not just the rule.
-  **The running total is ten.** Curation added three more, all of them a gate
+  **The running total is twelve.** #11 is `scripts/search_ab.py`'s corner
+  regime (caught in review, never shipped — see "Corner reduction and re-entry")
+  and **#12 is `corner_render` never reaching either full sweep**, described
+  under the corner renderer in that same section. #12 is the first one found by
+  a *measurement run* rather than by review, and the first where the missing
+  record covers the sweep that decides the verdict.
+  Curation added three more, all of them a gate
   that *passed* without being able to fail: `tunable_range` taking the direct
   branch where the judging path takes the traced one (so every geometry knob on
   a wrapper-cell deck vanished while the record blamed the area gate), the
@@ -593,11 +599,28 @@ that number was measured.
   fix a shape inside a function, read the rest of that function for it.**
 - **The corner renderer now reports what it did, and refuses what it cannot
   do.** `render_corner_report` returns `CornerRender(text, states)` — the same
-  richer-sibling shape as `area_limits.evaluate_area_growth` — and both call
-  sites (`run_full_pvt_sweep`, `corner_sim`) log a `corner_render` event **once
-  per testbench, unconditionally**, including when all three rewrites applied.
+  richer-sibling shape as `area_limits.evaluate_area_growth` — and a call site
+  that passes a logger gets a `corner_render` event **once per testbench,
+  unconditionally**, including when all three rewrites applied.
   Per corner would be 45 identical lines; only-on-failure would make "checked,
-  fine" and "the check is gone" identical again. Three states, and the split is
+  fine" and "the check is gone" identical again. **This entry used to claim both
+  call sites log it. They do not, and that is silently-inert gate #12.**
+  `run_full_pvt_sweep`'s `log_event` defaults to `None` and **every** production
+  caller omits it — `cli.py:505` (entry sweep), `cli.py:857` (**the verdict
+  sweep**), `cli.py:460` (optimization sweep), `curation.py:914`/`916`. Only
+  `corner_sim` passes one, and that runs only where a spec declares
+  `corner_reduction:`. So on `spec_pvt.yaml`, `two_stage_opamp/spec_pvt.yaml`
+  and all of curation the event **never exists**, and on the reduced specs it
+  covers the mid loop only: measured on `runs/perturb_argmax/history.jsonl`,
+  all 10 `corner_render` events sit between the two mid-loop iterations and
+  **zero** sit at either sweep. The event's whole reason to exist is defect #10
+  — the PWL supply rewrite that silently no-op'd a testbench's voltage axis
+  across 45 corners — and it is absent from the sweep that decides PASS/FAIL.
+  `tests/unit/test_pvt.py:490` proves the logging works by **passing
+  `log_event` itself**, a condition the shipped wiring never creates: the
+  gate's own failure shape reproduced one layer up, in the test. Recorded in
+  `docs/superpowers/specs/2026-07-29-theory-combination-results.md` §7-7.
+  Three states, and the split is
   the point: `applied`; `absent` (nothing in this deck to touch — no
   `pdk_corner` include, no `Vdd` line — which is not an error and is exactly
   what `tests/unit/test_pvt.py`'s bare stub decks are); and, when the line **is**
