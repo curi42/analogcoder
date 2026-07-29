@@ -390,3 +390,27 @@ together, a parameter combination outside the original Cc-only sweep."
 다른 회로를 봐야 한다. 이 회로에서 시도해 볼 만한 다음 쌍은 `Xcc` × `X5.W`
 (테일 전류 — 1단 gm 과 슬루를 함께 바꾸므로 보상과 상호작용할 여지가 있다)
 이고, 그것도 **재고 나서** 판단해야 한다.
+
+---
+
+## 이연된 Minor — 최종 전체-브랜치 리뷰가 병합 전에 분류할 것
+
+원장에 남기는 이유: 롤업을 아무도 안 읽으면 조용한 폐기다. 최종 리뷰에 이 목록을
+가리킨다.
+
+**T19 (`69c9d6a` 이후)**
+
+- **M5. `CORNER_REDUCTION_RESULT` 픽스처가 새 불변식 아래 불가능한 결과 모양이다.**
+  `attempts: 2` / `grown` 길이 1 / `promotion_reentries` 키 부재 — T19 이후 실행이
+  낼 수 없는 상태인데 그렇게 표시돼 있지 않다. 그런데 그것이 코너 축소 리포트 본
+  테스트의 픽스처이고, 동시에 새 `"no growth record available"` 분기의 **유일한**
+  실행 경로다(전용 테스트·독스트링 없음). 다음 사람이 이것을 정본 result 모양으로
+  읽는다.
+- **M6. `_early_fail_result`의 하드코딩 `promotion_reentries: []` 는 지금 참이지만
+  그 근거가 코드에 없다.** 같은 함수에서 `topology_swaps` 만은 누적값을 넘겨받고,
+  독스트링이 그 이유를 적는다. 도달 불가 논증(`attempt > 0` ⟹ `corner_state` 존재
+  ⟹ 씨앗 실패 이른 반환 도달 불가)이 어디에도 없어서, 재개가 씨앗을 다시 뽑도록
+  바뀌는 날 세 필드가 **함께** 거짓말한다.
+- **M7. 성장 attempt와 승격 attempt가 **섞인** 실행의 종단 테스트가 없다.**
+  리포트의 attempt 번호 짝짓기는 손으로 만든 dict로만 검증된다. cli 쪽 두 테스트는
+  둘 다 `attempts == 1`. 커버리지 폭 문제이고 구멍은 아니다(off-by-one은 잡힌다).
