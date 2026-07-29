@@ -26,7 +26,10 @@ SS = CornerPoint(process="ss", voltage=1.62, temperature=125.0)
 def _spec():
     # seed_from_sweep only needs a spec that carries pvt_corners, matching
     # tests/unit/test_pvt.py's SimpleNamespace pattern. testbenches/canonical/
-    # all_criteria are left minimal since this module never reads them.
+    # all_criteria are left minimal here (this fixture has no coverage config
+    # and no criteria to cover) - but seed_from_sweep does read testbenches,
+    # all_criteria and corner_reduction.coverage off spec now; this fixture is
+    # just a case where those reads see empty/absent values.
     return types.SimpleNamespace(
         testbenches=[],
         canonical=None,
@@ -363,6 +366,12 @@ def test_an_empty_per_corner_yields_an_empty_seed_rather_than_guessing():
 
     assert chosen == []
     assert record["covered"] == 0 and record["total"] == 1
+    # MINOR 7: 이 상태는 `dropped: []`의 독스트링 정의("ε이 겹침을 전혀 만들지
+    # 못해 줄일 것이 없었다")와 정반대다 - 아무것도 못 고른 완전한 실패다.
+    # target/reached_target이 없으면 이 둘이 같은 dropped==[] 로 구별되지
+    # 않는다.
+    assert record["target"] == 1
+    assert record["reached_target"] is False
 
 
 def test_a_criterion_whose_worst_is_zero_is_covered_only_by_an_exact_tie():
@@ -417,6 +426,66 @@ def test_seed_from_sweep_reports_argmax_mode_when_no_coverage_is_declared(_spec)
     assert record["dropped"] == []
     assert record["seed_size"] == 1
     assert cs.corners[0] is NOMINAL
+
+
+def test_argmax_covered_total_are_criteria_counts_not_corner_counts():
+    """review finding #4: 코너 개수로 covered/total을 적으면 여기서 항상
+    covered==total(언제나 100%)이 나오고, coverage 모드(기준 단위)와 나란히
+    놓으면 코너를 기준과 비교하는 셈이 된다. 기준 셋 중 둘이 같은 최악 코너를
+    가리키면(worst_case_corners 항목 2개, 서로 다른 코너는 1개) 옛 코드는
+    covered=1, total=1을 냈다 - 세 번째 기준은 안 보였고 covered==total이 그
+    사실을 숨겼다."""
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs"], voltage=[1.62, 1.98], temperature=[27, 125]),
+        testbenches=[object()],
+        all_criteria=[
+            _GAIN, _PM, Criterion(name="tc", measurement="tc_ppm", operator="<=", threshold=1.0),
+        ],
+        corner_reduction=None,
+    )
+    sweep = _sweep({"gain": _wc(FS, 41.0), "pm": _wc(FS, 55.0)})
+
+    _cs, record = seed_from_sweep(sweep, spec)
+
+    assert record["total"] == 3   # len(spec.all_criteria) - 코너 개수가 아니다
+    assert record["covered"] == 2  # worst_case_corners 항목 개수(gain, pm) - 서로 다른 코너 수(1)가 아니다
+
+
+def test_argmax_covered_total_are_omitted_when_spec_carries_no_all_criteria():
+    """all_criteria가 없는 호출자(테스트 더블)에서는 잘못된 단위를 적느니 두
+    키를 아예 비운다."""
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs"], voltage=[1.62, 1.98], temperature=[27, 125]),
+    )
+    sweep = _sweep({"gain": _wc(FS, 41.0)})
+
+    _cs, record = seed_from_sweep(sweep, spec)
+
+    assert "total" not in record and "covered" not in record
+
+
+def test_points_per_tb_excludes_the_probe_when_probe_is_disabled():
+    """review finding #5: 탐침이 꺼져 있으면(`probe: false`) 중간 루프는 이
+    점을 절대 시뮬레이션하지 않는다(`corner_sim._probe_enabled`). 옛 코드는
+    probe_order가 비어 있지만 않으면 무조건 +1을 더해, probe=False인 스펙에서도
+    실제 ngspice 실행 수보다 1 큰 상수를 영구히 보고했다."""
+    from analogcoder.spec import CornerReduction
+
+    spec = types.SimpleNamespace(
+        pvt_corners=PVTCorners(process=["tt", "fs", "ss"], voltage=[1.62, 1.98], temperature=[27, 125]),
+        testbenches=[object()],
+        all_criteria=[_GAIN],
+        corner_reduction=CornerReduction(probe=False),
+    )
+    sweep = {
+        "worst_case_corners": {"gain": _wc(FS, 41.0)},
+        "per_corner": _per_corner([(FS, {"g": 41.0}), (SS, {"g": 45.0})]),
+    }
+
+    cs, record = seed_from_sweep(sweep, spec)
+
+    assert cs.probe_order  # 집합 밖에 실제로 탐침 후보가 있다
+    assert record["points_per_tb"] == len(cs.corners)  # 탐침 없이
 
 
 def test_seed_from_sweep_uses_coverage_when_the_spec_declares_it():

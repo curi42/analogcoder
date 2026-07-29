@@ -159,6 +159,11 @@ def _worst_of(values: list[float], operator: str) -> float:
 
 
 def _is_missing(value) -> bool:
+    # NaN을 결측으로 다루는 것은 `pvt.worst_case_measurements`(키의 존재로만
+    # "측정됨"을 판단하고 NaN 여부는 보지 않는다)와 어긋난다. 오늘은 무해하다 -
+    # `result.measurements`에 NaN을 싣는 경로가 없다(json_io의 NaN 마커는
+    # 직렬화 형식이지 이 함수가 보는 실행 중 dict의 값이 아니다). 두 함수가
+    # 실제로 NaN이 실린 같은 dict를 보게 되는 날, 이 불일치가 살아난다.
     return value is None or (isinstance(value, float) and math.isnan(value))
 
 
@@ -229,7 +234,18 @@ def coverage_seed(sweep: dict, criteria: list, coverage) -> tuple[list, dict]:
 
     argmax_points = _argmax_points(sweep, criteria, points, measurements)
     dropped = [label(p) for p in argmax_points if p not in chosen]
-    return chosen, {"covered": len(covered), "total": total, "dropped": dropped}
+    # **`target`/`reached_target`가 짧은 탈출을 보이게 한다.** `per_corner`가
+    # 비어 있으면(오늘은 `run_full_pvt_sweep`이 항상 채우므로 도달하지 않지만,
+    # 이 함수는 그 가정에 기대지 않는다) `remaining`도 처음부터 비어 위
+    # while이 첫 반복에서 바로 break하고, `covered=0, dropped=[]`이 나온다.
+    # `dropped: []`의 독스트링 정의("ε이 겹침을 전혀 만들지 못해 줄일 것이
+    # 없었다")를 그대로 읽으면 이 상태는 정반대(아무것도 못 골랐다)인데도
+    # "다 됐다"로 읽힌다. target/reached_target을 항상 함께 실어 그 둘을
+    # 구별한다.
+    return chosen, {
+        "covered": len(covered), "total": total, "dropped": dropped,
+        "target": target, "reached_target": len(covered) >= target,
+    }
 
 
 def _argmax_points(sweep: dict, criteria: list, points: list, measurements: list) -> list:
@@ -289,9 +305,19 @@ def seed_from_sweep(sweep: dict, spec) -> tuple[CornerSet, dict]:
             if point not in chosen:
                 chosen.append(point)
         record = {
-            "mode": "argmax", "epsilon": None, "tau": None,
-            "covered": len(chosen), "total": len(chosen), "dropped": [],
+            "mode": "argmax", "epsilon": None, "tau": None, "dropped": [],
         }
+        # **covered/total은 코너 개수가 아니라 기준 개수여야 coverage 모드와
+        # 같은 단위가 된다.** `len(chosen)`을 그대로 쓰면 covered == total이
+        # 항상 성립해 argmax 칸은 어떤 실행에서도 100%로만 읽히고, coverage
+        # 모드(기준 단위)와 나란히 놓았을 때 코너를 기준과 비교하는 셈이 된다.
+        # `spec.all_criteria`가 없는 호출자(테스트 더블)에서는 잘못된 단위를
+        # 적느니 두 키를 아예 비운다 - 이 함수의 다른 spec 속성 접근과 같은
+        # getattr 방식.
+        all_criteria = getattr(spec, "all_criteria", None)
+        if all_criteria is not None:
+            record["total"] = len(all_criteria)
+            record["covered"] = len(sweep.get("worst_case_corners", {}))
     else:
         chosen, cover_record = coverage_seed(sweep, list(spec.all_criteria), coverage)
         record = {
@@ -302,9 +328,17 @@ def seed_from_sweep(sweep: dict, spec) -> tuple[CornerSet, dict]:
     corners = (NOMINAL, *chosen)
     cs = CornerSet(corners=corners, probe_order=_probe_order(sweep, corners))
     record["seed_size"] = len(chosen)
-    # NOMINAL + 씨앗 + 탐침 1. 벽시계는 이 값과 워커 수의 관계로 결정되므로
-    # (테스트벤치가 병렬 바깥이다) 판정 지표는 이것이지 웨이브가 아니다.
-    record["points_per_tb"] = len(corners) + (1 if cs.probe_order else 0)
+    # corner_sim._probe_enabled과 같은 술어: 필드가 없으면(corner_reduction
+    # 블록이 없으면) 탐침은 켜진 것으로 취급한다. probe_frozen은 여기서 모른다 -
+    # 그것은 최적화 탐색이 도는 동안만 켜지는 별도 상태이고, 시딩 시점에는
+    # 아직 존재하지 않는다.
+    reduction_obj = getattr(spec, "corner_reduction", None)
+    probe_enabled = True if reduction_obj is None else reduction_obj.probe
+    # NOMINAL + 씨앗 + (탐침이 켜져 있고 집합 밖에 돌 코너가 있을 때만) 탐침 1.
+    # 탐침이 꺼져 있으면(`probe: false`) 중간 루프는 이 점을 절대 시뮬레이션하지
+    # 않으므로(corner_sim._probe_enabled), 여기서도 더하면 이 지표가 실제
+    # ngspice 실행 수보다 1 큰 상수를 영구히 보고하게 된다.
+    record["points_per_tb"] = len(corners) + (1 if probe_enabled and cs.probe_order else 0)
     record["testbenches"] = n_tb
     return cs, record
 

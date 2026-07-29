@@ -537,6 +537,12 @@ async def _run(args) -> dict:
             state.log_event("pvt_baseline_sweep", baseline_sweep)
 
     corner_state = None
+    # 어떤 방식으로 씨앗을 뽑았는지(`corner_selection.seed_from_sweep`의 record).
+    # 재개된 실행이 코너 집합을 **다시 뽑지 않는** 분기(checkpoint.corner_set이
+    # 있는 경우)와 축소가 꺼진 분기에서는 이번 실행이 실제로 씨앗을 뽑지
+    # 않았으므로 None으로 남는다 - result.json의 "seed"가 그 부재를 그대로
+    # 보여야 한다("seed": null과 "이번에 안 뽑았다"가 같은 사실).
+    seed_record: dict | None = None
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
     simulate_for_run = simulate_fn
     if reduction_active and checkpoint is not None and checkpoint.corner_set is not None:
@@ -582,17 +588,24 @@ async def _run(args) -> dict:
                 failure_reason=f"could not seed the mid-loop corner set: {reason}",
                 reduction_reason=f"seeding the corner set from the entry sweep failed: {reason}",
             )
-        state.log_event(
-            "corner_set_seeded",
-            {
-                "corners": [label(c) for c in corner_state.corner_set.corners],
-                "by_criterion": {
-                    name: raw_label(raw)
-                    for name, raw in baseline_sweep.get("worst_case_corners", {}).items()
-                },
-                "outside": len(corner_state.corner_set.probe_order),
-            },
-        )
+        seeded_event = {
+            "corners": [label(c) for c in corner_state.corner_set.corners],
+            "outside": len(corner_state.corner_set.probe_order),
+        }
+        # **argmax 모드에서만 by_criterion을 적는다.** argmax의 선택 집합은
+        # `worst_case_corners`의 상(image) 그 자체이므로 이 매핑은 참인 진술이다.
+        # coverage 모드의 선택 집합은 탐욕 피복이 고르므로 이 매핑이 가리키는
+        # 코너가 선택 집합 **밖**에 있을 수 있다 - 측정된 사례(review finding #3)
+        # 에서 corners=['(deck)', 'ss/1.62/125.0']인데 by_criterion이
+        # {'gain': 'fs/...'}를 적어, 집합에 없는 fs가 gain이 여기 있는 이유인
+        # 것처럼 읽혔다. `OPAMP2STAGE drives vdd,vss`와 같은 모양의 거짓 구조
+        # 주장이라, 적을 수 없을 때는 키를 아예 비운다 - 부재가 정직한 신호다.
+        if reduction.coverage is None:
+            seeded_event["by_criterion"] = {
+                name: raw_label(raw)
+                for name, raw in baseline_sweep.get("worst_case_corners", {}).items()
+            }
+        state.log_event("corner_set_seeded", seeded_event)
         # **같은 콜러블이 오케스트레이터와 최적화기 양쪽에 간다.** 회전 탐침과
         # 탐침 승격이 사는 상자(CornerState)는 하나여야 한다 - 배선을 한 곳만
         # 바꾸면 회전이 갈라지고, 최적화 탐색은 메인 루프가 배운 코너를 보지
@@ -1032,6 +1045,14 @@ async def _run(args) -> dict:
         # 코너가 없었다"로 읽으면 틀린다.
         "reentry_skipped": reentry_skipped,
         "argmax_drift": drift,
+        # **어떤 방식으로 씨앗을 뽑았는지, 결과에서도 보여야 한다.** 지금까지
+        # `corner_seed`는 history.jsonl에만 남았고 result.json/report.md 두
+        # 산출물만 보는 사람은 argmax와 ε-coverage 중 무엇이 돌았는지 알 수
+        # 없었다 - "결과는 자기가 돌려주는 덱을 설명해야 한다"는 이 저장소의
+        # 다섯 번째 반복. 재개된 실행이 이번 회차에 씨앗을 다시 뽑지 않았거나
+        # 축소 자체가 꺼졌으면 None이다(위 seed_record 주석 참조) - 뽑지 않은
+        # 것을 지어내지 않는다.
+        "seed": seed_record,
     }
 
     return result
