@@ -57,7 +57,7 @@ A/B는 아무것도 증명하지 못한다.
     .venv/bin/python scripts/search_ab.py \\
         --spec benchmarks/bandgap/spec_pvt.yaml \\
         --knob TRIMAMP.Xt:W:decrease \\
-        --strategy coordinate_descent --strategy trust_region --max-steps 20
+        --strategy coordinate_descent --strategy mads --max-steps 20
 """
 
 import argparse
