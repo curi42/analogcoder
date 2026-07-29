@@ -82,7 +82,30 @@ GATE_NAME = "control_block"
 
 # 수렴 재시도가 자유롭게 만질 수 있는 유일한 부류. 시스템 프롬프트가
 # "adjusting the .options portion of the control block"이라고 허가한 것이다.
-OPTION_COMMANDS = frozenset({"option", "options", ".option", ".options"})
+#
+# **닷 형만이다. 비-닷 형 `option`/`options`는 실증된 임의 명령 실행
+# 벡터였다.** 이 줄들은 허용 목록 안이면서 줄 보존 비교에서 **제외**되는
+# 유일한 자유 표면이고, ngspice의 `cp` 셸은 비-닷 형 option 줄에서 역따옴표
+# 치환을 수행한다. 실제 ngspice로 종단 실증됐다:
+#
+#     option  ... `touch F`  -> 실행됨        .option  ... `touch F`  -> 실행 안 됨
+#     options ... `touch F`  -> 실행됨        .options ... `touch F`  -> 실행 안 됨
+#
+# 게이트는 `accepted=True`를 냈고 파일이 생겼으며, 산출물만으로는 무해한
+# 블록과 구별되지 않았다. 반환값 게이트를 타면 `corner_sim`이 그 문자열을
+# 코너마다 재사용하므로 45코너 스펙에서 45회 실행된다.
+#
+# 좁히는 비용은 **0**이다: 출하된 42개 제어 블록에 option 계열 줄이 형태
+# 불문 0개다(`test_no_shipped_control_block_uses_a_non_dot_option_line`이
+# 그 사실을 못박는다). 프롬프트와 이 모듈의 독스트링은 줄곧 닷 형만
+# 말했으므로, 이것은 규칙 변경이 아니라 코드를 문서에 맞추는 것이다.
+OPTION_COMMANDS = frozenset({".option", ".options"})
+
+# 자유 표면 안에서 셸 치환을 일으킬 수 있는 문자열. **닷 형만 남긴 것으로는
+# 부족하다**: 위 실증에서 시험된 벡터는 역따옴표 / `$(...)` / `;` 셋뿐이고,
+# 그것은 전수 조사가 아니다. "오늘의 ngspice가 닷 형에서는 치환하지 않는다"에
+# 기대는 것과, 치환 문자를 아예 안 받는 것은 다른 강도다.
+_SUBSTITUTION_MARKERS = ("`", "$(", "${")
 
 # 측정 장치. 여기 걸리는 불일치는 `control_block_altered`가 아니라
 # `measurements_altered`로 보고된다 - 둘은 서로 다른 사실이다.
@@ -110,6 +133,9 @@ ALLOWED_COMMANDS = (
 REASON_COMMAND_NOT_ALLOWED = "command_not_allowed"
 REASON_MEASUREMENTS_ALTERED = "measurements_altered"
 REASON_CONTROL_BLOCK_ALTERED = "control_block_altered"
+# 네 번째. "게이트가 모르는 명령을 봤다"와 "허가한 자유 표면 안에 셸 치환
+# 문자가 있다"는 서로 다른 사실이고, 후자는 사고가 아니라 **시도**다.
+REASON_SUBSTITUTION_IN_OPTION = "substitution_in_option"
 
 
 @dataclass(frozen=True)
@@ -208,6 +234,20 @@ def check_control_block(candidate: str, reference: str) -> ControlBlockVerdict:
                 f"'{statement.command}' is not an allowed ngspice control command "
                 f"(line: {statement.text!r})",
             )
+
+    # 자유 표면 안의 셸 치환. **줄 보존 비교 앞에서** 본다 - option 줄은
+    # 그 비교에서 제외되는 유일한 부류이므로, 여기서 안 잡으면 아무 데서도
+    # 안 잡힌다. 그것이 실증된 벡터의 정확한 구조였다.
+    for statement in candidate_statements:
+        if statement.command not in OPTION_COMMANDS:
+            continue
+        for marker in _SUBSTITUTION_MARKERS:
+            if marker in statement.text:
+                return verdict(
+                    REASON_SUBSTITUTION_IN_OPTION,
+                    f"an option line carries the shell substitution marker {marker!r}, "
+                    f"which the free surface must never receive (line: {statement.text!r})",
+                )
 
     # `.options` 계열만 빼고 나머지는 순서까지 그대로여야 한다.
     kept_candidate = [s for s in candidate_statements if s.command not in OPTION_COMMANDS]

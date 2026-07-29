@@ -15,6 +15,7 @@ import yaml
 from analogcoder.control_block_gate import (
     ALLOWED_COMMANDS,
     GATE_NAME,
+    REASON_SUBSTITUTION_IN_OPTION,
     check_control_block,
 )
 
@@ -347,3 +348,81 @@ def test_comment_only_lines_are_not_commands():
     verdict = check_control_block(candidate, REFERENCE)
 
     assert verdict.accepted is True
+
+
+# ------------------------------- 자유 표면 위의 명령 치환 (적대적 검증 발견)
+
+# `option`/`options` 줄은 **허용 목록 안이면서 줄 보존 비교에서 제외되는
+# 유일한 자유 표면**이다. 그리고 ngspice 의 `cp` 셸은 비-닷 형 `option` 줄에서
+# 역따옴표 치환을 수행한다 - 실제 ngspice 로 종단 실증됐다:
+#
+#   option ... `touch F`   -> 실행됨      .option ... `touch F`  -> 실행 안 됨
+#   options ... `touch F`  -> 실행됨      .options ... `touch F` -> 실행 안 됨
+#
+# 게이트는 `accepted=True` 를 냈고 파일이 생겼다. 무해한 블록과 산출물이
+# 구별되지 않으며, 반환값 게이트를 타면 `corner_sim` 이 그 문자열을 코너마다
+# 재사용한다(45코너 스펙에서 45회).
+#
+# 두 겹으로 막는다. (1) 프롬프트와 독스트링이 **줄곧 닷 형만** 말했으므로
+# 허용 목록을 거기에 맞춘다 - 출하된 42개 블록에 option 계열 줄이 형태 불문
+# 0개이므로 비용이 0이다. (2) 자유 표면 안의 치환 문자를 별도 사유로 거부한다.
+# (1)만으로는 "역따옴표만 위험하다"에 기대는데 그것은 전수 조사가 아니다.
+
+
+def test_a_non_dot_option_line_is_not_part_of_the_free_surface():
+    """실증된 벡터. 닷 형만 허가한다."""
+    reference = ".control\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+    candidate = ".control\noption `touch /tmp/pwn`\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+
+    verdict = check_control_block(candidate, reference)
+
+    assert not verdict.accepted
+
+
+def test_command_substitution_in_a_dot_option_line_is_refused_with_its_own_reason():
+    """벨트-앤-브레이시스. 닷 형은 오늘 시험한 ngspice 에서 치환하지 않지만,
+    시험한 벡터가 역따옴표/`$(...)`/`;` 셋뿐이라 '닷 형은 안전하다'는 전수가
+    아니다. 사유 코드를 따로 두는 이유는 이 저장소의 규칙 그대로다 - "모르는
+    명령을 봤다"와 "자유 표면에 치환 문자가 있다"는 다른 사실이다."""
+    reference = ".control\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+    candidate = ".control\n.option gmin=1e-10 `touch /tmp/pwn`\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+
+    verdict = check_control_block(candidate, reference)
+
+    assert not verdict.accepted
+    assert verdict.reason == REASON_SUBSTITUTION_IN_OPTION
+
+
+def test_every_substitution_form_seen_is_refused():
+    reference = ".control\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+    for payload in ("`id`", "$(id)", "${x}"):
+        candidate = f".control\n.option gmin=1e-10 {payload}\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+        assert not check_control_block(candidate, reference).accepted, payload
+
+
+def test_an_ordinary_dot_option_adjustment_is_still_allowed():
+    """게이트가 허가하기로 한 것은 실제로 허가돼야 한다 - 수렴 재시도가
+    `.options`를 만지는 것이 이 자유 표면의 존재 이유다."""
+    reference = ".control\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+    candidate = ".control\n.option gmin=1e-12 reltol=1e-4\nac dec 10 1 1G\nprint v(out)\n.endc\n"
+
+    assert check_control_block(candidate, reference).accepted
+
+
+def test_no_shipped_control_block_uses_a_non_dot_option_line():
+    """규칙을 좁히는 비용이 0이라는 근거를 저장소 안에 못박는다. 이 단언이
+    깨지는 날은 규칙을 되돌릴 때가 아니라 그 스펙을 닷 형으로 고칠 때다."""
+    import glob
+
+    import yaml
+
+    offenders = []
+    for path in glob.glob("benchmarks/**/*.yaml", recursive=True):
+        with open(path) as f:
+            doc = yaml.safe_load(f) or {}
+        for tb in doc.get("testbenches", []) or []:
+            for line in (tb.get("control_block") or "").splitlines():
+                head = line.strip().split()[:1]
+                if head and head[0].lower() in {"option", "options"}:
+                    offenders.append((path, line.strip()))
+    assert offenders == []
