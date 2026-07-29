@@ -156,8 +156,8 @@ def test_the_tuning_history_round_trips_including_deltas_and_reasons(tmp_path):
 def test_a_corner_set_round_trips_with_nominal_first(tmp_path):
     spec_path, spec = make_spec(tmp_path)
     corner_set = CornerSet(
-        corners=(NOMINAL, CornerPoint("ff", 1.98, 27.0), CornerPoint("ss", 1.62, 27.0)),
-        probe_order=(CornerPoint("tt", 1.8, 27.0),),
+        corners=(NOMINAL, CornerPoint(process="ff", voltage=1.98, temperature=27.0), CornerPoint(process="ss", voltage=1.62, temperature=27.0)),
+        probe_order=(CornerPoint(process="tt", voltage=1.8, temperature=27.0),),
         probe_index=1,
     )
     _, cp = make_checkpoint(tmp_path, spec_path, spec, corner_set=corner_set)

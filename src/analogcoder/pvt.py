@@ -48,6 +48,11 @@ class CornerRender:
 
     text: str
     states: dict
+    mode: str = "rewrite"
+    """어느 경로가 이 덱을 만들었는지. `"rewrite"`는 단일 파일 덱을 정규식
+    셋으로 고쳐 쓴 오늘의 경로, `"composed"`는 조각을 이어 붙이고 코너 슬롯을
+    채운 경로다. `states`의 모양이 둘 사이에 다르므로, 이 칸이 없으면
+    history.jsonl을 읽는 사람이 두 모양을 같은 어휘로 읽는다."""
 
 
 _SUPPLY_LINE = re.compile(r"^Vdd\s")
@@ -218,6 +223,43 @@ def render_corner_netlist(
     ).text
 
 
+def deck_for_corner(tb, netlist_text: str, corner, benchmark_dir: str, nominal=None) -> CornerRender:
+    """이 테스트벤치의 덱을, 이 코너에 대해. **두 경로가 여기서 하나로 만난다.**
+
+    - 조합형 테스트벤치(`tb.fragments`)는 `compose.deck_for`로 간다: 정규식이
+      하나도 없고, 코너는 슬롯에 채워지는 조각이다.
+    - 단일 파일 테스트벤치는 오늘의 `render_corner_report` 그대로다 - 벤치마크
+      11개 덱이 쓰는 경로이고 한 글자도 바뀌지 않는다.
+
+    돌려주는 것이 양쪽 다 `CornerRender`인 이유는 호출부가 `corner_render`
+    사건을 **테스트벤치마다 한 번, 무조건** 적기 때문이다. 두 경로가 서로 다른
+    타입을 내면 그 기록이 한쪽에서만 남는다."""
+    if tb.fragments is None:
+        # 벨트-앤-브레이스. `spec._reject_unrealisable_corners`가 선언 자리에서
+        # 막지만, 좌표 없는 코너가 다른 경로(체크포인트 재개, 손으로 만든
+        # CornerPoint)로 여기 닿으면 셋을 전부 `None`으로 포매팅하고 `states`는
+        # `applied`로 적힌다 - 재작성이 일어났음을 증명해야 할 기록이 돌지 못하는
+        # 덱에 성공을 증명한다. 포매팅하느니 멈춘다.
+        if corner.process is None:
+            raise CornerRenderError(
+                f"corner {corner.corner_id!r} carries no coordinates, and testbench "
+                f"{tb.name!r} is single-file: there is nothing to substitute into the "
+                f"process include, the '.temp' or the supply line. A corner declared by "
+                f"label is realised by filling a composed testbench's corner_slot"
+            )
+        return render_corner_report(
+            netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
+        )
+    from analogcoder.compose import deck_for  # 순환 import 회피: compose는 netlist만 안다
+
+    composed = deck_for(tb, netlist_text, corner, nominal=nominal)
+    return CornerRender(
+        text=composed.text,
+        states={**composed.records, "shared_nets": len(composed.report["shared_nets"])},
+        mode="composed",
+    )
+
+
 def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
     """이제 **항등 함수**다. 곱의 전개는 `spec._load_pvt_corners`에서 한 번만
     일어나고, 여기서 다시 곱을 만들면 명시 목록으로 선언된 부분 격자를
@@ -226,24 +268,40 @@ def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
     return list(pvt.corners)
 
 
-def _corner_fields(corner: CornerPoint | None) -> dict:
-    """The reported coordinates of one point in a corner list.
+def corner_fields(corner: CornerPoint | None) -> dict:
+    """One point in a corner list, as it goes into an artifact.
 
-    `None` is the deck as it is - rendered through no corner at all - which is
-    how corner_selection.NOMINAL travels. It has no process/voltage/temperature
-    to read, so it is reported as "(deck)" (the same name corner_selection.label
-    gives it) with no numbers. Substituting a stand-in CornerPoint here instead
-    would put fabricated coordinates into worst_case_corners, where every
-    consumer reads them as a real corner - and tt/27 IS a real corner, distinct
-    from the unrendered deck. run_full_pvt_sweep never passes None, so this
-    changes nothing for it."""
+    **This is the one constructor.** Three places used to build this dict and
+    none of them shared code - `pvt._corner_fields`, `pvt`'s per_corner inline
+    dict, and `checkpoint._corner_payload`. When three such writers drift,
+    `corner_selection._as_point` accepts a corner that came through one path
+    and rejects one that came through another, and it only shows up on the rare
+    paths (re-entry, checkpoint resume) where the log does not say why.
+
+    **A corner records what it was declared with, and nothing else.**
+
+    - axis-declared -> its three coordinates, byte-for-byte what this function
+      has always written. That is the R2 regression baseline: adding
+      `corner_id` here would change every 45-corner sweep artifact.
+      `_as_point` re-derives the identity with `spec.axis_corner_id`, the same
+      function the loader used, so nothing is lost by not writing it.
+    - label-declared -> its identity and the payload that realises it. The
+      payload has to travel: without it the composed path cannot find the file
+      that makes this corner exist.
+    - `None` (the unrendered deck, i.e. `corner_selection.NOMINAL`) -> an
+      absent identity. It used to be written as `{"process": "(deck)", ...}`,
+      which put a *name* in a coordinate field - a reader of the artifact sees
+      "(deck)" sitting where `ss` sits and has no way to know it is not one.
+      run_full_pvt_sweep never passes None, so this changes nothing for it."""
     if corner is None:
-        return {"process": "(deck)", "voltage": None, "temperature": None}
-    return {
-        "process": corner.process,
-        "voltage": corner.voltage,
-        "temperature": corner.temperature,
-    }
+        return {"corner_id": None}
+    if corner.process is not None:
+        return {
+            "process": corner.process,
+            "voltage": corner.voltage,
+            "temperature": corner.temperature,
+        }
+    return {"corner_id": corner.corner_id, "payload": corner.payload}
 
 
 def worst_case_measurements(
@@ -315,7 +373,7 @@ def worst_case_measurements(
 
         if missing_corners:
             corner = missing_corners[0]
-            worst_corners[criterion.name] = {**_corner_fields(corner), "value": None}
+            worst_corners[criterion.name] = {**corner_fields(corner), "value": None}
             continue  # withhold the measurement so evaluate_criteria fails it as missing
 
         if criterion.operator in (">=", ">"):
@@ -323,7 +381,7 @@ def worst_case_measurements(
         else:
             value, corner = max(values_with_corner, key=lambda vc: vc[0])
         candidates.setdefault(criterion.measurement, []).append((criterion, value))
-        worst_corners[criterion.name] = {**_corner_fields(corner), "value": value}
+        worst_corners[criterion.name] = {**corner_fields(corner), "value": value}
 
     for name, entries in candidates.items():
         violating = [
@@ -416,15 +474,16 @@ def run_full_pvt_sweep(
     for tb in spec.testbenches:
         netlist_text = netlist_texts[tb.name]
         for index, corner in enumerate(corners):
-            render = render_corner_report(
-                netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
-            )
+            render = deck_for_corner(tb, netlist_text, corner, benchmark_dir)
             # **테스트벤치마다 한 번, 그리고 무조건 적는다.** 상태는 덱의 성질이지
             # 코너의 성질이 아니므로 코너마다 적으면 45배의 같은 줄이 되고, 실패
             # 시에만 적으면 "확인했고 멀쩡했다"와 "검사가 사라졌다"가 구별되지
             # 않는다 - optimize_guard_infeasible이 이미 치른 값이다.
             if index == 0 and log_event is not None:
-                log_event("corner_render", {"testbench": tb.name, "states": render.states})
+                log_event(
+                    "corner_render",
+                    {"testbench": tb.name, "mode": render.mode, "states": render.states},
+                )
             points.append(((tb.name, index), (render.text, tb.control_block)))
 
     raw_results = map_points(
@@ -474,7 +533,10 @@ def run_full_pvt_sweep(
         "worst_case_corners": combined_worst_corners,
         "per_corner": [
             {
-                "corner": {"process": c.process, "voltage": c.voltage, "temperature": c.temperature},
+                # `_corner_fields`를 지나간다 - 생성 지점이 셋으로 갈라져 있던
+                # 것이 이 자리였다(축 코너에서는 같은 세 키·같은 순서라 산출물은
+                # 바이트 동일하다).
+                "corner": corner_fields(c),
                 "measurements": m,
                 "severity": corner_severity(m, spec.all_criteria),
             }

@@ -2,7 +2,7 @@ import types
 
 import pytest
 
-from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.corner_selection import NOMINAL, CornerSet, raw_label
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.pvt import CornerPoint
 from analogcoder.simulators.base import RawSimResult
@@ -72,13 +72,13 @@ def _spec_two_testbenches():
         netlist_path="/benchmarks/x/netlist.cir",
         control_block=SPEC_CONTROL_BLOCK,
         criteria=[Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)],
-    )
+        fragments=None)
     tb2 = types.SimpleNamespace(
         name="tb2",
         netlist_path="/benchmarks/x/netlist_psr.cir",
         control_block=".ac dec 10 1 1meg",
         criteria=[Criterion(name="psr", measurement="h", operator=">=", threshold=10.0)],
-    )
+        fragments=None)
     return types.SimpleNamespace(
         circuit_name="x",
         testbenches=[tb1, tb2],
@@ -101,7 +101,7 @@ def _spec_ge_40(criteria=None, corner_reduction=None):
         netlist_path="/benchmarks/x/netlist.cir",
         control_block=SPEC_CONTROL_BLOCK,
         criteria=list(criteria),
-    )
+        fragments=None)
     return types.SimpleNamespace(
         circuit_name="x",
         testbenches=[tb],
@@ -215,6 +215,9 @@ async def test_the_mid_loop_records_which_corner_rewrites_reached_the_deck(tmp_p
     assert len(renders) == 1
     assert renders[0] == {
         "testbench": "tb",
+        # 어느 경로가 이 덱을 만들었는지. 조합 경로의 `states`는 모양이 다르므로,
+        # 이 칸이 없으면 두 모양을 같은 어휘로 읽게 된다.
+        "mode": "rewrite",
         "states": {
             "process_include": "applied",
             "temperature": "applied",
@@ -303,7 +306,7 @@ async def test_a_worst_case_at_the_deck_itself_is_reported_as_the_deck(tmp_path)
 
     result = await sim({"tb": DECK}, _spec_ge_40())
 
-    assert result["corner_worst"]["gain"]["process"] == "(deck)"
+    assert raw_label(result["corner_worst"]["gain"]) == "(deck)"
     assert result["corner_worst"]["gain"]["value"] == 50.0
 
 
@@ -633,6 +636,55 @@ async def test_by_testbench_carries_the_agent_result(tmp_path):
 
     assert result["by_testbench"]["tb"]["measurements"] == {"g": 999.0}
     assert set(result) >= {"status", "measurements", "by_testbench", "corner_worst", "probe"}
+
+
+def test_a_composed_testbench_logs_its_render_even_when_only_nominal_is_selected(tmp_path):
+    """`_log_corner_render`의 조기 반환 근거는 "NOMINAL은 렌더링을 거치지
+    않으므로 적을 것이 없다"인데, **조합 경로에서는 그것이 거짓이다.**
+    `_run_point`는 조합형에서 NOMINAL도 조합한다 - 디스크에 있는 것은 tunable
+    조각뿐이고 그것만으로는 회로가 아니기 때문이다.
+
+    그래서 선택 집합이 NOMINAL뿐인 조합형 테스트벤치는 덱을 조합해 놓고
+    `corner_render`를 하나도 남기지 않았다. "조합했고 괜찮다"와 "조합 경로가
+    통째로 사라졌다"가 같은 침묵이 되는데, 그것은 같은 커밋이 `mode` 칸을 넣은
+    이유 그 자체다."""
+    from analogcoder.corner_sim import _log_corner_render
+    from analogcoder.spec import CornerPoint, FragmentRef, Testbench
+
+    core = tmp_path / "core.cir"
+    core.write_text("R1 in out 1k\nR2 out 0 1k\n")
+    corner_file = tmp_path / "c_a.inc"
+    corner_file.write_text(".temp 27\n")
+    signals = tmp_path / "signals.cir"
+    signals.write_text("Vdd vdd 0 DC 1.8\n")
+
+    tb = Testbench(
+        name="tb",
+        netlist_path=str(core),
+        analyses=["op"],
+        control_block=SPEC_CONTROL_BLOCK,
+        criteria=[Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)],
+        fragments=(
+            FragmentRef(kind="file", path=str(signals)),
+            FragmentRef(kind="corner_slot"),
+            FragmentRef(kind="file", path=str(core), tunable=True),
+        ),
+    )
+    nominal = CornerPoint(corner_id="sign_off_a", payload=str(corner_file))
+    events = []
+
+    _log_corner_render(
+        tb,
+        core.read_text(),
+        CornerSet(corners=(NOMINAL,), probe_order=()),
+        str(tmp_path),
+        lambda name, payload: events.append((name, payload)),
+        nominal_corner=nominal,
+    )
+
+    assert [name for name, _ in events] == ["corner_render"]
+    assert events[0][1]["mode"] == "composed"
+    assert events[0][1]["states"]["corner_slot_filled"] == 1
 
 
 async def test_a_corner_run_gets_the_corner_rendered_deck_and_nominal_the_deck_itself(tmp_path):

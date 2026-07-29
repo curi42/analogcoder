@@ -24,7 +24,7 @@ def _spec(**overrides):
         name="tb",
         criteria=[Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0)],
         control_block=".control\nmeas dc iq_ua FIND i(Vdd) AT=27\n.endc\n",
-    )
+        fragments=None)
     base = dict(
         circuit_name="demo",
         testbenches=[tb],
@@ -181,7 +181,7 @@ async def test_a_step_that_breaks_a_criterion_is_reverted_even_when_it_helps_the
             Criterion(name="gain", measurement="gain_db", operator=">=", threshold=40.0),
         ],
         control_block="",
-    )
+        fragments=None)
     seq = [
         {"iq_ua": 235.0, "gain_db": 60.0},   # 기준선: 둘 다 통과
         {"iq_ua": 200.0, "gain_db": 30.0},   # 목적값은 좋아졌지만 gain이 깨졌다

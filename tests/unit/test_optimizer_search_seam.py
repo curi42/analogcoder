@@ -50,7 +50,7 @@ def _spec(**overrides):
         name="tb",
         criteria=[Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0)],
         control_block=".control\nmeas dc iq_ua FIND i(Vdd) AT=27\n.endc\n",
-    )
+        fragments=None)
     base = dict(
         circuit_name="demo",
         testbenches=[tb],

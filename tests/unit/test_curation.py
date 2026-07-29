@@ -192,7 +192,7 @@ def _slot_with_criteria(criteria: list[Criterion]) -> Slot:
         analyses=["op"],
         control_block=".control\nop\n.endc",
         criteria=criteria,
-    )
+        fragments=None)
     spec = SimpleNamespace(testbenches=[tb], all_criteria=criteria, canonical=tb)
     return Slot(spec=spec, block_path="BLOCK")
 
@@ -433,7 +433,7 @@ def _scoped_slot(criteria: list[Criterion], netlist_text: str, block_path: str =
         analyses=["op"],
         control_block=".control\nop\n.endc",
         criteria=criteria,
-    )
+        fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         all_criteria=criteria,
@@ -1047,11 +1047,11 @@ R1 a b 2k
 """
     criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=0.0)]
     tb1 = SimpleNamespace(
-        name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=criteria
-    )
+        name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=criteria,
+        fragments=None)
     tb2 = SimpleNamespace(
-        name="tb2", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[]
-    )
+        name="tb2", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[],
+        fragments=None)
     spec = SimpleNamespace(testbenches=[tb1, tb2], all_criteria=criteria, canonical=tb1, circuit_name="test")
     slot = Slot(spec=spec, block_path="BLOCK")
     backend = _ConstantBackend({"gain_db": 1.0})
@@ -1441,7 +1441,7 @@ def _corner_slot(criteria: list[Criterion], netlist_text: str, pvt_corners: PVTC
         analyses=["op"],
         control_block=".control\nop\n.endc",
         criteria=criteria,
-    )
+        fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         all_criteria=criteria,
@@ -2233,8 +2233,8 @@ async def test_an_authored_body_that_drops_a_port_is_retried_not_ended():
     propagates out of author_and_verify_variant and the test errors)."""
     netlist_texts = {"tb1": DECK_WITH_AN_UNUSED_HEADER_PORT}
     tb = SimpleNamespace(
-        name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[]
-    )
+        name="tb1", netlist_path="/dev/null", analyses=["op"], control_block=".control\nop\n.endc", criteria=[],
+        fragments=None)
     spec = SimpleNamespace(testbenches=[tb], all_criteria=[], canonical=tb)
     slot = Slot(spec=spec, block_path="BLOCK")
 

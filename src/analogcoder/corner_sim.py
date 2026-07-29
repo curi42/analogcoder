@@ -7,8 +7,8 @@ from analogcoder.corner_selection import NOMINAL, CornerSet, label, next_probe, 
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.pvt import (
     CornerPoint,
+    deck_for_corner,
     render_corner_netlist,
-    render_corner_report,
     worst_case_measurements,
 )
 from analogcoder.simulators.base import RawSimResult
@@ -83,6 +83,8 @@ def _run_point(
     control_block: str,
     benchmark_dir: str,
     nominal_path: str,
+    tb=None,
+    nominal_corner=None,
 ) -> RawSimResult:
     """한 점에서의 직접 시뮬레이션. NOMINAL은 **덱 그대로** - 렌더링을 거치면
     그것은 더 이상 임계값이 정해진 그 덱이 아니다. 코너는
@@ -91,10 +93,17 @@ def _run_point(
     두 갈래가 서로 다른 출처를 읽는다는 점에 주의할 것: NOMINAL은 nominal_path의
     **파일**을, 코너는 netlist_text **인자**를 읽는다. 둘이 같은 덱이어야 한다는
     불변식은 호출부에서 _check_deck_matches_state가 지킨다."""
-    if point is NOMINAL:
+    composed = tb is not None and tb.fragments is not None
+    if point is NOMINAL and not composed:
         return sim_backend.run(nominal_path, {"control_block": control_block})
 
-    rendered = render_corner_netlist(
+    # 조합형 테스트벤치에는 "렌더링을 거치지 않은 덱"이 디스크에 없다 -
+    # `nominal_path`가 가리키는 것은 **tunable 조각**이고 그것만으로는 회로가
+    # 아니다. 그래서 NOMINAL도 조합을 거치며, 슬롯은 스펙이 선언한 nominal
+    # 코너가 채운다.
+    rendered = deck_for_corner(
+        tb, netlist_text, point, benchmark_dir, nominal=nominal_corner
+    ).text if composed else render_corner_netlist(
         netlist_text, point.process, point.voltage, point.temperature, benchmark_dir
     )
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -104,27 +113,36 @@ def _run_point(
         return sim_backend.run(netlist_path, {"control_block": control_block})
 
 
-def _log_corner_render(tb_name, netlist_text, cs, benchmark_dir, log_event) -> None:
-    """이 테스트벤치의 덱을 렌더링하면 세 재작성 중 무엇이 실제로 적용되는지를
-    적는다. NOMINAL은 렌더링을 거치지 않으므로, 선택 집합이 NOMINAL뿐이면
-    적을 것이 없다 - 그때는 조용히 넘어가는 것이 맞다(재작성을 아무도 요청하지
-    않았다).
+def _log_corner_render(tb, netlist_text, cs, benchmark_dir, log_event, nominal_corner=None) -> None:
+    """이 테스트벤치의 덱을 만들면 무엇이 실제로 적용되는지를 적는다.
 
-    대표 코너 하나로 재는 이유: 세 상태는 덱에 그 줄이 있느냐만 보므로 코너
+    **재작성 경로**에서 NOMINAL은 렌더링을 거치지 않으므로, 선택 집합이
+    NOMINAL뿐이면 적을 것이 없다 - 그때는 조용히 넘어가는 것이 맞다(재작성을
+    아무도 요청하지 않았다).
+
+    **조합 경로에서는 그 근거가 성립하지 않는다.** `_run_point`가 조합형에서는
+    NOMINAL도 조합한다 - 디스크에 있는 것은 tunable 조각뿐이고 그것만으로는
+    회로가 아니기 때문이다. 그래서 조합형은 NOMINAL뿐인 집합에서도 대표를 갖는다:
+    스펙이 선언한 nominal 코너다(로더가 슬롯 있는 조합형에 그것을 요구한다).
+    없으면 조합했는데 기록이 없는 상태가 되고, "조합했고 괜찮다"와 "조합 경로가
+    사라졌다"가 같은 침묵이 된다.
+
+    대표 코너 하나로 재는 이유: 상태들은 덱에 그 줄이 있느냐만 보므로 코너
     좌표에 의존하지 않는다. 그래서 존재하는 코너 중 첫 번째를 쓴다 - 가짜
-    좌표를 지어내지 않는다(`_corner_fields`가 (deck)에 대해 지키는 것과 같은
+    좌표를 지어내지 않는다(`corner_fields`가 NOMINAL에 대해 지키는 것과 같은
     규칙)."""
     representative = next((point for point in cs.corners if point is not NOMINAL), None)
+    if representative is None and tb is not None and tb.fragments is not None:
+        representative = nominal_corner
     if representative is None or log_event is None:
         return
-    render = render_corner_report(
-        netlist_text,
-        representative.process,
-        representative.voltage,
-        representative.temperature,
-        benchmark_dir,
+    render = deck_for_corner(
+        tb, netlist_text, representative, benchmark_dir, nominal=nominal_corner
     )
-    log_event("corner_render", {"testbench": tb_name, "states": render.states})
+    log_event(
+        "corner_render",
+        {"testbench": tb.name, "mode": render.mode, "states": render.states},
+    )
 
 
 def build_corner_simulate(
@@ -152,6 +170,12 @@ def build_corner_simulate(
 
     async def simulate_fn(netlist_texts, spec):
         benchmark_dir = os.path.dirname(spec.canonical.netlist_path)
+        # 조합형 테스트벤치의 nominal은 **스펙이 선언한 코너**다 - 조합 모델에
+        # 렌더링을 거치지 않은 덱은 존재하지 않는다.
+        # 단일 파일 경로에서는 아예 묻지 않는다 - 거기서 nominal은 덱 그 자체이고
+        # 코너가 아니므로, 없는 것을 기본값으로 채우는 자리를 만들지 않는다.
+        composed_here = any(tb.fragments is not None for tb in spec.testbenches)
+        nominal_corner = spec.nominal_corner() if composed_here else None
         cs = corner_state.corner_set
         # 회전은 여기서 한 번만 진행하고, 아래 finally에서 **무조건** 커밋한다.
         # 선택 코너의 시뮬레이션이 터지면 이 함수는 예외를 그대로 올려보내는데
@@ -210,7 +234,9 @@ def build_corner_simulate(
                 # 도는 실행을 아무도 알아채지 못한다(startup 테스트벤치의
                 # 전압 축이 정확히 그랬다). 상태는 코너가 아니라 덱의 성질이라
                 # 대표 코너 하나로 충분하고, 그 렌더링 비용은 정규식 몇 개다.
-                _log_corner_render(tb.name, netlist_texts[tb.name], cs, benchmark_dir, log_event)
+                _log_corner_render(
+                    tb, netlist_texts[tb.name], cs, benchmark_dir, log_event, nominal_corner
+                )
 
                 def _point_task(point, _tb=tb, _cb=control_block):
                     return _run_point(
@@ -220,6 +246,8 @@ def build_corner_simulate(
                         _cb,
                         benchmark_dir,
                         paths[_tb.name],
+                        _tb,
+                        nominal_corner,
                     )
 
                 # 탐침도 같은 배치에 넣는다 - 선택 코너와 마찬가지로 독립이고,

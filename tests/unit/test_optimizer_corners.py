@@ -158,7 +158,7 @@ TWO_CRITERIA = [
 
 
 def _two_criteria_spec():
-    tb = SimpleNamespace(name="tb", criteria=list(TWO_CRITERIA), control_block="")
+    tb = SimpleNamespace(name="tb", criteria=list(TWO_CRITERIA), control_block="", fragments=None)
     return _corner_spec(testbenches=[tb])
 
 
