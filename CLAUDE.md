@@ -1450,8 +1450,12 @@ knob that decided the shipped proof case.
   **The contamination does not spread to `bandgap`, and that was measured, not
   assumed.** `scripts/dc_solution_uniqueness.py` pushes the bias chain's initial
   guess five ways — including **explicitly to the off state** — across four
-  device sizes: all six probes (`nbias`/`ncas`/`pbias`/`pcas`/`vbg1`/`vbg0`)
-  come back identical to displayed precision every time. So `BGR_CORE.Xsu_b`'s
+  device sizes and **four of bandgap's six testbench decks** (two are refused,
+  below): all six probes (`nbias`/`ncas`/`pbias`/`pcas`/`vbg1`/`vbg0`)
+  come back identical to displayed precision every time. `netlist_seed_topology.cir`
+  is one of the four, which matters — that deck's `BUF_P` body is `BUF_N`'s, a
+  starved NMOS fold with 10.1 mV of tail headroom, so uniqueness holding there is
+  not just a restatement of the shared-body expectation. So `BGR_CORE.Xsu_b`'s
   trickle really does make the branch unique, exactly as the entry that added it
   claims. Not a proof of uniqueness — five directions, not a dense size sweep,
   and the op-amp's flip lived on *isolated* sizes. The control case is the
@@ -1459,11 +1463,22 @@ knob that decided the shipped proof case.
   out at all** under any of the five guesses. That row is recorded as **void**,
   not as agreement — reading absent data as "the values matched" is the same
   error shape as a gate that passes because it cannot fail. Writing that script
-  cost three silent failures with **exit code 0** each time (control block after
-  `.end` is ignored; one bad name in `print v(a) v(b)` discards the whole line;
-  re-reading the `.nodeset` line reports the value you injected as a
-  measurement, which produced a *false* multiple-solution result). Same family
-  as defect #10 — `re.sub`/`print`/an ignored block are all silent by
+  cost **four** silent failures with **exit code 0** each time: a control block
+  after `.end` is ignored; one bad name in `print v(a) v(b)` discards the whole
+  line; re-reading the `.nodeset` line reports the value you injected as a
+  measurement; and — the one that would have shipped a false claim — **`op` on a
+  deck whose supply is a time-dependent source measures a state the circuit never
+  uses.** `netlist_startup.cir`'s PWL ramp is 0 V at `t=0`, and the script
+  reported "multiple solutions" across four rows there, a result that did not even
+  reproduce when the deck was run alone. The first three produce *no* value; the
+  fourth produces a *wrong* one, which is why it is the dangerous shape. The
+  refusal is keyed on the parsed fact "a top-level source uses a time-dependent
+  function" and deliberately does **not** try to tell supply from stimulus —
+  that needs recognising the rail, the guess this repo forbids — so it fails
+  closed and costs one valid measurement (`netlist_settling.cir`), recorded in a
+  **refused** column distinct from *void*. Note the same deck's PWL supply has now
+  fooled this repo twice: it is also defect #10. Same family throughout —
+  `re.sub`, `print`, an ignored block, and `op` on a ramp are all silent by
   construction.
 - `benchmarks/two_stage_opamp/` — real transistor-level 2-stage CMOS op-amp
   (**sky130**, `.option scale=1.0u` plus `pdk_corner.inc`; it was generic
