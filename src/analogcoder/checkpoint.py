@@ -34,6 +34,8 @@ from dataclasses import dataclass, field, replace
 
 from analogcoder.attempt_log import Attempt
 from analogcoder.corner_selection import NOMINAL, CornerSet
+from analogcoder.json_io import restore_non_finite
+from analogcoder.json_io import dump as json_dump
 from analogcoder.pvt import CornerPoint
 from analogcoder.state import RunState
 
@@ -358,7 +360,11 @@ def write_checkpoint(run_dir, checkpoint: Checkpoint) -> str:
     tmp = path + ".tmp"
     try:
         with open(tmp, "w") as f:
-            json.dump(to_payload(checkpoint), f, indent=2)
+            # `json_io.dump` - 정규화 먼저, `allow_nan=False` 는 그 뒤의 못.
+            # `judge_result` 와 `orchestration_result["final_criteria"]` 는
+            # `evaluate_criteria` 의 출력이고, 측정이 없는 기준의 `actual`/
+            # `margin` 에 `math.nan` 이 실린다 - 예외가 아니라 정상 경로다.
+            json_dump(to_payload(checkpoint), f, indent=2)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
@@ -372,11 +378,20 @@ def write_checkpoint(run_dir, checkpoint: Checkpoint) -> str:
 
 
 def read_payload(run_dir) -> dict | None:
+    """읽기 경계에서 표지를 되돌린다 - `history.read_events` 와 같은 자리.
+
+    **체크포인트는 `result.json` 과 다르다.** `result.json` 은 사람과 외부
+    소비자가 읽고 끝이지만 체크포인트는 **다시 도는 런에 들어간다**:
+    `judge_result` 는 재개한 루프가 그대로 쓰는 값이고
+    `attempt_log.deltas_between` 은 judge 값을 뺀다. 표지 문자열을 그대로
+    올려 보내면 그 뺄셈이 `TypeError` 이므로, 쓰기만 고치는 것은 결함을
+    옮기는 것이지 없애는 것이 아니다.
+    """
     path = checkpoint_path(run_dir)
     if not os.path.exists(path):
         return None
     with open(path) as f:
-        return json.load(f)
+        return restore_non_finite(json.load(f))
 
 
 # ---------------------------------------------------------------- 재개 거부

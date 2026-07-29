@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from types import SimpleNamespace
 
@@ -195,6 +196,104 @@ def test_an_optimization_boundary_carries_the_orchestration_result(tmp_path):
     assert back.boundary == BOUNDARY_OPTIMIZATION
     assert back.progress is None
     assert back.orchestration_result == result
+
+
+# ------------------------------------------------- 비유한 값의 전송 형식
+
+
+def _strict_json_loads(text):
+    """bare `NaN`/`Infinity` 를 거부하는 파서. node 의 `JSON.parse` 와 같은
+    엄격도이며, `json.loads` 의 기본값은 그것들을 **받아 준다**."""
+
+    def reject(token):
+        raise ValueError(f"RFC 8259 가 아닌 토큰: {token}")
+
+    return json.loads(text, parse_constant=reject)
+
+
+def _nan_judge():
+    """`judge_tools.evaluate_criteria` 가 측정이 없는 기준에 싣는 모양.
+    예외 경로가 아니라 정상 경로다."""
+    return {
+        "overall_pass": False,
+        "criteria": [
+            {"name": "ugbw", "pass": False, "actual": math.nan, "margin": math.nan},
+            {"name": "gain", "pass": True, "actual": 71.09, "margin": 11.09},
+        ],
+    }
+
+
+def test_a_checkpoint_carrying_an_unmeasured_criterion_is_valid_json(tmp_path):
+    """`result.json` 과 `history.jsonl` 이 이미 값을 치른 결함이 체크포인트에
+    남아 있었다. bare `NaN` 은 node 가 파일 **전체**를 거부하고, jq 1.7.1 은
+    거부하지 않고 `null` 로 바꿔 준다."""
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(
+        tmp_path, spec_path, spec, progress=make_progress(judge_result=_nan_judge())
+    )
+
+    raw = open(write_checkpoint(run_dir, cp)).read()
+
+    _strict_json_loads(raw)  # 던지면 실패
+
+
+def test_an_unmeasured_criterion_resumes_as_a_float_not_a_marker_string(tmp_path):
+    """표지는 **전송 형식이지 값이 아니다.** 체크포인트는 `result.json` 과 달리
+    다시 **읽혀서 도는 런에 들어간다** - `judge_result` 는 재개한 루프가
+    그대로 쓰는 값이고, `attempt_log.deltas_between` 은 judge 값을 **뺀다**.
+    표지 문자열이 그대로 돌아오면 그 뺄셈이 `TypeError` 다."""
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(
+        tmp_path, spec_path, spec, progress=make_progress(judge_result=_nan_judge())
+    )
+
+    write_checkpoint(run_dir, cp)
+    back = from_payload(read_payload(run_dir))
+
+    actual = back.progress.judge_result["criteria"][0]["actual"]
+    assert isinstance(actual, float) and math.isnan(actual)
+    assert back.progress.judge_result["criteria"][1]["actual"] == 71.09
+
+
+def test_the_wire_format_keeps_unmeasured_distinct_from_no_value(tmp_path):
+    """이 저장소가 여러 번 값을 치른 구별이다. `null` 은 "그 필드에 값이 없다",
+    `NaN` 은 "쟀는데 값이 안 나왔다" - 다른 사실이고, jq 는 둘을 같은 토큰으로
+    만들었다."""
+    spec_path, spec = make_spec(tmp_path)
+    judge = _nan_judge()
+    judge["criteria"][1]["actual"] = None  # 값이 아예 없는 필드
+    run_dir, cp = make_checkpoint(
+        tmp_path, spec_path, spec, progress=make_progress(judge_result=judge)
+    )
+
+    payload = json.loads(open(write_checkpoint(run_dir, cp)).read())
+
+    criteria = payload["progress"]["judge_result"]["criteria"]
+    assert criteria[0]["actual"] == "NaN"
+    assert criteria[1]["actual"] is None
+
+    back = from_payload(read_payload(run_dir))
+    restored = back.progress.judge_result["criteria"]
+    assert math.isnan(restored[0]["actual"])
+    assert restored[1]["actual"] is None
+
+
+def test_the_orchestration_result_takes_the_same_wire_format(tmp_path):
+    """최적화 경계의 체크포인트는 `final_criteria` 를 실어 나르는데, 그것이
+    바로 `evaluate_criteria` 의 출력이다 - `judge_result` 와 같은 자리에서
+    같은 `NaN` 이 나온다."""
+    spec_path, spec = make_spec(tmp_path)
+    result = {"status": "FAIL", "iterations_used": 4, "final_criteria": _nan_judge()["criteria"]}
+    run_dir, cp = make_checkpoint(
+        tmp_path, spec_path, spec, boundary=BOUNDARY_OPTIMIZATION, progress=None,
+        orchestration_result=result,
+    )
+
+    raw = open(write_checkpoint(run_dir, cp)).read()
+    _strict_json_loads(raw)
+
+    back = from_payload(read_payload(run_dir))
+    assert math.isnan(back.orchestration_result["final_criteria"][0]["actual"])
 
 
 # ---------------------------------------------------------------- 원자적 쓰기
