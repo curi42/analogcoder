@@ -2,7 +2,45 @@ import os
 import re
 from dataclasses import dataclass, field
 
-_INCLUDE_RE = re.compile(r'^(\s*\.inc(?:lude)?\s+)"?([^"\s]+)"?\s*$', re.IGNORECASE | re.MULTILINE)
+_INCLUDE_RE = re.compile(
+    r"""^(\s*\.inc(?:lude)?\s+)(?:"([^"]+)"|'([^']+)'|([^"'\s]+))\s*$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# `.lib` 은 두 형태가 있고 **호출 형태만 파일을 가리킨다**:
+#
+#   호출: `.lib '<파일>' <섹션>`   - 인자 둘. 파일과 그 파일 안의 항목 이름.
+#   정의: `.lib <섹션>` … `.endl`  - 인자 하나. 파일을 가리키지 않는다.
+#
+# 구별 규칙은 **인자 개수**다. 이것은 추측이 아니라 관측이다: 독점 PDK 의
+# 코너 파일이 `.lib '../../corner_library/PROCESS.LIB' SF6_HTTT` 형태임이
+# 확인됐다(2026-07-29). 정의 형태를 호출로 오인하면 섹션 이름이 경로로
+# 절대화되어 존재하지 않는 파일을 가리키고, 그 지문은 `None` 이 된다.
+#
+# **알려진 한계(닫힌 방향)**: 인자가 하나뿐인 `.lib '파일.lib'` 형태를 쓰는
+# 방언이 있다면 그것은 정의로 읽혀 파일 참조로 잡히지 않는다. 파일인지
+# 섹션인지를 이름 모양(확장자·경로 구분자)으로 추정하는 것은 이 저장소가
+# 금지하는 종류의 추측이므로, 확인되지 않은 형태는 **놓치는 쪽**으로 닫는다.
+#
+# 이 정규식은 `_INCLUDE_RE` 와 마찬가지로 `simulators/cache.py` 가 그대로
+# import 해서 캐시 지문에 쓴다 - 복제하면 두 쪽이 갈라지고, 갈라진 쪽이
+# 놓친 파일이 곧 캐시 키에서 빠진 결정 요인이 된다.
+_LIB_CALL_RE = re.compile(
+    r"""^(\s*\.lib\s+)(?:"([^"]+)"|'([^']+)'|([^"'\s]+))(\s+[^\s'"]+)\s*$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _quoted_path(match: re.Match, first: int) -> tuple[str, str]:
+    """(경로, 그 경로를 감싸던 따옴표). 따옴표가 없으면 빈 문자열.
+
+    세 갈래(큰따옴표 / 홑따옴표 / 맨몸)를 한 자리에서 읽는다. `first` 는 그
+    세 갈래 중 첫 번째 그룹 번호다."""
+    if match.group(first) is not None:
+        return match.group(first), '"'
+    if match.group(first + 1) is not None:
+        return match.group(first + 1), "'"
+    return match.group(first + 2), ""
 
 
 def resolve_includes(text: str, base_dir: str) -> str:
@@ -20,15 +58,43 @@ def resolve_includes(text: str, base_dir: str) -> str:
     included file (e.g. pdk_corner.inc's own "../../third_party/..." lines)
     resolves against THAT file's directory, not the CWD, so those must be
     left alone - and are, since this never rewrites the included files
-    themselves."""
+    themselves.
 
-    def _absolutize(match: re.Match) -> str:
-        prefix, path = match.group(1), match.group(2)
+    Also rewrites `.lib '<file>' <section>` calls, since those pull in a file
+    the same way. Two asymmetries are deliberate:
+
+    - A `.lib` call keeps **the quoting style it arrived with**, while
+      `.include` is still always re-emitted double-quoted. `.include`'s form is
+      what ten benchmark decks run through ngspice today; `.lib` has no
+      established behaviour here and the one real sample is single-quoted, so
+      preserving is the choice that rests on no unverified dialect claim.
+    - A `.lib` **definition** (`.lib <section>` … `.endl`) is left alone - see
+      `_LIB_CALL_RE`.
+
+    **This is top-level only, and the company's real corner form is nested.**
+    Its `.lib` lines live inside a `corner_sig01.inc` that the deck itself
+    `.include`s, so teaching this function about `.lib` does not by itself
+    cover that shape - the nested file's text never passes through here. That
+    boundary is deliberate (see `simulators/cache.INCLUDE_FINGERPRINT_DEPTH`
+    for the fingerprint side of the same decision) and is pinned by
+    `test_the_company_corner_file_is_nested_and_the_fingerprint_stops_at_the_deck`."""
+
+    def _absolutize_include(match: re.Match) -> str:
+        prefix = match.group(1)
+        path, _quote = _quoted_path(match, 2)
         if os.path.isabs(path):
             return match.group(0)
         return f'{prefix}"{os.path.join(base_dir, path)}"'
 
-    return _INCLUDE_RE.sub(_absolutize, text)
+    def _absolutize_lib(match: re.Match) -> str:
+        prefix, section = match.group(1), match.group(5)
+        path, quote = _quoted_path(match, 2)
+        if os.path.isabs(path):
+            return match.group(0)
+        return f"{prefix}{quote}{os.path.join(base_dir, path)}{quote}{section}"
+
+    text = _INCLUDE_RE.sub(_absolutize_include, text)
+    return _LIB_CALL_RE.sub(_absolutize_lib, text)
 
 
 _SCALE_RE = re.compile(r"^\s*\.option[s]?\b.*?\bscale\s*=\s*(\S+)", re.IGNORECASE | re.MULTILINE)
@@ -49,9 +115,15 @@ def declares_scale(text: str) -> bool:
 
 
 def declares_include(text: str) -> bool:
-    """Does this deck have at least one top-level `.include`/`.inc` line? Uses
-    the same regex `resolve_includes` rewrites with, so the two cannot drift."""
-    return _INCLUDE_RE.search(text) is not None
+    """Does this deck have at least one top-level `.include`/`.inc`/`.lib` line?
+
+    Uses the same two regexes `resolve_includes` rewrites with, so the two
+    cannot drift. A `.lib` call counts because it pulls in a file exactly the
+    way `.include` does - and this function's one caller
+    (`curation.candidate_from_deck`) is asking "could this deck's `.option
+    scale` be hiding in a file I never read?", to which a `.lib` call is a yes.
+    A `.lib` **definition** is not a file reference and does not count."""
+    return _INCLUDE_RE.search(text) is not None or _LIB_CALL_RE.search(text) is not None
 
 
 def netlist_scale(text: str) -> float:

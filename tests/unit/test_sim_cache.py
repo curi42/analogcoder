@@ -319,3 +319,215 @@ def test_an_empty_worker_env_var_falls_back_to_the_default(monkeypatch, bad):
 
     monkeypatch.setenv(ENV_WORKERS, bad)
     assert default_workers() >= 1
+
+
+# ------------------------------------------------------- `.lib` 과 지문 깊이
+
+# 독점 PDK 의 코너 파일 내용(사용자 진술, 2026-07-29). 축 정체성은 여기서
+# 읽지 않는다 - `test_netlist_dialect.py` 의 같은 픽스처 주석을 볼 것.
+_CORNER_INC_BODY = (
+    "*Process\n"
+    ".lib '{lib_dir}/PROCESS.LIB' SF6_HTTT\n"
+    "\n"
+    "*Voltage\n"
+    ".lib '{lib_dir}/VOLTAGE.LIB' MV\n"
+    "\n"
+    "*Temperature\n"
+    ".lib '{lib_dir}/TEMP.LIB' RT\n"
+)
+
+
+def _corner_library(tmp_path):
+    lib_dir = tmp_path / "corner_library"
+    lib_dir.mkdir()
+    for name in ("PROCESS.LIB", "VOLTAGE.LIB", "TEMP.LIB"):
+        (lib_dir / name).write_text(f"* {name}\n.lib TT\n.model nch nmos\n.endl TT\n")
+    return lib_dir
+
+
+def test_a_lib_call_lands_in_the_cache_fingerprint(tmp_path):
+    """`.lib` 이 지문에서 빠지면 PDK 가 **캐시 키에서 통째로 사라진다** -
+    지문 `[]` 과 "이 덱엔 include 가 하나도 없다" 가 글자 그대로 같아진다.
+    이 모듈의 docstring 이 "결정 요인이 빠진 캐시는 조용한 게이트보다 나쁘다"
+    고 적은 자리가 정확히 이것이다."""
+    from analogcoder.simulators.cache import include_fingerprints
+
+    lib_dir = _corner_library(tmp_path)
+    text = _CORNER_INC_BODY.format(lib_dir=lib_dir)
+
+    fingerprints = include_fingerprints(text, str(tmp_path))
+
+    paths = [fp[0] for fp in fingerprints]
+    assert paths == sorted(str(lib_dir / n) for n in ("PROCESS.LIB", "TEMP.LIB", "VOLTAGE.LIB"))
+    assert all(fp[1] is not None and fp[2] is not None for fp in fingerprints)
+
+
+def test_changing_a_lib_target_changes_the_cache_key(tmp_path):
+    from analogcoder.simulators.cache import simulation_key
+
+    lib_dir = _corner_library(tmp_path)
+    text = _CORNER_INC_BODY.format(lib_dir=lib_dir)
+    config = {"control_block": "op"}
+
+    before = simulation_key(text, str(tmp_path), config, "sim-v1")
+    (lib_dir / "PROCESS.LIB").write_text("* PROCESS.LIB - 다른 내용\n.lib TT\n.endl TT\n")
+    after = simulation_key(text, str(tmp_path), config, "sim-v1")
+
+    assert before != after
+
+
+def test_a_lib_definition_does_not_land_in_the_fingerprint(tmp_path):
+    from analogcoder.simulators.cache import include_fingerprints
+
+    text = "* t\n.lib SF6_HTTT\n.model nch nmos level=54\n.endl SF6_HTTT\n.end\n"
+
+    assert include_fingerprints(text, str(tmp_path)) == []
+
+
+def test_the_company_corner_file_is_nested_and_the_fingerprint_stops_at_the_deck(tmp_path):
+    """**이 계층이 어디까지 보는지를 못박는 테스트다.**
+
+    생산 덱의 실제 모양은 `덱 -> corner_sig01.inc -> PROCESS.LIB` 두 단계다.
+    `include_fingerprints` 는 **최상위 덱만** 훑으므로 지문에 들어가는 것은
+    `corner_sig01.inc` 하나이고 `PROCESS.LIB` 은 들어가지 않는다. 즉 코너
+    파일의 내용이 바뀌면 캐시가 미적중이 되지만, **PROCESS.LIB 만 바뀌면
+    적중한다.**
+
+    한 겹 더 따라가지 않기로 한 근거는 보고서에 있고 요약하면 셋이다:
+    (1) 그러려면 중간 파일을 **읽어야** 하는데 최상위 include 가 수십 MB
+    모델 파일을 직접 가리키는 경우가 있고 `simulation_key` 는 시뮬레이션마다
+    돈다, (2) 깊이 1 은 대상 환경체인이 정확히 2단이라는 **미확인 가정**이다,
+    (3) 벤치마크 20개 덱의 캐시 키가 바뀐다.
+
+    보이지 않는다는 사실 자체는 조용하지 않다 - `sim_cache` 이벤트가
+    `INCLUDE_FINGERPRINT_DEPTH` 를 매번 싣는다(아래 테스트).
+
+    **중첩을 따라가게 만드는 사람은 이 테스트를 갱신해야 한다.**"""
+    from analogcoder.netlist import resolve_includes
+    from analogcoder.simulators.cache import include_fingerprints
+
+    lib_dir = _corner_library(tmp_path)
+    corner_dir = tmp_path / "corners"
+    corner_dir.mkdir()
+    corner_inc = corner_dir / "corner_sig01.inc"
+    corner_inc.write_text(_CORNER_INC_BODY.format(lib_dir=lib_dir))
+    deck = "* company deck\n.include '{}'\nR1 a b 1k\n.end\n".format(corner_inc)
+
+    fingerprints = include_fingerprints(deck, str(tmp_path))
+
+    assert [fp[0] for fp in fingerprints] == [str(corner_inc)]
+    assert not any("PROCESS.LIB" in fp[0] for fp in fingerprints)
+    # 덱 텍스트에도 안 나타난다 - 중간 파일을 열지조차 않는다.
+    assert "PROCESS.LIB" not in resolve_includes(deck, str(tmp_path))
+    # 정규식 자체는 그 파일 안의 세 줄을 전부 본다. 막힌 것은 **순회**이지
+    # 인식이 아니다.
+    assert len(include_fingerprints(corner_inc.read_text(), str(corner_dir))) == 3
+
+
+def test_a_relative_corner_include_is_anchored_and_a_missing_one_is_counted(tmp_path):
+    """상대 경로가 실제로 들어왔을 때 **조용히 통과하지 않는다.**
+
+    사용자는 코너 경로를 절대 경로로 고쳐 넣을 **수도** 있다고 했지, 상대
+    경로가 영원히 안 온다고 보장하지 않았다. 상대 경로는 덱이 놓인
+    디렉터리에 앵커되고(ngspice 가 쓰는 것과 같은 규칙), 그 자리에 파일이
+    없으면 `None` 지문 + `unresolved` 계량으로 남는다."""
+    from analogcoder.simulators.cache import include_fingerprints, include_summary
+
+    lib_dir = _corner_library(tmp_path)
+    deck_dir = tmp_path / "tb"
+    deck_dir.mkdir()
+    text = "* t\n.lib '../corner_library/PROCESS.LIB' SF6_HTTT\n.lib 'nowhere/X.LIB' TT\n.end\n"
+
+    fingerprints = include_fingerprints(text, str(deck_dir))
+    summary = include_summary(text, str(deck_dir))
+
+    resolved = [fp for fp in fingerprints if fp[1] is not None]
+    assert [fp[0] for fp in resolved] == [str(lib_dir / "PROCESS.LIB")]
+    assert summary["relative"] == 2
+    assert summary["unresolved"] == 1
+    assert summary["lib"] == 2
+
+
+def test_the_sim_cache_event_says_how_deep_the_fingerprint_looks(tmp_path):
+    """계량은 **매번** 나간다. 조건부로 내면 "include 가 없다" 와 "계량이
+    사라졌다" 가 로그에서 같아진다 - `optimize_guard_infeasible` 과
+    `attempt_log` 가 이미 정한 규칙이다."""
+    from analogcoder.simulators.cache import INCLUDE_FINGERPRINT_DEPTH
+
+    events = []
+    cache = CachingSimulator(_CountingBackend(), log_event=lambda step, data: events.append(data))
+
+    cache.run(_deck(tmp_path), {"control_block": "op"})
+    cache.run(_deck(tmp_path), {"control_block": "op"})
+
+    assert len(events) == 2  # 미적중 하나, 적중 하나
+    for data in events:
+        assert data["includes"] == {
+            "depth": INCLUDE_FINGERPRINT_DEPTH,
+            "include": 0,
+            "lib": 0,
+            "relative": 0,
+            "unresolved": 0,
+        }
+
+
+def test_a_cache_hit_carries_the_failure_kind_back(tmp_path):
+    """복사본을 돌려주는 자리에서 필드 하나가 빠지면 그것은 캐시가 사실을
+    **잃는** 경로다 - `measurements` 를 복사하는 것과 같은 이유로 고정한다."""
+
+    class _Failing(SimulatorBackend):
+        def __init__(self):
+            self.calls = 0
+
+        def identity(self):
+            return "fail-sim"
+
+        def run(self, netlist_path, testbench_config):
+            self.calls += 1
+            return RawSimResult(
+                status="convergence_failure",
+                measurements={},
+                raw_log="no convergence",
+                failure_kind="convergence",
+            )
+
+    inner = _Failing()
+    cache = CachingSimulator(inner)
+    path = _deck(tmp_path)
+
+    first = cache.run(path, {"control_block": "op"})
+    second = cache.run(path, {"control_block": "op"})
+
+    assert inner.calls == 1  # convergence 는 캐시 가능하다
+    assert first.failure_kind == second.failure_kind == "convergence"
+
+
+def test_an_environmental_failure_is_not_stored_and_the_event_says_why(tmp_path):
+    class _Env(SimulatorBackend):
+        def __init__(self):
+            self.calls = 0
+
+        def identity(self):
+            return "env-sim"
+
+        def run(self, netlist_path, testbench_config):
+            self.calls += 1
+            return RawSimResult(
+                status="error",
+                measurements={},
+                raw_log="timed out",
+                cacheable=False,
+                failure_kind="timeout",
+            )
+
+    inner = _Env()
+    events = []
+    cache = CachingSimulator(inner, log_event=lambda step, data: events.append(data))
+    path = _deck(tmp_path)
+
+    cache.run(path, {"control_block": "op"})
+    cache.run(path, {"control_block": "op"})
+
+    assert inner.calls == 2
+    assert [data["stored"] for data in events] == [False, False]
+    assert [data["failure_kind"] for data in events] == ["timeout", "timeout"]

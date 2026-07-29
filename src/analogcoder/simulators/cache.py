@@ -60,8 +60,32 @@ import threading
 
 # `netlist.py`의 비공개 이름을 그대로 쓴다. 복제하면 두 정규식이 갈라질 수 있고,
 # 갈라진 쪽이 include 하나를 놓치면 그것이 곧 키에서 빠진 결정 요인이 된다.
-from analogcoder.netlist import _INCLUDE_RE
+from analogcoder.netlist import _INCLUDE_RE, _LIB_CALL_RE, _quoted_path
 from analogcoder.simulators.base import RawSimResult, SimulatorBackend
+
+# 지문이 훑는 깊이. **최상위 덱 한 겹뿐이다.**
+#
+# 독점 PDK 의 실제 모양은 `덱 -> corner_sig01.inc -> PROCESS.LIB` 두 단계이므로,
+# 이 값이 1 인 한 **PDK 파일 자체는 캐시 키에 없다** - 코너 파일이 바뀌면
+# 미적중이 되지만 PROCESS.LIB 만 바뀌면 적중한다.
+#
+# 한 겹 더 따라가지 않기로 한 근거 셋:
+# 1. 깊이 2 의 대상을 *찾으려면* 깊이 1 의 파일을 **읽어야** 한다. 지문이 파일을
+#    읽지 않는 것은 이 모듈의 설계 결정이고("PDK 모델 파일은 수십 MB이고,
+#    시뮬레이션마다 읽으면 캐시가 아끼려던 것을 도로 쓴다"), 최상위 `.include`
+#    가 그 수십 MB 파일을 **직접** 가리키는 덱이 실제로 있다. `simulation_key`
+#    는 `run()` 마다 돈다.
+# 2. 깊이 1 은 대상 환경체인이 정확히 2단이라는 **미확인 가정**이다. PROCESS.LIB
+#    이 다시 무언가를 끌어오면 깊이 2 도 같은 자리에서 조용히 멈춘다. 확인
+#    안 된 수를 고르는 것은 이 저장소가 금지하는 추측이다.
+# 3. 벤치마크 20개 덱의 캐시 키가 바뀐다(`pdk_corner.inc` 가 sky130 모델
+#    파일들을 다시 include 한다).
+#
+# **보이지 않는다는 사실은 조용하지 않다** - 이 값이 `sim_cache` 이벤트에
+# 매번 실린다. 깊이를 늘리는 사람은 이 상수와 그것을 못박은 테스트
+# (`test_the_company_corner_file_is_nested_and_the_fingerprint_stops_at_the_deck`)
+# 를 함께 고쳐야 한다.
+INCLUDE_FINGERPRINT_DEPTH = 1
 
 _VERSION_CACHE: dict[str, str] = {}
 _VERSION_LOCK = threading.Lock()
@@ -99,12 +123,17 @@ def include_fingerprints(netlist_text: str, netlist_dir: str) -> list[list]:
     내용을 읽지 않는 이유는 `parse_netlist`가 include를 따라가지 않는 것과 같다 -
     PDK 모델 파일은 수십 MB이고, 시뮬레이션마다 읽으면 캐시가 아끼려던 것을
     도로 쓴다. `(크기, mtime_ns)`는 그 자리를 대신하는 값싼 대리다. 이것이
-    실행을 넘는 캐시를 범위 밖으로 두는 이유이기도 하다."""
+    실행을 넘는 캐시를 범위 밖으로 두는 이유이기도 하다.
+
+    `.include`/`.inc` 와 **`.lib` 호출**을 둘 다 본다. `.lib` 이 빠져 있던
+    동안에는 `.lib` 만 쓰는 덱의 지문이 `[]` 이었고, 그것은 "이 덱엔 include 가
+    하나도 없다" 와 캐시 키에서 **글자 그대로 같았다** - PDK 파일이 실행 도중
+    바뀌어도 옛 값이 계속 나온다. `.lib` **정의**(`.lib <섹션>` … `.endl`)는
+    파일 참조가 아니므로 잡지 않는다(`netlist._LIB_CALL_RE` 주석 참조).
+
+    깊이는 `INCLUDE_FINGERPRINT_DEPTH` - 최상위 덱 한 겹뿐이다."""
     fingerprints = []
-    for match in _INCLUDE_RE.finditer(netlist_text):
-        raw = match.group(2)
-        path = raw if os.path.isabs(raw) else os.path.join(netlist_dir, raw)
-        path = os.path.abspath(path)
+    for path, _raw_was_relative in _referenced_paths(netlist_text, netlist_dir):
         try:
             stat = os.stat(path)
         except OSError:
@@ -113,6 +142,48 @@ def include_fingerprints(netlist_text: str, netlist_dir: str) -> list[list]:
             fingerprints.append([path, stat.st_size, stat.st_mtime_ns])
     fingerprints.sort()
     return fingerprints
+
+
+def _referenced_paths(netlist_text: str, netlist_dir: str):
+    """`(해석된 절대 경로, 원문이 상대 경로였는가)` 를 선언 순서대로.
+
+    `.include` 와 `.lib` 호출을 한 자리에서 해석한다 - 지문과 계량이 같은
+    목록을 봐야 "지문에 없다" 와 "계량에 없다" 가 어긋나지 않는다."""
+    for regex in (_INCLUDE_RE, _LIB_CALL_RE):
+        for match in regex.finditer(netlist_text):
+            raw, _quote = _quoted_path(match, 2)
+            relative = not os.path.isabs(raw)
+            path = os.path.join(netlist_dir, raw) if relative else raw
+            yield os.path.abspath(path), relative
+
+
+def include_summary(netlist_text: str, netlist_dir: str) -> dict:
+    """지문이 무엇을 봤는지의 계량. **캐시 키에는 들어가지 않는다.**
+
+    키에 넣으면 같은 사실을 두 번 세는 것이고, 벤치마크 덱의 키가 계량을
+    추가했다는 이유만으로 바뀐다.
+
+    세 가지를 구별 가능하게 만든다:
+    - `depth` - 어느 깊이까지 봤는가. 중첩된 코너 파일(생산 덱의 실제 모양)의
+      내용이 키에 **없다**는 사실이 실행마다 관측된다.
+    - `relative` - 상대 경로가 몇 개 들어왔는가. 사용자는 코너 경로를 절대
+      경로로 고쳐 넣을 *수도* 있다고 했지 상대 경로가 안 온다고 보장하지
+      않았다. 상대 경로가 조용히 지나가면 안 된다.
+    - `unresolved` - 그 자리에 파일이 없어 `None` 지문이 된 것이 몇 개인가.
+      지금까지 "지문을 못 잡음" 과 "이 덱엔 include 가 없다" 가 구별 불가였다.
+    """
+    counts = {
+        "depth": INCLUDE_FINGERPRINT_DEPTH,
+        "include": len(_INCLUDE_RE.findall(netlist_text)),
+        "lib": len(_LIB_CALL_RE.findall(netlist_text)),
+        "relative": 0,
+        "unresolved": 0,
+    }
+    for path, relative in _referenced_paths(netlist_text, netlist_dir):
+        counts["relative"] += int(relative)
+        if not os.path.exists(path):
+            counts["unresolved"] += 1
+    return counts
 
 
 def simulation_key(
@@ -185,6 +256,9 @@ class CachingSimulator(SimulatorBackend):
             return self.inner.run(netlist_path, testbench_config)
 
         key = simulation_key(netlist_text, netlist_dir, testbench_config, self.identity())
+        # 계량은 **매번** 실린다. 조건부로 내면 "include 가 없는 덱" 과
+        # "계량이 사라졌다" 가 로그에서 같아진다.
+        includes = include_summary(netlist_text, netlist_dir)
 
         with self._lock:
             cached = self._entries.get(key)
@@ -201,13 +275,17 @@ class CachingSimulator(SimulatorBackend):
             # 적중의 값을 바꾼다 - 캐시가 값을 지어내는 또 하나의 경로다.
             if self.log_event is not None:
                 with self._lock:
-                    self.log_event("sim_cache", {"hit": True, "key": key[:16], **stats})
+                    self.log_event(
+                        "sim_cache",
+                        {"hit": True, "key": key[:16], "includes": includes, **stats},
+                    )
             return RawSimResult(
                 status=cached.status,
                 measurements=dict(cached.measurements),
                 raw_log=cached.raw_log,
                 warnings=list(cached.warnings),
                 cacheable=cached.cacheable,
+                failure_kind=cached.failure_kind,
             )
 
         result = self.inner.run(netlist_path, testbench_config)
@@ -219,7 +297,14 @@ class CachingSimulator(SimulatorBackend):
             if self.log_event is not None:
                 self.log_event(
                     "sim_cache",
-                    {"hit": False, "key": key[:16], "stored": result.cacheable, **stats},
+                    {
+                        "hit": False,
+                        "key": key[:16],
+                        "stored": result.cacheable,
+                        "failure_kind": result.failure_kind,
+                        "includes": includes,
+                        **stats,
+                    },
                 )
         return RawSimResult(
             status=result.status,
@@ -227,6 +312,7 @@ class CachingSimulator(SimulatorBackend):
             raw_log=result.raw_log,
             warnings=list(result.warnings),
             cacheable=result.cacheable,
+            failure_kind=result.failure_kind,
         )
 
 

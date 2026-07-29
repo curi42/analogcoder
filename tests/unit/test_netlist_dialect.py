@@ -1,6 +1,7 @@
 from analogcoder.netlist import (
     apply_changes,
     check_refdes_resolution,
+    declares_include,
     parse_netlist,
     resolve_includes,
     strip_inline_comment,
@@ -142,3 +143,81 @@ def test_a_subckt_line_default_may_be_a_spaced_quoted_expression():
 
     assert subckt.ports == ["a", "b"]
     assert subckt.defaults == {"W": "'wn * 2'"}
+
+
+# ----------------------------------------------------------------- `.lib`
+
+# 독점 PDK 가 코너를 지정하는 실제 파일 내용(사용자 진술, 2026-07-29).
+#
+# **축 정체성을 여기서 읽지 않는다.** `PROCESS.LIB` 이 process 축이라는 것을
+# 알아내는 길은 셋(파일명 / 순서 / 위의 `*` 주석)뿐이고 전부 추측이다 -
+# 넷 이름 `vdd` 를 보고 전원 레일이라고 단정하는 것과 같은 부류이며, 사용자가
+# 경로는 바뀔 수 있다고 예고했다. 이 픽스처가 고정하는 사실은 하나뿐이다:
+# **`.lib` 호출 줄은 파일을 가리킨다.**
+COMPANY_CORNER_INC = (
+    "*Process\n"
+    ".lib '../../corner_library/PROCESS.LIB' SF6_HTTT\n"
+    "\n"
+    "*Voltage\n"
+    ".lib '../../corner_library/VOLTAGE.LIB' MV\n"
+    "\n"
+    "*Temperature\n"
+    ".lib '../../corner_library/TEMP.LIB' RT\n"
+)
+
+
+def test_a_lib_call_is_absolutised_and_keeps_its_section_name():
+    out = resolve_includes(COMPANY_CORNER_INC, "/BASE/tb/corner")
+
+    assert ".lib '/BASE/tb/corner/../../corner_library/PROCESS.LIB' SF6_HTTT" in out
+    assert ".lib '/BASE/tb/corner/../../corner_library/VOLTAGE.LIB' MV" in out
+    assert ".lib '/BASE/tb/corner/../../corner_library/TEMP.LIB' RT" in out
+    # 주석 줄은 손대지 않는다. `*Process` 는 자유 텍스트이고 파서가 읽는
+    # 대상이 아니다.
+    assert "*Process" in out
+
+
+def test_a_lib_definition_is_not_a_file_reference():
+    """`.lib` 은 두 형태이고 **호출만** 파일을 가리킨다.
+
+    호출: `.lib '<파일>' <섹션>`  - 인자 둘.
+    정의: `.lib <섹션>` … `.endl` - 인자 하나. 파일이 아니다.
+
+    구별은 **인자 개수**이고 이것은 추측이 아니다 - 생산 덱의 실제 호출 형태가
+    `.lib '<경로>' <섹션>` 두 인자임이 확인됐다. 정의 형태를 호출로 오인하면
+    섹션 이름이 경로로 절대화되어 존재하지 않는 파일을 가리킨다."""
+    deck = "* t\n.lib SF6_HTTT\n.model nch nmos level=54\n.endl SF6_HTTT\n.end\n"
+
+    assert resolve_includes(deck, "/BASE") == deck
+
+
+def test_a_lib_call_keeps_the_quoting_style_it_arrived_with():
+    """따옴표 종류를 바꾸지 않는다. 생산 덱 형태는 홑따옴표이고, 그것을
+    큰따옴표로 고쳐 쓰는 것은 HSPICE 가 둘 다 받는다는 **미검증** 주장에
+    기대는 것이다. 원문 유지는 어느 쪽이 참이든 옳다."""
+    assert resolve_includes(".lib 'm.lib' TT\n", "/b").strip() == ".lib '/b/m.lib' TT"
+    assert resolve_includes('.lib "m.lib" TT\n', "/b").strip() == '.lib "/b/m.lib" TT'
+    assert resolve_includes(".lib m.lib TT\n", "/b").strip() == ".lib /b/m.lib TT"
+
+
+def test_an_absolute_lib_path_is_left_alone():
+    line = ".lib '/pdk/corner_library/PROCESS.LIB' SF6_HTTT\n"
+
+    assert resolve_includes(line, "/BASE") == line
+
+
+def test_a_lib_call_counts_as_a_declared_include():
+    """`curation.candidate_from_deck` 이 "scale 이 include 안에 있을 수 있다"를
+    경고하는 근거가 이 함수다. `.lib` 도 파일을 끌어오므로 같은 근거가 든다."""
+    assert declares_include(".lib '/pdk/x.lib' TT\n") is True
+    assert declares_include(".lib TT\n.endl TT\n") is False
+
+
+def test_a_single_quoted_include_path_does_not_keep_its_quotes():
+    """회귀: `.include 'models/tt.inc'` 가
+    `.include "/BASE/'models/tt.inc'"` 로 다시 쓰였다 - 따옴표가 경로 안에
+    박힌 깨진 경로다. 벤치마크 덱 중 홑따옴표 include 를 쓰는 것은 0건이라
+    이 수정은 오늘 어떤 덱의 동작도 바꾸지 않는다."""
+    out = resolve_includes(".include 'models/tt.inc'\n", "/BASE")
+
+    assert out.strip() == '.include "/BASE/models/tt.inc"'
