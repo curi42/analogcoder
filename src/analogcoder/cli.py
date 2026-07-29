@@ -28,7 +28,7 @@ from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.history import count_events, discarded_ranges, line_count, read_events
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_optimization
-from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
+from analogcoder.orchestrator import OrchestratorAgents, _attempt_summary, run_orchestration
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
 from analogcoder.simulators.cache import CachingSimulator
@@ -231,6 +231,11 @@ def _early_fail_result(
         # []가 아니라 누적값인 이유는, 이 갈래에 체크포인트가 실어 온 스왑이
         # 있을 수 있고 그때 []는 없어진 기록을 없었던 것처럼 만들기 때문이다.
         "topology_swaps": list(topology_swaps),
+        # 같은 계약이 `attempt_summary`에도 걸린다. 이 갈래는 루프를 시작조차
+        # 못 했으므로 제안이 하나도 없고, 그 사실은 **0으로 채운 dict**로
+        # 말해야 한다 - 키가 통째로 없으면 "제안이 0건"과 "이 실행은 집계를
+        # 아예 안 쓴다"가 같은 부재가 되고, 그것이 D1 측정을 무효로 만든 모양이다.
+        "attempt_summary": _attempt_summary([]),
         # "확인했고 멀쩡했다"와 "그 기록이 사라졌다"가 같은 부재면 안 된다.
         "pvt_sweep_error": sweep_error,
         "corner_reduction": {

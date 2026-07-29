@@ -2028,3 +2028,70 @@ async def test_the_oserror_handler_does_not_write_to_the_same_broken_disk(tmp_pa
 
     assert result["status"] == "FAIL"
     assert "could not read" in result["failure_reason"]
+
+
+# ------------------- 제안이 어떻게 끝났는지가 결과 산출물에 남는다
+
+
+@pytest.mark.asyncio
+async def test_the_result_says_how_this_run_s_proposals_ended(tmp_path):
+    """감사 §3.8. 이 집계는 `history.jsonl`에만 있었고 `result.json`에는
+    없었다. 그래서 **모든 제안이 면적 게이트에 막혀 덱이 한 번도 안 바뀐
+    실행**과 **제안이 대부분 채택된 실행**의 `result.json`이 구조적으로
+    동일했다.
+
+    거짓을 말한 것은 아니고 생략한 것이다. 그러나 D1의 교훈이 정확히
+    "이 지표가 다른 답을 낼 조건이 이 런에 있었는가를 **런 자신이** 답할 수
+    있어야 한다"이다 - D1 측정이 무효였던 이유가 기준선 런의 실패 이벤트가
+    0건이었다는 것이고, 그 사실은 `history.jsonl`을 따로 파야만 나왔다."""
+
+    async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
+        return one_change("M6", "W", "40u", "100u")  # 항상 면적 게이트에 막힌다
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
+
+    summary = result["attempt_summary"]
+    assert summary["by_outcome"]["kept"] == 0
+    assert summary["by_outcome"]["rolled_back"] == 0
+    assert summary["by_outcome"]["rejected"] > 0
+    assert summary["rejected_by_reason"]["area"] == summary["by_outcome"]["rejected"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_never_proposed_anything_still_carries_the_summary(tmp_path):
+    """**0으로 채운 dict로 항상 실린다.** 이것이 이 수정의 요점이다 - 조건부로
+    실으면 "실패가 한 번도 없었다"와 "집계가 사라졌다"가 같은 부재가 되고,
+    그것이 D1 측정을 무효로 만든 바로 그 모양이다. `topology_swaps`가 항상
+    실리는 것과 같은 규칙이다."""
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, make_agents())
+
+    assert result["status"] == "PASS"
+    assert result["attempt_summary"] == {
+        "changes": 0,
+        "by_outcome": {"kept": 0, "rolled_back": 0, "rejected": 0},
+        "rejected_by_reason": {
+            "area": 0, "refdes": 0, "param": 0, "stimulus": 0, "verify_pre": 0
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_kept_change_and_a_rollback_land_in_different_boxes(tmp_path):
+    """세 결과가 서로 다른 칸에 센다. `rejected_by_reason`의 합은
+    `by_outcome["rejected"]`와 같아야 한다 - 게이트는 제안 **전체**를
+    거부하므로 변경 하나마다 항목이 하나다."""
+    verdicts = iter([FAIL_JUDGE, FAIL_JUDGE, PASS_JUDGE])
+
+    agents = make_agents(judge=lambda m, s: _async(next(verdicts, PASS_JUDGE)))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    summary = result["attempt_summary"]
+    assert sum(summary["rejected_by_reason"].values()) == summary["by_outcome"]["rejected"]
+    assert sum(summary["by_outcome"].values()) == summary["changes"]

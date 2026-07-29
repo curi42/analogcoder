@@ -311,6 +311,46 @@ def _final_criteria_provenance(result: dict) -> str:
     return f"Measured on {condition}; judged by {judged_by}."
 
 
+def _attempt_lines(summary: dict | None) -> list[str]:
+    """이 실행의 제안이 **어떻게 끝났는지**. 키가 없으면 빈 목록(이 결과를
+    만든 코드가 집계를 아예 안 쓴다는 뜻).
+
+    **값이 전부 0이어도 그린다.** 침묵이 "안 돌았다"를 뜻한다는 규칙은 키의
+    **부재**에만 걸리고 값에는 걸리지 않는다 - `_pvt_lines`가 통과했을 때도
+    그리는 것과 같은 이유다. 여기서 0을 접으면 "거부가 한 건도 없었다"와
+    "집계가 사라졌다"가 다시 같은 침묵이 된다.
+
+    이 표가 없던 리포트는 실제로 이랬다: 모든 제안이 면적 게이트에 막혀 덱이
+    한 번도 안 바뀐 실행과, 제안이 대부분 채택된 실행의 리포트가 구조적으로
+    **동일**했다. 상태와 기준 표만 보고는 그 둘을 가를 수 없다.
+    """
+    if not summary:
+        return []
+    outcome = summary.get("by_outcome", {})
+    reasons = summary.get("rejected_by_reason", {})
+    lines = [
+        "",
+        "## Tuning attempts",
+        "",
+        f"**Component changes proposed:** {summary.get('changes', 0)}",
+        "",
+        "| outcome | count |",
+        "| --- | --- |",
+    ]
+    lines += [f"| {name} | {count} |" for name, count in outcome.items()]
+    if reasons:
+        lines += [
+            "",
+            "**Rejections by gate** (a gate rejects the whole proposal, so every "
+            "change in it is counted):",
+            "",
+            "| gate | count |",
+            "| --- | --- |",
+        ]
+        lines += [f"| {name} | {count} |" for name, count in reasons.items()]
+    return lines
+
+
 def write_report_md(run_dir: str, result: dict) -> str:
     lines = [
         "# Run Report",
@@ -340,6 +380,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
         lines.append(f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} (margin {c['margin']})")
     lines += pvt_lines
     lines += _resume_lines(result.get("resumed_from"))
+    lines += _attempt_lines(result.get("attempt_summary"))
     lines += _topology_lines(result.get("topology_swaps"))
     lines += _optimization_lines(result.get("optimization"))
     lines += _corner_reduction_lines(result.get("corner_reduction"))

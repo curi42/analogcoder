@@ -38,6 +38,43 @@ class OrchestratorAgents:
     propose_topology: Callable
 
 
+# `Attempt.outcome`이 가질 수 있는 값 전부. 집계를 **0으로 채워** 내보내기
+# 위해 이름이 필요하다 - 일어난 것만 담으면 "0건"과 "집계가 사라졌다"가
+# 같은 부재가 된다.
+ATTEMPT_OUTCOMES = ("kept", "rolled_back", "rejected")
+
+# `_record_rejected`가 쓰는 사유 코드 전부. 이 다섯은 결정되는 자리에서
+# 기록되며 `history.jsonl`에서 되찾을 수 없다 - `area_check`와 `refdes_check`가
+# 둘 다 `feedback` 키에 텍스트를 쓰기 때문이다.
+REJECTION_REASONS = ("area", "refdes", "param", "stimulus", "verify_pre")
+
+
+def _attempt_summary(attempts: list[Attempt]) -> dict:
+    """이 실행의 제안이 **어떻게 끝났는지**. 항상 실리고, 항상 0으로 채운다.
+
+    이 집계는 `history.jsonl`에만 있었다. 그래서 모든 제안이 면적 게이트에
+    막혀 덱이 한 번도 안 바뀐 실행(kept 0 / rejected 30)과 제안이 대부분
+    채택된 실행(kept 12 / rolled_back 8 / rejected 6)의 `result.json`이
+    구조적으로 **동일**했다. 거짓을 말한 것이 아니라 생략한 것이다.
+
+    **D1의 교훈이 이 자리다.** 그 측정이 무효였던 이유는 기준선 실행에 실패
+    이벤트가 0건이라 반복 제안률이 `0.000` 외의 값을 낼 수 없었다는 것이고,
+    그 사실은 `history.jsonl`을 따로 파야만 나왔다. 지표를 읽는 사람이 물어야
+    하는 질문("이 지표가 다른 답을 낼 조건이 이 실행에 있었는가")에 **실행
+    자신이** 답할 수 있어야 한다.
+
+    `rejected_by_reason`의 합은 `by_outcome["rejected"]`와 같다 - 게이트는
+    제안 **전체**를 거부하므로 변경 하나마다 항목이 하나다.
+    """
+    by_outcome = {name: 0 for name in ATTEMPT_OUTCOMES}
+    by_reason = {name: 0 for name in REJECTION_REASONS}
+    for attempt in attempts:
+        by_outcome[attempt.outcome] = by_outcome.get(attempt.outcome, 0) + 1
+        if attempt.outcome == "rejected" and attempt.reason:
+            by_reason[attempt.reason] = by_reason.get(attempt.reason, 0) + 1
+    return {"changes": len(attempts), "by_outcome": by_outcome, "rejected_by_reason": by_reason}
+
+
 def _final_result(
     status: str,
     state: RunState,
@@ -45,6 +82,7 @@ def _final_result(
     judge_result: dict | None,
     failure_reason: str | None = None,
     topology_swaps: list[dict] | None = None,
+    tuning_history: list[Attempt] | None = None,
 ) -> dict:
     """`topology_swaps`는 **항상** 실린다(비었으면 빈 목록). 결과는 자기가
     돌려주는 덱을 설명해야 한다 - 실측 실행에서 `BUF_P`의 16소자 본문이 통째로
@@ -60,6 +98,7 @@ def _final_result(
         "iterations_used": iterations_used,
         "final_criteria": judge_result["criteria"] if judge_result else [],
         "topology_swaps": list(topology_swaps or []),
+        "attempt_summary": _attempt_summary(list(tuning_history or [])),
     }
     if failure_reason:
         result["failure_reason"] = failure_reason
@@ -184,9 +223,16 @@ async def run_orchestration(
         entry_netlist_paths = dict(resume.entry_netlist_paths)
     outer_iter = 0
     judge_result: dict = dict(resume.judge_result) if resume else {}
-    # try 밖에서 초기화한다 - 두 except 절이 이것을 읽는데, try 안에서 처음
+    # try 밖에서 초기화한다 - 세 except 절이 이것을 읽는데, try 안에서 처음
     # 대입하면 첫 줄에서 터진 실행이 NameError로 바뀐다.
+    #
+    # `tuning_history`가 같은 이유로 여기 있다. 예전에는 try 안,
+    # `index_baseline_components` **뒤에** 있었는데 그 호출은 덱을 파싱하므로
+    # `ValueError`를 낼 수 있다 - 즉 `except ValueError` 절이 잡아야 할 바로
+    # 그 경로에서 `tuning_history`가 아직 없었다. 가정이 아니라 도달 가능한
+    # 줄 순서다.
     topology_swaps: list[dict] = [dict(s) for s in resume.topology_swaps] if resume else []
+    tuning_history: list[Attempt] = list(resume.tuning_history) if resume else []
 
     try:
         # No structural precondition on the deck (no more len(subckts) == 1
@@ -203,8 +249,6 @@ async def run_orchestration(
         # against, so they are simply unconstrained by the area gate for the
         # rest of the run. This is by-design, not a bug - do not "fix" it.
         baseline_components = index_baseline_components(initial_netlist_texts[canonical_name])
-
-        tuning_history: list[Attempt] = list(resume.tuning_history) if resume else []
 
         # criterion 이름 -> measurement 이름 -> 그 measurement가 보는 넷 집합,
         # 두 단계로 실패 넷을 찾기 위한 매핑. spec의 criteria/control_block에서만
@@ -264,7 +308,7 @@ async def run_orchestration(
 
             if judge_result["overall_pass"]:
                 return _final_result(
-                    "PASS", state, outer_iter, judge_result, topology_swaps=topology_swaps
+                    "PASS", state, outer_iter, judge_result, topology_swaps=topology_swaps, tuning_history=tuning_history
                 )
 
             failing_nets: set[str] = set()
@@ -503,7 +547,7 @@ async def run_orchestration(
 
                         if new_judge_result["overall_pass"]:
                             return _final_result(
-                                "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps
+                                "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps, tuning_history=tuning_history
                             )
 
                         judge_result = new_judge_result
@@ -643,7 +687,7 @@ async def run_orchestration(
                     return _final_result(
                         "FAIL", state, outer_iter, judge_result,
                         failure_reason="tuning proposal repeatedly rejected",
-                        topology_swaps=topology_swaps,
+                        topology_swaps=topology_swaps, tuning_history=tuning_history,
                     )
                 consecutive_rollbacks += 1
                 continue
@@ -690,19 +734,19 @@ async def run_orchestration(
 
             if new_judge_result["overall_pass"]:
                 return _final_result(
-                    "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps
+                    "PASS", state, outer_iter, new_judge_result, topology_swaps=topology_swaps, tuning_history=tuning_history
                 )
 
             judge_result = new_judge_result
 
         return _final_result(
             "FAIL", state, MAX_OUTER_ITERATIONS, judge_result,
-            failure_reason="max iterations reached", topology_swaps=topology_swaps,
+            failure_reason="max iterations reached", topology_swaps=topology_swaps, tuning_history=tuning_history,
         )
     except AgentExecutionError as exc:
         return _final_result(
             "FAIL", state, max(outer_iter - 1, 0), judge_result,
-            failure_reason=f"agent execution error: {exc}", topology_swaps=topology_swaps,
+            failure_reason=f"agent execution error: {exc}", topology_swaps=topology_swaps, tuning_history=tuning_history,
         )
     except ValueError as exc:
         # Belt-and-braces: check_refdes_resolution above is meant to reject an
@@ -714,7 +758,7 @@ async def run_orchestration(
         # CLAUDE.md documents for the AgentExecutionError catch above.
         return _final_result(
             "FAIL", state, max(outer_iter - 1, 0), judge_result,
-            failure_reason=str(exc), topology_swaps=topology_swaps,
+            failure_reason=str(exc), topology_swaps=topology_swaps, tuning_history=tuning_history,
         )
     except OSError as exc:
         # **이 루프는 디스크를 되읽는다.** 매 외부 이터레이션 머리의
@@ -737,5 +781,5 @@ async def run_orchestration(
         return _final_result(
             "FAIL", state, max(outer_iter - 1, 0), judge_result,
             failure_reason=f"the run could not read or write its own files: {exc}",
-            topology_swaps=topology_swaps,
+            topology_swaps=topology_swaps, tuning_history=tuning_history,
         )

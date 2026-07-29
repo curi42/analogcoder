@@ -629,3 +629,63 @@ def test_result_json_parses_in_node(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "ok" in proc.stdout
+
+
+def _dir(tmp_path, name):
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+def _result(**overrides):
+    base = {
+        "status": "FAIL",
+        "iterations_used": 3,
+        "final_netlist_paths": {"ac": "/runs/r1/netlist_v0_ac.cir"},
+        "final_criteria": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_run_blocked_at_every_gate_reads_differently_from_one_that_tuned(tmp_path):
+    """감사 §3.8. 이 표가 없을 때 두 실행의 리포트는 구조적으로 **동일**했다 -
+    상태와 기준 표만으로는 "덱이 한 번도 안 바뀌었다"를 알 수 없다."""
+    blocked = write_report_md(_dir(tmp_path, "a"), _result(attempt_summary={
+        "changes": 30,
+        "by_outcome": {"kept": 0, "rolled_back": 0, "rejected": 30},
+        "rejected_by_reason": {"area": 30, "refdes": 0, "param": 0, "stimulus": 0, "verify_pre": 0},
+    }))
+    tuned = write_report_md(_dir(tmp_path, "b"), _result(attempt_summary={
+        "changes": 26,
+        "by_outcome": {"kept": 12, "rolled_back": 8, "rejected": 6},
+        "rejected_by_reason": {"area": 6, "refdes": 0, "param": 0, "stimulus": 0, "verify_pre": 0},
+    }))
+
+    a, b = open(blocked).read(), open(tuned).read()
+    assert a != b
+    assert "| kept | 0 |" in a and "| kept | 12 |" in b
+    assert "| area | 30 |" in a
+
+
+def test_an_all_zero_summary_is_still_drawn(tmp_path):
+    """값이 전부 0이어도 그린다. 침묵이 "안 돌았다"를 뜻하는 규칙은 키의
+    **부재**에만 걸린다 - 0을 접으면 "거부가 0건"과 "집계가 사라졌다"가 다시
+    같은 침묵이 된다."""
+    path = write_report_md(_dir(tmp_path, "c"), _result(attempt_summary={
+        "changes": 0,
+        "by_outcome": {"kept": 0, "rolled_back": 0, "rejected": 0},
+        "rejected_by_reason": {"area": 0, "refdes": 0, "param": 0, "stimulus": 0, "verify_pre": 0},
+    }))
+
+    text = open(path).read()
+    assert "## Tuning attempts" in text
+    assert "**Component changes proposed:** 0" in text
+
+
+def test_a_result_without_the_key_draws_no_section(tmp_path):
+    """키의 부재는 "이 결과를 만든 코드가 집계를 아예 안 쓴다"이고, 그것은
+    값이 0인 것과 다른 사실이다."""
+    path = write_report_md(_dir(tmp_path, "d"), _result())
+
+    assert "## Tuning attempts" not in open(path).read()
