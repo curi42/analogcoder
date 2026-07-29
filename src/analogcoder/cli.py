@@ -19,6 +19,7 @@ from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
+from analogcoder.simulators.cache import CachingSimulator
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
 from analogcoder.state import RunState
@@ -164,7 +165,12 @@ async def _run(args) -> dict:
 
     run_dir = args.run_dir or os.path.join("runs", uuid.uuid4().hex[:8])
     state = RunState(run_dir=run_dir, testbench_names=[tb.name for tb in spec.testbenches])
-    sim_backend = NgspiceBackend()
+    # 내용 주소 캐시로 감싼다. 실행 하나가 같은 (덱, control block, 코너,
+    # 시뮬레이터)를 여러 번 재는 자리가 실제로 있다 - 최적화의 이분 탐색은 이미
+    # 스윕한 버전을 되짚고, 롤백 직후의 다음 외부 이터레이션은 되돌아간 덱을
+    # 다시 잰다. 적중/미적중은 state.log_event로 history.jsonl에 무조건 남는다
+    # (한 번도 안 맞는 캐시와 아예 안 붙은 캐시가 같아 보이면 안 된다).
+    sim_backend = CachingSimulator(NgspiceBackend(), log_event=state.log_event)
     agent_backends = _build_agent_backends(args)
 
     async def simulate_fn(netlist_texts, spec_arg):
