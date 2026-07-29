@@ -761,6 +761,14 @@ that number was measured.
   `cc_trim_20` deck, which is exactly the one case §8 of the results doc
   measured end to end. A smaller seed leaves more outside, so the regime that
   fires is the one that drops corners.
+  **Reachability is a property of (deck × grid), not of the deck** — the same
+  axis ε turned out to live on. Projected onto the 45-corner grid the same
+  sweep gives **43 of 242, argmax 21, coverage 22**: the seed tracks *criteria*
+  (9 here) while the grid does not, so 36 corners sit outside and an argmax can
+  drift out of the set. That row is a **projection, not a measurement** —
+  neither 45-corner spec declares `corner_reduction:`, so nothing runs there
+  today. Read it as: enable reduction on a 45-corner grid and re-entry stops
+  being dead code even without ε-coverage.
   **Firing needs all three conditions, and "the mid loop exits PASS" is a
   property of the run, not of one criterion.** The mid loop reaches the
   verdict sweep only when `evaluate_criteria`'s `overall_pass` holds at the
