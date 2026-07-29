@@ -53,12 +53,21 @@ the netlist below before proposing new_value. For example, if the netlist has
 must be a specific replacement value such as "15k", not "increase Rf".
 
 param MUST be exactly the string "value" when the component's value is a plain
-positional token, which is the common case (e.g. "Rf vminus vout 10k" - the
-value 10k is the last token with no "name=" prefix, so param is "value", not
-"resistance" or "resistance value"). Only use a different param string when the
-netlist itself writes that parameter as "name=value" (e.g. "M1 d g s b W=10u
-L=1u" - to change the width you would use param="W"), and in that case param
-must be exactly that name as it appears in the netlist, nothing else.
+NUMERIC positional token, which is the common case (e.g. "Rf vminus vout 10k" -
+the value 10k is the last token with no "name=" prefix, so param is "value", not
+"resistance" or "resistance value"). A positional token that is not a number is
+this component's model or subckt name (e.g. the "pnp_05v5" in "Xq1 c b e
+pnp_05v5", or a subckt name on an X instance): param="value" there would
+overwrite the device's identity rather than its size, and a deterministic gate
+rejects it. Change one of that component's named parameters instead.
+
+Otherwise param must be exactly a "name=value" parameter name as it appears in
+the netlist (e.g. "M1 d g s b W=10u L=1u" - to change the width you would use
+param="W"), spelled exactly as written there, nothing else. The name does not
+have to appear on that component's own line: if another instance of the same
+model in this netlist writes it, the change is legitimate and is accepted (e.g.
+"Xq1 c b e pnp_05v5" writes no m=, but its sibling "Xq8 c b e pnp_05v5 m=8"
+does, and m is the only knob that sets their emitter-area ratio).
 
 refdes MUST identify exactly one component. When the component sits inside a
 .subckt, qualify it with the subckt's full path as "<PATH>.<refdes>" (e.g.

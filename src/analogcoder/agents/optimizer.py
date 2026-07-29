@@ -40,7 +40,16 @@ inside the device under test.
 
 refdes must identify exactly one component, qualified by its full subckt path when it
 sits inside one (e.g. "BUF_N.Xcc"). param must be exactly a parameter name as it
-appears on that component's line in the netlist below.
+appears on that component's line in the netlist below - or the string "value" when
+that component's size is a plain NUMERIC positional token with no "name=" prefix
+(e.g. "Rdeg out vn 10k"), which is how the structure view's tunable line writes it.
+A positional token that is not a number is the component's model or subckt name;
+"value" is not a knob there, so pick one of its named parameters instead.
+
+The parameter must be on that component's own line. A name another instance of the
+same model writes is not enough here: the search has to read a starting value out of
+this component's line to step from, and inventing one is not something this project
+does. Such a knob is discarded before it is ever measured.
 
 Respond via the structured output schema."""
 

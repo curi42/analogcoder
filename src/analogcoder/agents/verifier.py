@@ -27,10 +27,14 @@ async def verify_pre(
         "unqualified refdes whose bare token appears inside more than one "
         "subckt: it is ambiguous and will be rejected when applied. "
         "Also reject any change whose param is not exactly "
-        '"value" (for a component whose value is a plain positional token in the '
-        'netlist above) and is not an existing "name=" parameter already present '
-        "on that component's own line in the netlist above - such a param would "
-        "silently fail to update the component when applied. Do NOT reject a "
+        '"value" (for a component whose value is a plain NUMERIC positional token '
+        "in the netlist above) and is not an existing \"name=\" parameter already "
+        "present on that component's own line in the netlist above - such a param "
+        "would silently fail to update the component when applied. A positional "
+        "token that is not a number is that component's model or subckt name (the "
+        '"pnp_05v5" in "Xq1 c b e pnp_05v5"), so reject param="value" there too: '
+        "it would overwrite the device's identity rather than its size. "
+        "Do NOT reject a "
         "param merely because that component's own line omits it, if other "
         "instances of the same model in this netlist write it as \"name=\": that "
         "is a legitimate change (it is the only way to reach, for example, the "

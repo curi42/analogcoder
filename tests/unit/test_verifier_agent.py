@@ -83,3 +83,36 @@ async def test_verify_post_calls_run_agent_with_before_after_judge_results():
     _, kwargs = mock_run.call_args
     assert kwargs["output_schema"]["required"] == ["improved", "regressed_criteria", "recommendation", "feedback"]
     assert kwargs["backend"] is fake_backend
+
+
+@pytest.mark.asyncio
+async def test_verify_pre_prompt_does_not_bless_param_value_on_a_model_name():
+    """어느 변형을 잡는가: "위치 토큰이면 param=value를 받아들여라"라고만
+    적은 리뷰어 지시.
+
+    check_param_applicability는 위치 토큰이 **숫자가 아니면** param="value"를
+    거부한다 - 그 토큰은 모델명/서브서킷명이고, 덮어쓰면 소자의 정체가 바뀐다.
+    이 프롬프트는 거부자 쪽 거울이므로 게이트보다 **느슨**한 방향의 어긋남이고,
+    오늘은 게이트가 verify_pre보다 먼저 돌아 그런 제안이 여기 도달하지 못한다 -
+    즉 지금 깨지는 것은 값이 아니라 "게이트와 그 거울은 일치한다"는 계약이다.
+    앞 단언이 게이트의 실제 규칙, 뒤가 프롬프트다."""
+    from analogcoder.netlist import check_param_applicability
+
+    deck = "* deck\nXq1 c b e pnp_05v5\nRf a b 10k\n.end\n"
+    ok, _ = check_param_applicability(
+        deck, [{"refdes": "Xq1", "param": "value", "old_value": "pnp_05v5", "new_value": "2"}]
+    )
+    assert not ok
+    ok_r, _ = check_param_applicability(
+        deck, [{"refdes": "Rf", "param": "value", "old_value": "10k", "new_value": "15k"}]
+    )
+    assert ok_r
+
+    with patch(
+        "analogcoder.agents.verifier.run_agent", new=AsyncMock(return_value={})
+    ) as mock_run:
+        await verify_pre({}, {}, {}, "* netlist\n", object())
+
+    prompt = " ".join(mock_run.call_args.kwargs["user_prompt"].lower().split())
+    assert "plain numeric positional token" in prompt
+    assert "model or subckt name" in prompt

@@ -114,3 +114,51 @@ def test_the_prompt_warns_about_testbench_passives_the_gate_cannot_see():
     assert "load" in prompt and "loop-break" in prompt
     # 게이트가 막아 준다고 말하면 안 된다 - 막지 못한다.
     assert "no gate" in prompt or "not blocked" in prompt or "cannot" in prompt
+
+
+_POSITIONAL_VALUE_DECK = """* positional value deck
+.subckt OPAMP2STAGE vp vn out
+Rdeg out vn 10k
+M1 out vn 0 0 nfet W=10 L=1
+.ends
+Xa a b c OPAMP2STAGE
+.end
+"""
+
+
+def test_the_optimizer_prompt_admits_the_positional_value_address_its_own_view_prints():
+    """어느 변형을 잡는가: param을 "그 소자 줄에 적힌 파라미터 이름"으로만
+    규정한 프롬프트.
+
+    최적화 오라클은 param="value"를 끝까지 지원하고(_deck_token/_current_value),
+    같은 프롬프트에 딸려 가는 구조 뷰의 tunable 줄이 `param=value`를 그대로
+    인쇄한다. 프롬프트만 그것을 빼면 게이트보다 **엄격한** 거울이 되어 위치
+    토큰으로 값을 갖는 모든 R/C 노브가 탐색에서 사라진다 - inverting_amp처럼
+    최상위 저항이 회로 자체인 덱에서는 그것이 노브 전부다.
+
+    아래 앞 두 단언이 코드의 실제 규칙이고, 뒤가 프롬프트가 그것을 반복하는지다."""
+    from analogcoder.agents.optimizer import OPTIMIZER_SYSTEM_PROMPT
+    from analogcoder.optimizer import _current_value, _deck_token
+    from analogcoder.optimizer import index_baseline_components
+
+    component = index_baseline_components(_POSITIONAL_VALUE_DECK)["OPAMP2STAGE.Rdeg"]
+    assert _deck_token(component, "value") == "value"
+    assert _current_value(component, "value") == 10000.0
+
+    prompt = " ".join(OPTIMIZER_SYSTEM_PROMPT.lower().split())
+    assert '"value"' in prompt
+    assert "positional" in prompt
+
+
+def test_the_optimizer_prompt_keeps_the_own_line_requirement_the_oracle_enforces():
+    """어느 변형을 잡는가: 튜너의 동료 규칙을 최적화 프롬프트에도 복사하는 구현.
+
+    두 프롬프트가 여기서 갈라지는 것은 실수가 아니다. check_param_applicability의
+    동료 규칙은 `Xq1.m`을 **적용 가능**하다고 판정하지만, 최적화는 그 자리에서
+    한 걸음 옮길 **출발 값**이 필요하고 Xq1의 줄에는 m=이 없다 - SearchOracle.
+    knob_state가 바로 그 사유로 노브를 버린다. 프롬프트가 그것보다 느슨해지면
+    탐색이 매번 주소 단계에서 버려질 노브를 순위에 올린다."""
+    from analogcoder.agents.optimizer import OPTIMIZER_SYSTEM_PROMPT
+
+    prompt = " ".join(OPTIMIZER_SYSTEM_PROMPT.lower().split())
+    assert "on that component's line" in prompt
