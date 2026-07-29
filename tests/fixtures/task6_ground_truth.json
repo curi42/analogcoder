@@ -1,0 +1,5386 @@
+{
+ "schema_version": 2,
+ "generated": "2026-07-29",
+ "generated_by": "read-only investigation subagent; repository unmodified",
+ "repo": "/Users/sunbeom/orca/projects/analogcoder",
+ "git_branch_observed": "d1-tuning-attempt-record (작업 트리는 다른 에이전트들이 동시 편집 중)",
+ "purpose": "단계 0 태스크 6(노브 순위의 그래프 사전확률)이 제안할 어떤 '전기적 거리' 정의든, 의견이 아니라 실측으로 채점하기 위한 정답표.",
+ "how_to_score": {
+  "procedure": [
+   "1. 각 case 의 spec_path 를 로드하고, failing_criteria[].measurement_nets 를 거리 정의의 소스 노드 집합으로 준다.",
+   "2. 거리 정의가 tunable_index(분모) 전체에 점수를 매기게 하고 내림차순 정렬한다.",
+   "3. scoring.correct_set_refdes_param 이 상위 k 에 드는지 센다. k=1,3,5,10 을 보고한다.",
+   "4. scoring.must_not_be_top_ranked 가 있으면 그것이 상위 k 에 들면 감점한다.",
+   "5. requires_both=True 인 케이스(tc)는 두 노브가 모두 상위 k 에 있을 때만 성공으로 센다.",
+   "6. scoreable=False 인 케이스(topology)는 노브 순위 채점에서 제외하고, 블록 수준만 채점한다."
+  ],
+  "baselines_to_beat": [
+   {
+    "name": "random",
+    "top1_expected": "1/denominator 당 정답 개수"
+   },
+   {
+    "name": "select_focus (현행 1홉)",
+    "how": "focus_baseline.select_focus_on_canonical 안의 노브만 균등 후보로 두고 같은 방식으로 채점. bandgap_seed_tc 에서는 초점이 4블록(103노브)이라 이기기 쉽고, buf0_droop 에서는 초점이 BUF_P 하나(32노브)라 이기기 어렵다."
+   },
+   {
+    "name": "LLM ranking",
+    "how": "태스크 2의 결정론적 하니스로 같은 프롬프트를 주고 순위를 받는다. 분산이 0이 아니므로 반복 필요."
+   }
+  ],
+  "acceptance_rule_suggestion": "사전 등록 필요. 이 표는 채점 가능성만 제공하며 합격선을 정하지 않는다. 유효 케이스가 4개(buf0_droop, tc, trim_pm, two_stage_pm)뿐이라 top-1 정확도의 표본 오차가 크다는 점을 명시해야 한다.",
+  "decision_metric": {
+   "name": "repair_set_worst_rank",
+   "definition": "min over scoring.repair_sets of (max over that set's knobs of the knob's WORST rank). 낮을수록 좋다. 순위는 동률을 깨지 않는 최악 순위 (자기와 동률인 노브를 전부 자기 앞에 세운 값)다.",
+   "why_not_correct_set_refdes_param": "평면 리스트는 서로 다른 두 종류의 사실을 섞는다 — 단독으로 충분한 노브와 조합에서만 충분한 노브. 수리 루프의 순위가 해야 하는 일은 '정답 노브 하나를 상위에 올리는 것' 이 아니라 '기준을 실제로 고치는 노브 집합 전체를 상위에 올리는 것' 이다.",
+   "warning": "이 지표는 세 거리 정의의 채점 결과를 **본 뒤** 정의됐다 (원래는 평면 리스트로 채점했고 세 판정단의 1위가 갈렸다). 그 사실을 숨기면 사후 규칙 변경이 된다. 두 지표 모두 scorer 가 출력하므로 평면 리스트 채점도 그대로 읽을 수 있다."
+  }
+ },
+ "denominator_note": "bandgap 의 여섯 테스트벤치 덱(netlist.cir, netlist_startup.cir, netlist_psrr.cir, netlist_settling.cir, netlist_loops.cir, netlist_seed_topology.cir)은 모두 정확히 같은 167개 (refdes,param) tunable 인덱스를 낸다 — 집합 차이 0으로 확인. 블록별: BANDGAP 8, BGR_CORE 35, BUF_N 32, BUF_P 32, ERRAMP 30, TRIMAMP 30.",
+ "cases": [
+  {
+   "case_id": "bandgap_seed_buf0_droop",
+   "spec_path": "benchmarks/bandgap/spec_seed_buf0_droop.yaml",
+   "canonical_netlist": "benchmarks/bandgap/netlist.cir",
+   "n_tunable_total": 167,
+   "scoreable": true,
+   "failing_criteria": [
+    {
+     "name": "vbg0_droop",
+     "measurement": "vbg0_droop_mv",
+     "operator": "<=",
+     "threshold": 15.0,
+     "unit": "mV",
+     "testbench": "settling",
+     "netlist": "benchmarks/bandgap/netlist_settling.cir",
+     "measurement_nets": [
+      "vbg0"
+     ],
+     "nominal_measured": 19.9324,
+     "nominal_evidence": "runs/bg_buf0c/history.jsonl 첫 judge 이벤트 actual=19.9324; ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_base.cir -> vbg0_droop_mv = 1.993240e+01",
+     "provenance": [
+      "ngspice_rerun",
+      "run_log"
+     ]
+    }
+   ],
+   "all_other_criteria_pass_at_nominal": true,
+   "focus_baseline": {
+    "select_focus_on_canonical": [
+     "BUF_P"
+    ],
+    "note": "structure_view.select_focus(failing_nets={'vbg0'}) — 1홉 초점. 정답 블록과 정확히 일치."
+   },
+   "correct_knobs": [
+    {
+     "block": "BUF_P",
+     "refdes": "BUF_P.Xt",
+     "param": "W",
+     "baseline": "24",
+     "kind": "verified_sufficient_alone",
+     "measured": {
+      "new_value": "72",
+      "vbg0_droop_mv": 2.336949,
+      "passes": true
+     },
+     "area_gate": "approved (3.0x)",
+     "certainty": "verified",
+     "evidence": "docs/superpowers/specs/2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md:767-768 표; 재현: ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_xt72.cir -> 2.336949e+00",
+     "provenance": [
+      "ngspice_rerun",
+      "repo_file"
+     ]
+    },
+    {
+     "block": "BUF_P",
+     "refdes": "BUF_P.X6",
+     "param": "W",
+     "baseline": "20",
+     "kind": "verified_partial_alone__sufficient_in_combination",
+     "measured": {
+      "new_value": "55",
+      "vbg0_droop_mv_alone": 17.4892,
+      "passes_alone": false,
+      "with_Xcl_W50": 14.7865,
+      "passes_in_combination": true
+     },
+     "area_gate": "approved (2.75x)",
+     "certainty": "verified",
+     "evidence": "실제 PASS 런 runs/bg_buf0c (v4 덱: Xcl W=50 + X6 W=55). 재현: ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_x6_55.cir(단독) -> 1.748920e+01, t_combo.cir -> 1.478650e+01",
+     "warning": "저장소 문서 두 곳(benchmarks/bandgap/spec_seed_buf0_droop.yaml:9-10, docs/.../2026-07-26-bandgap-...-design.md:722)이 14.79 mV를 X6 단독 효과로 적었지만, 단독으로는 17.49 mV로 임계값을 못 넘는다. 아래 findings 참조.",
+     "reproduce": {
+      "deck": "benchmarks/bandgap/netlist_settling.cir",
+      "control_block": "benchmarks/bandgap/spec_seed_buf0_droop.yaml testbench 'settling'",
+      "changes": [
+       {
+        "refdes": "BUF_P.X6",
+        "param": "W",
+        "new_value": "55"
+       }
+      ],
+      "measured": {
+       "vbg0_droop_mv": 17.4892
+      },
+      "also": [
+       {
+        "changes": [],
+        "vbg0_droop_mv": 19.9324
+       },
+       {
+        "changes": [
+         {
+          "refdes": "BUF_P.X6",
+          "param": "W",
+          "new_value": "55"
+         },
+         {
+          "refdes": "BUF_P.Xcl",
+          "param": "W",
+          "new_value": "50"
+         }
+        ],
+        "vbg0_droop_mv": 14.7865
+       }
+      ],
+      "by": "2026-07-29, task6-unblock (독립 재현). ngspice nominal 1점씩, 코너 없음."
+     },
+     "provenance": [
+      "ngspice_rerun",
+      "run_log"
+     ]
+    },
+    {
+     "block": "BUF_P",
+     "refdes": "BUF_P.Xcl",
+     "param": "W",
+     "baseline": "20",
+     "kind": "verified_insufficient_alone",
+     "measured": {
+      "new_value": "60",
+      "vbg0_droop_mv": 16.7897,
+      "passes": false,
+      "note": "에어리어 게이트 상한(3.0x = W60)에서도 포화"
+     },
+     "area_gate": "approved at W<=60; W=60&L=50 동시 변경은 7.50x로 거부됨(runs/bg_buf0c iter2.r1)",
+     "certainty": "verified",
+     "evidence": "design doc:765-766; 재현: ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_xcl60.cir -> 1.678970e+01",
+     "provenance": [
+      "ngspice_rerun",
+      "repo_file"
+     ]
+    }
+   ],
+   "wrong_block_controls": [
+    {
+     "refdes": "BUF_N.Xcl",
+     "param": "W",
+     "measured": {
+      "20->60": {
+       "vbg0_droop_mv": 19.8671,
+       "delta": -0.0653,
+       "vbg1_droop_mv": 18.369,
+       "vbg1_delta": -5.749
+      }
+     },
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_bufn_xcl60.cir",
+     "note": "BUF_N을 건드리면 vbg1_droop만 움직인다. 형제 앰프는 정답이 아니다.",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    },
+    {
+     "refdes": "BUF_N.Xt",
+     "param": "W",
+     "measured": {
+      "8->24": {
+       "vbg0_droop_mv": 19.8358,
+       "vbg1_droop_mv": 4.727
+      }
+     },
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/t_bufn_xt72.cir",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    }
+   ],
+   "run_accepted_changes": [
+    {
+     "run": "runs/bg_buf0c",
+     "status": "PASS",
+     "iterations": 4,
+     "kept": [
+      [
+       "BUF_P.Xcl",
+       "W",
+       "20",
+       "50"
+      ],
+      [
+       "BUF_P.X6",
+       "W",
+       "20",
+       "35"
+      ],
+      [
+       "BUF_P.X6",
+       "W",
+       "35",
+       "45"
+      ],
+      [
+       "BUF_P.X6",
+       "W",
+       "45",
+       "55"
+      ]
+     ],
+     "rejected": [
+      {
+       "gate": "area",
+       "changes": [
+        [
+         "BUF_P.Xcl",
+         "W",
+         "50",
+         "60"
+        ],
+        [
+         "BUF_P.Xcl",
+         "L",
+         "20",
+         "50"
+        ]
+       ],
+       "feedback": "BUF_P.Xcl: proposed change grows area by 7.50x, exceeding the 3.0x limit for its size tier"
+      }
+     ],
+     "evidence": "runs/bg_buf0c/history.jsonl; /usr/bin/diff runs/bg_buf0c/netlist_v0_settling.cir runs/bg_buf0c/netlist_v4_settling.cir 로 확인",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    },
+    {
+     "run": "runs/bg_buf0",
+     "status": "FAIL",
+     "iterations": 1,
+     "kept": [
+      [
+       "BUF_P.Xcl",
+       "W",
+       "20",
+       "30"
+      ]
+     ],
+     "note": "같은 스펙의 다른 런. 블록은 맞았으나 포화하는 노브를 골라 실패. 정답 블록 판정에는 여전히 유효한 증거.",
+     "evidence": "runs/bg_buf0/history.jsonl. **runs/ 는 .gitignore 에 있어 클린 체크아웃에 없다** — 이 항목은 이 기계의 실행 산출물에서만 확인된다.",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    }
+   ],
+   "scoring": {
+    "correct_set_block": [
+     "BUF_P"
+    ],
+    "correct_set_refdes": [
+     "BUF_P.Xt",
+     "BUF_P.X6"
+    ],
+    "correct_set_refdes_param": [
+     [
+      "BUF_P.Xt",
+      "W"
+     ],
+     [
+      "BUF_P.X6",
+      "W"
+     ]
+    ],
+    "acceptable_but_insufficient": [
+     [
+      "BUF_P.Xcl",
+      "W"
+     ]
+    ],
+    "denominator": 167,
+    "random_baseline_top1_blockhit": 0.19161676646706588,
+    "note": "BUF_P 안에 32개 노브가 있으므로 블록만 맞히는 것은 19.2% 무작위 기대치. refdes+param 단위 top-1 무작위 기대치는 2/167 = 1.2%.",
+    "repair_sets": [
+     [
+      [
+       "BUF_P.Xt",
+       "W"
+      ]
+     ],
+     [
+      [
+       "BUF_P.X6",
+       "W"
+      ],
+      [
+       "BUF_P.Xcl",
+       "W"
+      ]
+     ]
+    ],
+    "repair_sets_derivation": "correct_knobs 에서 직접 읽는다. BUF_P.Xt.W 는 kind=verified_sufficient_alone (24->72, 2.34 mV, PASS). BUF_P.X6.W 는 kind=verified_partial_alone__sufficient_in_combination 이고 그 combination 이 measured.with_Xcl_W50 = 14.79 mV 이므로 짝은 BUF_P.Xcl.W 다. Xcl.W 단독은 kind=verified_insufficient_alone (16.79 mV) 이라 단독 집합이 아니다."
+   }
+  },
+  {
+   "case_id": "bandgap_seed_tc",
+   "spec_path": "benchmarks/bandgap/spec_seed_tc.yaml",
+   "canonical_netlist": "benchmarks/bandgap/netlist.cir",
+   "n_tunable_total": 167,
+   "scoreable": true,
+   "coupled": true,
+   "failing_criteria": [
+    {
+     "name": "temperature_coefficient",
+     "measurement": "tc_ppm_per_c",
+     "operator": "<=",
+     "threshold": 30.0,
+     "unit": "ppm/C",
+     "testbench": "dc_tc",
+     "netlist": "benchmarks/bandgap/netlist.cir",
+     "measurement_nets": [
+      "vbgout"
+     ],
+     "nominal_measured": 36.11784,
+     "nominal_evidence": "runs/bg_tc/history.jsonl 첫 judge actual=36.11784; ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/c_base.cir -> tc_ppm_per_c = 3.611784e+01 (설계 문서 720행의 36.30은 PDK 마이그레이션 이전 값으로 보인다)",
+     "provenance": [
+      "ngspice_rerun",
+      "run_log"
+     ]
+    }
+   ],
+   "all_other_criteria_pass_at_nominal": true,
+   "focus_baseline": {
+    "select_focus_on_canonical": [
+     "BANDGAP",
+     "BGR_CORE",
+     "ERRAMP",
+     "TRIMAMP"
+    ],
+    "note": "vbgout 넷은 4개 블록을 초점으로 끌어온다 — 초점만으로는 BGR_CORE를 지목하지 못한다. 거리 정의가 이길 여지가 가장 큰 케이스."
+   },
+   "correct_knobs": [
+    {
+     "block": "BGR_CORE",
+     "refdes": "BGR_CORE.XRpa",
+     "param": "l",
+     "baseline": "324.74",
+     "kind": "verified_sufficient_only_as_matched_pair",
+     "must_move_with": [
+      "BGR_CORE.XRpb.l"
+     ],
+     "measured": {
+      "new_value": "321.3",
+      "tc_ppm_per_c_pair": 29.32498,
+      "passes": true,
+      "tc_ppm_per_c_XRpa_alone": 41.14171,
+      "passes_alone": false,
+      "coupled_side_effects": {
+       "vbgout_v": "1.238874 -> 1.233409",
+       "vbg1_v": "1.199929 -> 1.194636"
+      }
+     },
+     "area_gate": "approved",
+     "certainty": "verified",
+     "evidence": "design doc:720; 실제 PASS 런 runs/bg_tc; 재현: ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/c_rp.cir -> 2.932498e+01, c_rpa_only.cir -> 4.114171e+01",
+     "provenance": [
+      "ngspice_rerun",
+      "run_log",
+      "repo_file"
+     ]
+    },
+    {
+     "block": "BGR_CORE",
+     "refdes": "BGR_CORE.XRpb",
+     "param": "l",
+     "baseline": "324.74",
+     "kind": "verified_sufficient_only_as_matched_pair",
+     "must_move_with": [
+      "BGR_CORE.XRpa.l"
+     ],
+     "certainty": "verified",
+     "evidence": "같은 근거",
+     "provenance": [
+      "same_as_previous_entry"
+     ]
+    }
+   ],
+   "wrong_block_controls": [],
+   "inferred_knobs": [
+    {
+     "refdes": "BGR_CORE.XR1",
+     "param": "l",
+     "certainty": "inferred",
+     "evidence": "근거 없음 — Kuijk 관계 vbgout = Vbe + (Rp/R1)·VT·ln(8)에서 Rp/R1 비를 움직이는 다른 쪽이므로 물리적으로 듣는다고 추론되지만, 이 저장소에 측정치가 없다. runs/bg_tc의 튜너 자유 텍스트(LLM 주장)에만 등장한다. 채점 정답에 넣지 마라.",
+     "provenance": [
+      "none"
+     ]
+    }
+   ],
+   "run_accepted_changes": [
+    {
+     "run": "runs/bg_tc",
+     "status": "PASS",
+     "iterations": 1,
+     "kept": [
+      [
+       "BGR_CORE.XRpa",
+       "l",
+       "324.74",
+       "321.3"
+      ],
+      [
+       "BGR_CORE.XRpb",
+       "l",
+       "324.74",
+       "321.3"
+      ]
+     ],
+     "evidence": "runs/bg_tc/history.jsonl; /usr/bin/diff runs/bg_tc/netlist_v0_dc_tc.cir runs/bg_tc/netlist_v1_dc_tc.cir",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    }
+   ],
+   "scoring": {
+    "correct_set_block": [
+     "BGR_CORE"
+    ],
+    "correct_set_refdes": [
+     "BGR_CORE.XRpa",
+     "BGR_CORE.XRpb"
+    ],
+    "correct_set_refdes_param": [
+     [
+      "BGR_CORE.XRpa",
+      "l"
+     ],
+     [
+      "BGR_CORE.XRpb",
+      "l"
+     ]
+    ],
+    "requires_both": true,
+    "denominator": 167,
+    "note": "두 노브가 같이 움직여야만 정답이다 — 한쪽만은 36.12 -> 41.14로 악화한다. 순위 지표는 '둘 다 top-k에 있는가'로 채점해야 한다.",
+    "repair_sets": [
+     [
+      [
+       "BGR_CORE.XRpa",
+       "l"
+      ],
+      [
+       "BGR_CORE.XRpb",
+       "l"
+      ]
+     ]
+    ],
+    "repair_sets_derivation": "두 노브 모두 kind=verified_sufficient_only_as_matched_pair 이고 서로를 must_move_with 로 지목한다. scoring.requires_both=True 와 같은 사실."
+   }
+  },
+  {
+   "case_id": "bandgap_seed_trim_pm",
+   "spec_path": "benchmarks/bandgap/spec_seed_trim_pm.yaml",
+   "canonical_netlist": "benchmarks/bandgap/netlist.cir",
+   "n_tunable_total": 167,
+   "scoreable": true,
+   "failing_criteria": [
+    {
+     "name": "trim_phase_margin",
+     "measurement": "trim_pm_deg",
+     "operator": ">=",
+     "threshold": 85.0,
+     "unit": "deg",
+     "testbench": "amp_loops",
+     "netlist": "benchmarks/bandgap/netlist_loops.cir",
+     "measurement_nets": [
+      "trm_i",
+      "vfb"
+     ],
+     "nominal_measured": 81.1382,
+     "nominal_evidence": "runs/bg_trim_pm/history.jsonl 첫 judge actual=81.1382; ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/l_base.cir -> trim_pm_deg = 8.11382e+01",
+     "provenance": [
+      "ngspice_rerun",
+      "run_log"
+     ]
+    }
+   ],
+   "all_other_criteria_pass_at_nominal": true,
+   "focus_baseline": {
+    "select_focus_on_canonical": [
+     "BANDGAP",
+     "BGR_CORE",
+     "TRIMAMP"
+    ],
+    "focus_on_criterion_testbench": [
+     "BGR_CORE",
+     "TRIMAMP"
+    ],
+    "note": "정답 블록(TRIMAMP)이 초점에 든다. 초점 크기 3(정본 덱) 또는 2(loops 덱)."
+   },
+   "correct_knobs": [
+    {
+     "block": "TRIMAMP",
+     "refdes": "TRIMAMP.XRz",
+     "param": "l",
+     "baseline": "15",
+     "kind": "verified_sufficient_alone",
+     "measured": {
+      "15->25": 98.2197,
+      "15->40": 124.0,
+      "15->60": 125.4,
+      "15->90": 88.2911,
+      "monotone": false,
+      "note": "25/90은 이 조사에서 재측정, 40/60은 설계 문서 인용"
+     },
+     "area_gate": "l<=45 까지 approved (3.0x). l=90 은 6.00x 로 거부됨.",
+     "certainty": "verified",
+     "evidence": "design doc:721,731; 실제 PASS 런 runs/bg_trim_pm; 재현: ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/l_rz25.cir -> 9.82197e+01, l_rz90.cir -> 8.82911e+01",
+     "provenance": [
+      "ngspice_rerun",
+      "run_log",
+      "repo_file"
+     ]
+    },
+    {
+     "block": "TRIMAMP",
+     "refdes": "TRIMAMP.Xcc",
+     "param": "W",
+     "baseline": "40",
+     "kind": "verified_sufficient_alone__not_previously_documented",
+     "measured": {
+      "40->60": 85.3114,
+      "passes": true,
+      "margin": 0.31
+     },
+     "area_gate": "approved (1.5x)",
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/l_trim_xcc.cir -> trim_pm_deg = 8.53114e+01. 저장소 문서에는 이 노브가 없다 — 이 조사에서 처음 측정했다. 여유가 0.31°뿐이라 '겨우 넘는' 정답이다.",
+     "reproduce": {
+      "deck": "benchmarks/bandgap/netlist_loops.cir",
+      "control_block": "benchmarks/bandgap/spec_seed_trim_pm.yaml testbench 'amp_loops'",
+      "changes": [
+       {
+        "refdes": "TRIMAMP.Xcc",
+        "param": "W",
+        "new_value": "60"
+       }
+      ],
+      "measured": {
+       "trim_pm_deg": 85.3114
+      },
+      "also": [
+       {
+        "changes": [],
+        "trim_pm_deg": 81.1382
+       }
+      ],
+      "by": "2026-07-29, task6-unblock (독립 재현). ngspice nominal 1점씩, 코너 없음. 같은 실행에서 amp_loops 의 나머지 7개 criterion 도 전부 통과한다 (core 57.83/66.05, trim_gain 87.54, buf1 97.98/101.34, buf0 100.16/104.33). 다른 네 테스트벤치는 재측정하지 않았다."
+     },
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    }
+   ],
+   "wrong_block_controls": [
+    {
+     "refdes": "BUF_P.XRz",
+     "param": "l",
+     "measured": {
+      "15->25": {
+       "trim_pm_deg": 81.2181,
+       "delta": 0.0799,
+       "buf0_pm_deg": "104.39 -> 131.15"
+      }
+     },
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/l_bufp_rz25.cir",
+     "note": "같은 refdes 이름이 네 앰프 모두에 있다. 스코프를 틀리면 목표 기준은 0.08° 움직이고 엉뚱한 기준이 27° 움직인다.",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    },
+    {
+     "refdes": "BUF_N.*",
+     "param": "*",
+     "measured": {
+      "buf1_pm_deg": "101.56 -> 101.65 (문서)"
+     },
+     "certainty": "verified",
+     "evidence": "design doc:721 'other blocks' 열; 재현: l_rz25.cir 에서 buf1_pm 101.558 -> 101.646",
+     "provenance": [
+      "repo_file"
+     ]
+    }
+   ],
+   "run_accepted_changes": [
+    {
+     "run": "runs/bg_trim_pm",
+     "status": "PASS",
+     "iterations": 1,
+     "kept": [
+      [
+       "TRIMAMP.XRz",
+       "l",
+       "15",
+       "25"
+      ]
+     ],
+     "evidence": "runs/bg_trim_pm/history.jsonl; /usr/bin/diff runs/bg_trim_pm/netlist_v0_amp_loops.cir runs/bg_trim_pm/netlist_v1_amp_loops.cir",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    }
+   ],
+   "scoring": {
+    "correct_set_block": [
+     "TRIMAMP"
+    ],
+    "correct_set_refdes": [
+     "TRIMAMP.XRz",
+     "TRIMAMP.Xcc"
+    ],
+    "correct_set_refdes_param": [
+     [
+      "TRIMAMP.XRz",
+      "l"
+     ],
+     [
+      "TRIMAMP.Xcc",
+      "W"
+     ]
+    ],
+    "primary_answer": [
+     "TRIMAMP.XRz",
+     "l"
+    ],
+    "denominator": 167,
+    "note": "TRIMAMP.XRz.l 이 압도적 1순위(+17.1°), Xcc.W 는 겨우 넘음(+4.2°). top-1 채점은 XRz.l 로, top-k 채점은 두 개 다 인정.",
+    "repair_sets": [
+     [
+      [
+       "TRIMAMP.XRz",
+       "l"
+      ]
+     ],
+     [
+      [
+       "TRIMAMP.Xcc",
+       "W"
+      ]
+     ]
+    ],
+    "repair_sets_derivation": "둘 다 kind 가 verified_sufficient_alone 계열이다 (XRz.l 15->25 = 98.22 deg, Xcc.W 40->60 = 85.31 deg, 임계값 85)."
+   }
+  },
+  {
+   "case_id": "bandgap_seed_topology",
+   "spec_path": "benchmarks/bandgap/spec_seed_topology.yaml",
+   "canonical_netlist": "benchmarks/bandgap/netlist_seed_topology.cir",
+   "n_tunable_total": 167,
+   "scoreable": false,
+   "role": "negative_control",
+   "failing_criteria": [
+    {
+     "name": "buf0_loop_gain",
+     "measurement": "buf0_gain_db",
+     "operator": ">=",
+     "threshold": 90.0,
+     "unit": "dB",
+     "testbench": "amp_loops",
+     "netlist": "benchmarks/bandgap/netlist_seed_topology.cir",
+     "measurement_nets": [
+      "b0_i",
+      "vbg0"
+     ],
+     "nominal_measured": 73.51495,
+     "nominal_evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/s_base.cir -> buf0_gain_db = 7.351495e+01 (문서값 73.52와 일치)",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    }
+   ],
+   "focus_baseline": {
+    "select_focus_on_canonical": [
+     "BUF_P"
+    ]
+   },
+   "correct_knobs": [],
+   "correct_answer": {
+    "kind": "topology_swap",
+    "block": "BUF_P",
+    "topology_id": "folded_cascode_pmos_in_cs",
+    "measured_buf0_gain_db": 100.16,
+    "evidence": "docs/superpowers/specs/2026-07-28-topology-applicability-design.md:128-137 표; CLAUDE.md Benchmarks 절"
+   },
+   "best_parameter_knobs_all_insufficient": [
+    {
+     "refdes": "BUF_P.X1",
+     "param": "W",
+     "note": "입력쌍 한쪽 — X1/X2 동시",
+     "measured": {
+      "20->40": 78.8796,
+      "20->80": 83.4522,
+      "20->150": "ngspice 중단 (sky130 wmax=100um 빈 상한)"
+     },
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/s_pair40.cir / s_pair80.cir",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    },
+    {
+     "refdes": "BUF_P.X2",
+     "param": "W",
+     "note": "위와 쌍",
+     "evidence": "근거 없음 — X2 는 X1 의 차동 짝이라는 구조적 사실만으로 함께 적혔고, X2 를 단독으로 움직인 측정은 없다. 채점에 쓰지 마라.",
+     "provenance": [
+      "none"
+     ],
+     "certainty": "unstated"
+    },
+    {
+     "refdes": "BUF_P.Xt",
+     "param": "W",
+     "measured": {
+      "8->24": 75.3864
+     },
+     "certainty": "verified",
+     "evidence": "ngspice 재실행 (이 조사, 2026-07-29). 스크래치패드 덱: /private/tmp/.../scratchpad/root/benchmarks/bandgap/s_xt24.cir",
+     "provenance": [
+      "ngspice_rerun"
+     ]
+    }
+   ],
+   "scoring": {
+    "expected_outcome": "어떤 (refdes,param) 도 정답이 아니다. 거리 정의는 이 케이스에서 순위 채점 대상이 아니다.",
+    "use": "이 케이스는 '거리 지표가 자신 있게 노브를 지목하는가'를 보는 반증용이다. 지표가 여기서도 높은 확신을 내면, 그 확신은 정답 유무와 무관한 값이라는 뜻이다.",
+    "denominator": 167,
+    "note": "단, 초점/거리가 BUF_P 를 지목하는 것 자체는 옳다 — 스왑 대상 블록이 BUF_P 이기 때문이다. 블록 수준 채점은 유효하고, 노브 수준 채점만 무효다."
+   }
+  },
+  {
+   "case_id": "two_stage_opamp_phase_margin",
+   "spec_path": "benchmarks/two_stage_opamp/spec.yaml",
+   "canonical_netlist": "benchmarks/two_stage_opamp/netlist.cir",
+   "n_tunable_total": 33,
+   "scoreable": true,
+   "block_level_discrimination": false,
+   "failing_criteria": [
+    {
+     "name": "phase_margin",
+     "measurement": "phase_margin_deg",
+     "operator": ">=",
+     "threshold": 60.0,
+     "unit": "deg",
+     "testbench": "ac_loop_gain",
+     "netlist": "benchmarks/two_stage_opamp/netlist.cir",
+     "measurement_nets": [
+      "vout"
+     ],
+     "nominal_measured": 34.5636,
+     "nominal_evidence": "runs/measure/before/two_stage-1/history.jsonl 및 runs/measure/after/two_stage-{1,2}/history.jsonl 첫 judge actual=34.5636 (세 런 모두 동일)",
+     "provenance": [
+      "run_log"
+     ]
+    }
+   ],
+   "focus_baseline": {
+    "select_focus_on_canonical": [
+     "OPAMP2STAGE"
+    ],
+    "note": "블록이 OPAMP2STAGE 하나뿐이라 초점은 항상 전체다. 블록 수준 거리 지표는 이 벤치마크에서 정보가 0이다."
+   },
+   "correct_knobs": [
+    {
+     "block": "OPAMP2STAGE",
+     "refdes": "OPAMP2STAGE.Xcc",
+     "param": "w",
+     "baseline": "12.05",
+     "kind": "documented_primary_knob",
+     "certainty": "verified",
+     "evidence": "CLAUDE.md Benchmarks 절: 'increasing the Miller compensation cap (Cc) improves phase margin but reduces UGBW'. 실제 런에서 반복 채택: runs/measure/before/two_stage-1 (12.05->13.5->14.7->15.2), runs/measure/after/two_stage-1 (->13->14->15->16->16.3), after/two_stage-2 (->14.5). 모두 verify_post keep.",
+     "note": "sky130 이행 후 Miller 캡은 pfet MOS 캡이라 w 와 l 을 함께 움직인다(런들이 항상 둘을 같은 값으로 제안한다).",
+     "provenance": [
+      "run_log",
+      "repo_file"
+     ]
+    },
+    {
+     "block": "OPAMP2STAGE",
+     "refdes": "OPAMP2STAGE.Xcc",
+     "param": "l",
+     "baseline": "12.05",
+     "kind": "documented_primary_knob",
+     "certainty": "verified",
+     "evidence": "위와 동일",
+     "provenance": [
+      "same_as_previous_entry"
+     ]
+    }
+   ],
+   "secondary_knobs": [
+    {
+     "refdes": "OPAMP2STAGE.X7",
+     "param": "W",
+     "baseline": "30",
+     "certainty": "verified",
+     "evidence": "runs/measure/after/two_stage-1 iter4/iter5 에서 Xcc 와 함께 keep (30->39->41). 단독 제안(iter2 30->45)은 rollback — 조합에서만 유지됐다.",
+     "provenance": [
+      "run_log"
+     ]
+    },
+    {
+     "refdes": "OPAMP2STAGE.X6",
+     "param": "W",
+     "baseline": "8",
+     "certainty": "inferred",
+     "evidence": "근거 없음(이 스펙에서는). CLAUDE.md 는 M6.W 가 psr_minus 를 개선하고 phase_margin 을 회귀시킨다고 기록한다. 실제로 X6.W 8->14 는 verify_pre 가 두 번(iter1.r1, iter6.r1) 거부했다 — 정답 목록이 아니라 오답 목록에 가깝다.",
+     "provenance": [
+      "none"
+     ]
+    }
+   ],
+   "known_wrong_knobs": [
+    {
+     "refdes": "Cload",
+     "param": "value",
+     "scope": "top-level",
+     "certainty": "verified",
+     "evidence": "CLAUDE.md optimization 절: Cload 를 줄이면 phase margin 과 UGBW 가 DUT 를 안 건드리고 좋아진다 — 조작된 여유. runs/pvt_sonnet_1 iter1.r2 에서 Cload 2p->0.8p 제안이 verify_pre 에 거부됨.",
+     "note": "Cin/Cload/Lfb 세 개는 tunable 인덱스에 들어 있지만(최상위 수동소자라 stimulus 게이트가 못 막는다) 테스트벤치 장치다. 거리 지표가 이것들을 상위에 올리면 그 자체가 결함이다.",
+     "provenance": [
+      "run_log",
+      "repo_file"
+     ]
+    },
+    {
+     "refdes": "Cin",
+     "param": "value",
+     "scope": "top-level",
+     "certainty": "verified",
+     "evidence": "위와 동일",
+     "provenance": [
+      "same_as_previous_entry"
+     ]
+    },
+    {
+     "refdes": "Lfb",
+     "param": "value",
+     "scope": "top-level",
+     "certainty": "verified",
+     "evidence": "CLAUDE.md: Lfb 는 1 MH 루프 브레이킹 인덕터, 순수 테스트벤치 장치.",
+     "provenance": [
+      "repo_file"
+     ]
+    }
+   ],
+   "run_accepted_changes": [
+    {
+     "run": "runs/measure/after/two_stage-1",
+     "status": "FAIL",
+     "iterations": 10,
+     "kept": [
+      [
+       "OPAMP2STAGE.Xcc",
+       "w/l",
+       "12.05",
+       "16.3"
+      ],
+      [
+       "OPAMP2STAGE.X7",
+       "W",
+       "30",
+       "41"
+      ],
+      [
+       "OPAMP2STAGE.Xca",
+       "w",
+       "6.88",
+       "6.2"
+      ]
+     ],
+     "rolled_back": [
+      [
+       "OPAMP2STAGE.X7",
+       "W",
+       "30",
+       "45"
+      ],
+      [
+       "OPAMP2STAGE.X6",
+       "L",
+       "0.5",
+       "0.35"
+      ]
+     ],
+     "verify_pre_rejected": [
+      [
+       "OPAMP2STAGE.X6",
+       "W",
+       "8",
+       "14"
+      ]
+     ],
+     "evidence": "runs/measure/after/two_stage-1/history.jsonl. **runs/ 는 .gitignore 에 있어 클린 체크아웃에 없다.**",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    },
+    {
+     "run": "runs/measure/before/two_stage-1",
+     "status": "FAIL(중단)",
+     "iterations": "3+",
+     "kept": [
+      [
+       "OPAMP2STAGE.Xcc",
+       "w/l",
+       "12.05",
+       "15.2"
+      ],
+      [
+       "OPAMP2STAGE.X7",
+       "W",
+       "30",
+       "42"
+      ]
+     ],
+     "evidence": "runs/measure/before/two_stage-1/history.jsonl. **runs/ 는 .gitignore 에 있어 클린 체크아웃에 없다.**",
+     "provenance": [
+      "run_log"
+     ],
+     "certainty": "unstated"
+    }
+   ],
+   "scoring": {
+    "correct_set_block": [
+     "OPAMP2STAGE"
+    ],
+    "correct_set_refdes": [
+     "OPAMP2STAGE.Xcc"
+    ],
+    "correct_set_refdes_param": [
+     [
+      "OPAMP2STAGE.Xcc",
+      "w"
+     ],
+     [
+      "OPAMP2STAGE.Xcc",
+      "l"
+     ]
+    ],
+    "acceptable_secondary": [
+     [
+      "OPAMP2STAGE.X7",
+      "W"
+     ]
+    ],
+    "must_not_be_top_ranked": [
+     [
+      "Cload",
+      "value"
+     ],
+     [
+      "Cin",
+      "value"
+     ],
+     [
+      "Lfb",
+      "value"
+     ]
+    ],
+    "denominator": 33,
+    "note": "블록이 하나라 블록 수준 채점은 무의미. 이 케이스는 '노브 수준 거리'만 채점한다. 어떤 런도 PASS 하지 못했으므로 'PASS 를 낸 채택 변경'이라는 최강 근거는 없다 — 반복 채택(kept)이 최선의 근거다.",
+    "repair_sets": [
+     [
+      [
+       "OPAMP2STAGE.Xcc",
+       "w"
+      ]
+     ],
+     [
+      [
+       "OPAMP2STAGE.Xcc",
+       "l"
+      ]
+     ]
+    ],
+    "repair_sets_derivation": "correct_set_refdes_param 그대로. 두 param 은 같은 소자의 것이고 런들이 항상 둘을 같은 값으로 움직인다 — 어느 쪽을 지목해도 그 소자에 도달한다.",
+    "repair_sets_caveat": "이 케이스의 근거는 PASS 가 아니라 반복 채택(kept)이다. 어떤 런도 PASS 하지 못했다 — scoring.note 참조."
+   }
+  },
+  {
+   "case_id": "bandgap_optimizer_iq_knob_ranking",
+   "spec_path": "benchmarks/bandgap/spec_pvt.yaml",
+   "phase": "optimization",
+   "scoreable": true,
+   "scoring_axis": "objective_value_after_corner_confirmation",
+   "note": "태스크 6이 실제로 A/B 하겠다고 적은 지점은 수리 루프가 아니라 **최적화 단계의 노브 순위**다(roadmap 159-176행). 여기에는 '실패한 기준의 넷'이 없다 — 목적함수 iq_ua 가 있을 뿐이다. 따라서 '실패 측정 노드로부터의 거리'라는 정의를 그대로 못 쓴다. 이 케이스는 그 불일치를 드러내려고 넣었다.",
+   "objective": {
+    "name": "iq_ua",
+    "direction": "minimize",
+    "baseline": 212.9881,
+    "measurement_nets": [
+     "Vdd"
+    ],
+    "note": "iq_ua 는 i(Vdd) 에서 나온다 — 최상위 전원. control_block.measurement_nets 가 돌려주는 것은 넷이 아니라 전압원 이름 'Vdd' 이고, signal_path.paths.supply_nets 는 그 넷에서 drive 역할을 떨어뜨린다. 즉 목적함수의 소스 노드는 모든 블록에서 거리 0 또는 거리 미정의다. 거리 사전확률을 최적화 단계에 그대로 꽂으면 정보가 0일 수 있다 — 태스크 6 착수 전에 확인해야 할 첫 번째 사실."
+   },
+   "verified_reference_knob": {
+    "refdes": "TRIMAMP.Xt",
+    "param": "W",
+    "baseline": "8",
+    "nominal_search_endpoint": {
+     "W": 2.78943,
+     "iq_ua": 211.6764,
+     "corner_confirmation": "FAIL on 6 criteria"
+    },
+    "corner_confirmed_endpoint": {
+     "W": 5.2488,
+     "iq_ua": 212.2517,
+     "improvement_ua": 0.7364
+    },
+    "certainty": "verified",
+    "evidence": "tests/unit/test_optimizer_bandgap_ngspice.py:39-44 (KNOB 상수), :173-184 (측정 트레이스). CLAUDE.md 최적화 절에도 같은 수치.",
+    "warning": "이 노브는 테스트가 **고정 주입**한 것이지 LLM 이 1순위로 매긴 것이 아니다(같은 파일 44행 KNOB). 따라서 '최선의 노브'라는 근거는 없다 — '코너 확인을 통과한 개선이 측정된 노브'라는 근거만 있다. 어떤 순위 지표든 최소한 이 값(212.2517 µA)을 넘어야 동률 이상이라고 말할 수 있다."
+   },
+   "harness": {
+    "path": "scripts/search_ab.py",
+    "injection_point": "OptimizerAgents.knob_ranking",
+    "evidence": "scripts/search_ab.py:16, :110, :195, :269, :420 — 고정 노브 순위를 주입하는 경로가 이미 있다. 태스크 2의 하니스로 보이며, 현재 다른 에이전트가 작업 중(git status 에 untracked/modified).",
+    "certainty": "verified"
+   },
+   "existing_runs": {
+    "path": "runs/search_ab/selfcheck_nominal/{a,b}_coordinate_descent.json",
+    "content": "두 팔 모두 고정 순위 [TRIMAMP.Xt.W decrease], objective_before 212.9881, steps 1, corner_confirmed False, wall_clock 24s. 셀프체크 실행이지 측정 실행이 아니다.",
+    "certainty": "verified"
+   },
+   "scoring": {
+    "denominator": 167,
+    "rule": "roadmap 의 사전 등록 판정 규칙 그대로: 같은 시뮬레이션 예산에서 코너 확인을 통과한 iq_ua 로 비교. 그래프 랭킹이 LLM 랭킹과 동률 이상이면 LLM 호출 하나를 없앨 수 있다.",
+    "reference_bar": 212.2517
+   }
+  }
+ ],
+ "tunable_indices": {
+  "benchmarks/bandgap/spec_seed_buf0_droop.yaml": [
+   [
+    "BANDGAP.XRl4",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl4",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "W"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "w"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "w"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "l"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xq8",
+    "m"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.Xt",
+    "L"
+   ],
+   [
+    "BUF_N.Xt",
+    "W"
+   ],
+   [
+    "BUF_N.X1",
+    "L"
+   ],
+   [
+    "BUF_N.X1",
+    "W"
+   ],
+   [
+    "BUF_N.X2",
+    "L"
+   ],
+   [
+    "BUF_N.X2",
+    "W"
+   ],
+   [
+    "BUF_N.Xp1",
+    "L"
+   ],
+   [
+    "BUF_N.Xp1",
+    "W"
+   ],
+   [
+    "BUF_N.Xp2",
+    "L"
+   ],
+   [
+    "BUF_N.Xp2",
+    "W"
+   ],
+   [
+    "BUF_N.Xc1",
+    "L"
+   ],
+   [
+    "BUF_N.Xc1",
+    "W"
+   ],
+   [
+    "BUF_N.Xc2",
+    "L"
+   ],
+   [
+    "BUF_N.Xc2",
+    "W"
+   ],
+   [
+    "BUF_N.Xn1",
+    "L"
+   ],
+   [
+    "BUF_N.Xn1",
+    "W"
+   ],
+   [
+    "BUF_N.Xn2",
+    "L"
+   ],
+   [
+    "BUF_N.Xn2",
+    "W"
+   ],
+   [
+    "BUF_N.Xm1",
+    "L"
+   ],
+   [
+    "BUF_N.Xm1",
+    "W"
+   ],
+   [
+    "BUF_N.Xm2",
+    "L"
+   ],
+   [
+    "BUF_N.Xm2",
+    "W"
+   ],
+   [
+    "BUF_N.X6",
+    "L"
+   ],
+   [
+    "BUF_N.X6",
+    "W"
+   ],
+   [
+    "BUF_N.X7",
+    "L"
+   ],
+   [
+    "BUF_N.X7",
+    "W"
+   ],
+   [
+    "BUF_N.Xcc",
+    "L"
+   ],
+   [
+    "BUF_N.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.XRz",
+    "l"
+   ],
+   [
+    "BUF_N.XRz",
+    "w"
+   ],
+   [
+    "BUF_N.Xcl",
+    "L"
+   ],
+   [
+    "BUF_N.Xcl",
+    "W"
+   ],
+   [
+    "BUF_P.Xt",
+    "L"
+   ],
+   [
+    "BUF_P.Xt",
+    "W"
+   ],
+   [
+    "BUF_P.X1",
+    "L"
+   ],
+   [
+    "BUF_P.X1",
+    "W"
+   ],
+   [
+    "BUF_P.X2",
+    "L"
+   ],
+   [
+    "BUF_P.X2",
+    "W"
+   ],
+   [
+    "BUF_P.Xn1",
+    "L"
+   ],
+   [
+    "BUF_P.Xn1",
+    "W"
+   ],
+   [
+    "BUF_P.Xn2",
+    "L"
+   ],
+   [
+    "BUF_P.Xn2",
+    "W"
+   ],
+   [
+    "BUF_P.Xc1",
+    "L"
+   ],
+   [
+    "BUF_P.Xc1",
+    "W"
+   ],
+   [
+    "BUF_P.Xc2",
+    "L"
+   ],
+   [
+    "BUF_P.Xc2",
+    "W"
+   ],
+   [
+    "BUF_P.Xp1",
+    "L"
+   ],
+   [
+    "BUF_P.Xp1",
+    "W"
+   ],
+   [
+    "BUF_P.Xp2",
+    "L"
+   ],
+   [
+    "BUF_P.Xp2",
+    "W"
+   ],
+   [
+    "BUF_P.Xm1",
+    "L"
+   ],
+   [
+    "BUF_P.Xm1",
+    "W"
+   ],
+   [
+    "BUF_P.Xm2",
+    "L"
+   ],
+   [
+    "BUF_P.Xm2",
+    "W"
+   ],
+   [
+    "BUF_P.X6",
+    "L"
+   ],
+   [
+    "BUF_P.X6",
+    "W"
+   ],
+   [
+    "BUF_P.X7",
+    "L"
+   ],
+   [
+    "BUF_P.X7",
+    "W"
+   ],
+   [
+    "BUF_P.Xcc",
+    "L"
+   ],
+   [
+    "BUF_P.Xcc",
+    "W"
+   ],
+   [
+    "BUF_P.XRz",
+    "l"
+   ],
+   [
+    "BUF_P.XRz",
+    "w"
+   ],
+   [
+    "BUF_P.Xcl",
+    "L"
+   ],
+   [
+    "BUF_P.Xcl",
+    "W"
+   ],
+   [
+    "ERRAMP.Xt",
+    "L"
+   ],
+   [
+    "ERRAMP.Xt",
+    "W"
+   ],
+   [
+    "ERRAMP.X1",
+    "L"
+   ],
+   [
+    "ERRAMP.X1",
+    "W"
+   ],
+   [
+    "ERRAMP.X2",
+    "L"
+   ],
+   [
+    "ERRAMP.X2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "W"
+   ],
+   [
+    "ERRAMP.X6",
+    "L"
+   ],
+   [
+    "ERRAMP.X6",
+    "W"
+   ],
+   [
+    "ERRAMP.X7",
+    "L"
+   ],
+   [
+    "ERRAMP.X7",
+    "W"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "L"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "W"
+   ],
+   [
+    "ERRAMP.XRz",
+    "l"
+   ],
+   [
+    "ERRAMP.XRz",
+    "w"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "W"
+   ],
+   [
+    "TRIMAMP.X1",
+    "L"
+   ],
+   [
+    "TRIMAMP.X1",
+    "W"
+   ],
+   [
+    "TRIMAMP.X2",
+    "L"
+   ],
+   [
+    "TRIMAMP.X2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "W"
+   ],
+   [
+    "TRIMAMP.X6",
+    "L"
+   ],
+   [
+    "TRIMAMP.X6",
+    "W"
+   ],
+   [
+    "TRIMAMP.X7",
+    "L"
+   ],
+   [
+    "TRIMAMP.X7",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "W"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "l"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "w"
+   ]
+  ],
+  "benchmarks/bandgap/spec_seed_tc.yaml": [
+   [
+    "BANDGAP.XRl4",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl4",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "W"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "w"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "w"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "l"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xq8",
+    "m"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.Xt",
+    "L"
+   ],
+   [
+    "BUF_N.Xt",
+    "W"
+   ],
+   [
+    "BUF_N.X1",
+    "L"
+   ],
+   [
+    "BUF_N.X1",
+    "W"
+   ],
+   [
+    "BUF_N.X2",
+    "L"
+   ],
+   [
+    "BUF_N.X2",
+    "W"
+   ],
+   [
+    "BUF_N.Xp1",
+    "L"
+   ],
+   [
+    "BUF_N.Xp1",
+    "W"
+   ],
+   [
+    "BUF_N.Xp2",
+    "L"
+   ],
+   [
+    "BUF_N.Xp2",
+    "W"
+   ],
+   [
+    "BUF_N.Xc1",
+    "L"
+   ],
+   [
+    "BUF_N.Xc1",
+    "W"
+   ],
+   [
+    "BUF_N.Xc2",
+    "L"
+   ],
+   [
+    "BUF_N.Xc2",
+    "W"
+   ],
+   [
+    "BUF_N.Xn1",
+    "L"
+   ],
+   [
+    "BUF_N.Xn1",
+    "W"
+   ],
+   [
+    "BUF_N.Xn2",
+    "L"
+   ],
+   [
+    "BUF_N.Xn2",
+    "W"
+   ],
+   [
+    "BUF_N.Xm1",
+    "L"
+   ],
+   [
+    "BUF_N.Xm1",
+    "W"
+   ],
+   [
+    "BUF_N.Xm2",
+    "L"
+   ],
+   [
+    "BUF_N.Xm2",
+    "W"
+   ],
+   [
+    "BUF_N.X6",
+    "L"
+   ],
+   [
+    "BUF_N.X6",
+    "W"
+   ],
+   [
+    "BUF_N.X7",
+    "L"
+   ],
+   [
+    "BUF_N.X7",
+    "W"
+   ],
+   [
+    "BUF_N.Xcc",
+    "L"
+   ],
+   [
+    "BUF_N.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.XRz",
+    "l"
+   ],
+   [
+    "BUF_N.XRz",
+    "w"
+   ],
+   [
+    "BUF_N.Xcl",
+    "L"
+   ],
+   [
+    "BUF_N.Xcl",
+    "W"
+   ],
+   [
+    "BUF_P.Xt",
+    "L"
+   ],
+   [
+    "BUF_P.Xt",
+    "W"
+   ],
+   [
+    "BUF_P.X1",
+    "L"
+   ],
+   [
+    "BUF_P.X1",
+    "W"
+   ],
+   [
+    "BUF_P.X2",
+    "L"
+   ],
+   [
+    "BUF_P.X2",
+    "W"
+   ],
+   [
+    "BUF_P.Xn1",
+    "L"
+   ],
+   [
+    "BUF_P.Xn1",
+    "W"
+   ],
+   [
+    "BUF_P.Xn2",
+    "L"
+   ],
+   [
+    "BUF_P.Xn2",
+    "W"
+   ],
+   [
+    "BUF_P.Xc1",
+    "L"
+   ],
+   [
+    "BUF_P.Xc1",
+    "W"
+   ],
+   [
+    "BUF_P.Xc2",
+    "L"
+   ],
+   [
+    "BUF_P.Xc2",
+    "W"
+   ],
+   [
+    "BUF_P.Xp1",
+    "L"
+   ],
+   [
+    "BUF_P.Xp1",
+    "W"
+   ],
+   [
+    "BUF_P.Xp2",
+    "L"
+   ],
+   [
+    "BUF_P.Xp2",
+    "W"
+   ],
+   [
+    "BUF_P.Xm1",
+    "L"
+   ],
+   [
+    "BUF_P.Xm1",
+    "W"
+   ],
+   [
+    "BUF_P.Xm2",
+    "L"
+   ],
+   [
+    "BUF_P.Xm2",
+    "W"
+   ],
+   [
+    "BUF_P.X6",
+    "L"
+   ],
+   [
+    "BUF_P.X6",
+    "W"
+   ],
+   [
+    "BUF_P.X7",
+    "L"
+   ],
+   [
+    "BUF_P.X7",
+    "W"
+   ],
+   [
+    "BUF_P.Xcc",
+    "L"
+   ],
+   [
+    "BUF_P.Xcc",
+    "W"
+   ],
+   [
+    "BUF_P.XRz",
+    "l"
+   ],
+   [
+    "BUF_P.XRz",
+    "w"
+   ],
+   [
+    "BUF_P.Xcl",
+    "L"
+   ],
+   [
+    "BUF_P.Xcl",
+    "W"
+   ],
+   [
+    "ERRAMP.Xt",
+    "L"
+   ],
+   [
+    "ERRAMP.Xt",
+    "W"
+   ],
+   [
+    "ERRAMP.X1",
+    "L"
+   ],
+   [
+    "ERRAMP.X1",
+    "W"
+   ],
+   [
+    "ERRAMP.X2",
+    "L"
+   ],
+   [
+    "ERRAMP.X2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "W"
+   ],
+   [
+    "ERRAMP.X6",
+    "L"
+   ],
+   [
+    "ERRAMP.X6",
+    "W"
+   ],
+   [
+    "ERRAMP.X7",
+    "L"
+   ],
+   [
+    "ERRAMP.X7",
+    "W"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "L"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "W"
+   ],
+   [
+    "ERRAMP.XRz",
+    "l"
+   ],
+   [
+    "ERRAMP.XRz",
+    "w"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "W"
+   ],
+   [
+    "TRIMAMP.X1",
+    "L"
+   ],
+   [
+    "TRIMAMP.X1",
+    "W"
+   ],
+   [
+    "TRIMAMP.X2",
+    "L"
+   ],
+   [
+    "TRIMAMP.X2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "W"
+   ],
+   [
+    "TRIMAMP.X6",
+    "L"
+   ],
+   [
+    "TRIMAMP.X6",
+    "W"
+   ],
+   [
+    "TRIMAMP.X7",
+    "L"
+   ],
+   [
+    "TRIMAMP.X7",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "W"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "l"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "w"
+   ]
+  ],
+  "benchmarks/bandgap/spec_seed_trim_pm.yaml": [
+   [
+    "BANDGAP.XRl4",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl4",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "W"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "w"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "w"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "l"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xq8",
+    "m"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.Xt",
+    "L"
+   ],
+   [
+    "BUF_N.Xt",
+    "W"
+   ],
+   [
+    "BUF_N.X1",
+    "L"
+   ],
+   [
+    "BUF_N.X1",
+    "W"
+   ],
+   [
+    "BUF_N.X2",
+    "L"
+   ],
+   [
+    "BUF_N.X2",
+    "W"
+   ],
+   [
+    "BUF_N.Xp1",
+    "L"
+   ],
+   [
+    "BUF_N.Xp1",
+    "W"
+   ],
+   [
+    "BUF_N.Xp2",
+    "L"
+   ],
+   [
+    "BUF_N.Xp2",
+    "W"
+   ],
+   [
+    "BUF_N.Xc1",
+    "L"
+   ],
+   [
+    "BUF_N.Xc1",
+    "W"
+   ],
+   [
+    "BUF_N.Xc2",
+    "L"
+   ],
+   [
+    "BUF_N.Xc2",
+    "W"
+   ],
+   [
+    "BUF_N.Xn1",
+    "L"
+   ],
+   [
+    "BUF_N.Xn1",
+    "W"
+   ],
+   [
+    "BUF_N.Xn2",
+    "L"
+   ],
+   [
+    "BUF_N.Xn2",
+    "W"
+   ],
+   [
+    "BUF_N.Xm1",
+    "L"
+   ],
+   [
+    "BUF_N.Xm1",
+    "W"
+   ],
+   [
+    "BUF_N.Xm2",
+    "L"
+   ],
+   [
+    "BUF_N.Xm2",
+    "W"
+   ],
+   [
+    "BUF_N.X6",
+    "L"
+   ],
+   [
+    "BUF_N.X6",
+    "W"
+   ],
+   [
+    "BUF_N.X7",
+    "L"
+   ],
+   [
+    "BUF_N.X7",
+    "W"
+   ],
+   [
+    "BUF_N.Xcc",
+    "L"
+   ],
+   [
+    "BUF_N.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.XRz",
+    "l"
+   ],
+   [
+    "BUF_N.XRz",
+    "w"
+   ],
+   [
+    "BUF_N.Xcl",
+    "L"
+   ],
+   [
+    "BUF_N.Xcl",
+    "W"
+   ],
+   [
+    "BUF_P.Xt",
+    "L"
+   ],
+   [
+    "BUF_P.Xt",
+    "W"
+   ],
+   [
+    "BUF_P.X1",
+    "L"
+   ],
+   [
+    "BUF_P.X1",
+    "W"
+   ],
+   [
+    "BUF_P.X2",
+    "L"
+   ],
+   [
+    "BUF_P.X2",
+    "W"
+   ],
+   [
+    "BUF_P.Xn1",
+    "L"
+   ],
+   [
+    "BUF_P.Xn1",
+    "W"
+   ],
+   [
+    "BUF_P.Xn2",
+    "L"
+   ],
+   [
+    "BUF_P.Xn2",
+    "W"
+   ],
+   [
+    "BUF_P.Xc1",
+    "L"
+   ],
+   [
+    "BUF_P.Xc1",
+    "W"
+   ],
+   [
+    "BUF_P.Xc2",
+    "L"
+   ],
+   [
+    "BUF_P.Xc2",
+    "W"
+   ],
+   [
+    "BUF_P.Xp1",
+    "L"
+   ],
+   [
+    "BUF_P.Xp1",
+    "W"
+   ],
+   [
+    "BUF_P.Xp2",
+    "L"
+   ],
+   [
+    "BUF_P.Xp2",
+    "W"
+   ],
+   [
+    "BUF_P.Xm1",
+    "L"
+   ],
+   [
+    "BUF_P.Xm1",
+    "W"
+   ],
+   [
+    "BUF_P.Xm2",
+    "L"
+   ],
+   [
+    "BUF_P.Xm2",
+    "W"
+   ],
+   [
+    "BUF_P.X6",
+    "L"
+   ],
+   [
+    "BUF_P.X6",
+    "W"
+   ],
+   [
+    "BUF_P.X7",
+    "L"
+   ],
+   [
+    "BUF_P.X7",
+    "W"
+   ],
+   [
+    "BUF_P.Xcc",
+    "L"
+   ],
+   [
+    "BUF_P.Xcc",
+    "W"
+   ],
+   [
+    "BUF_P.XRz",
+    "l"
+   ],
+   [
+    "BUF_P.XRz",
+    "w"
+   ],
+   [
+    "BUF_P.Xcl",
+    "L"
+   ],
+   [
+    "BUF_P.Xcl",
+    "W"
+   ],
+   [
+    "ERRAMP.Xt",
+    "L"
+   ],
+   [
+    "ERRAMP.Xt",
+    "W"
+   ],
+   [
+    "ERRAMP.X1",
+    "L"
+   ],
+   [
+    "ERRAMP.X1",
+    "W"
+   ],
+   [
+    "ERRAMP.X2",
+    "L"
+   ],
+   [
+    "ERRAMP.X2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "W"
+   ],
+   [
+    "ERRAMP.X6",
+    "L"
+   ],
+   [
+    "ERRAMP.X6",
+    "W"
+   ],
+   [
+    "ERRAMP.X7",
+    "L"
+   ],
+   [
+    "ERRAMP.X7",
+    "W"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "L"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "W"
+   ],
+   [
+    "ERRAMP.XRz",
+    "l"
+   ],
+   [
+    "ERRAMP.XRz",
+    "w"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "W"
+   ],
+   [
+    "TRIMAMP.X1",
+    "L"
+   ],
+   [
+    "TRIMAMP.X1",
+    "W"
+   ],
+   [
+    "TRIMAMP.X2",
+    "L"
+   ],
+   [
+    "TRIMAMP.X2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "W"
+   ],
+   [
+    "TRIMAMP.X6",
+    "L"
+   ],
+   [
+    "TRIMAMP.X6",
+    "W"
+   ],
+   [
+    "TRIMAMP.X7",
+    "L"
+   ],
+   [
+    "TRIMAMP.X7",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "W"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "l"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "w"
+   ]
+  ],
+  "benchmarks/bandgap/spec_seed_topology.yaml": [
+   [
+    "BANDGAP.XRl4",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl4",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl3",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl2",
+    "w"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "l"
+   ],
+   [
+    "BANDGAP.XRl1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xmpout",
+    "W"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpa",
+    "w"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "l"
+   ],
+   [
+    "BGR_CORE.XRpb",
+    "w"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "l"
+   ],
+   [
+    "BGR_CORE.XR1",
+    "w"
+   ],
+   [
+    "BGR_CORE.Xq8",
+    "m"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb1",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb2",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb3",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb4",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb5",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb6",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb7",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xb8",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_r",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_d",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_i",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xsu_b",
+    "W"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "L"
+   ],
+   [
+    "BGR_CORE.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.Xt",
+    "L"
+   ],
+   [
+    "BUF_N.Xt",
+    "W"
+   ],
+   [
+    "BUF_N.X1",
+    "L"
+   ],
+   [
+    "BUF_N.X1",
+    "W"
+   ],
+   [
+    "BUF_N.X2",
+    "L"
+   ],
+   [
+    "BUF_N.X2",
+    "W"
+   ],
+   [
+    "BUF_N.Xp1",
+    "L"
+   ],
+   [
+    "BUF_N.Xp1",
+    "W"
+   ],
+   [
+    "BUF_N.Xp2",
+    "L"
+   ],
+   [
+    "BUF_N.Xp2",
+    "W"
+   ],
+   [
+    "BUF_N.Xc1",
+    "L"
+   ],
+   [
+    "BUF_N.Xc1",
+    "W"
+   ],
+   [
+    "BUF_N.Xc2",
+    "L"
+   ],
+   [
+    "BUF_N.Xc2",
+    "W"
+   ],
+   [
+    "BUF_N.Xn1",
+    "L"
+   ],
+   [
+    "BUF_N.Xn1",
+    "W"
+   ],
+   [
+    "BUF_N.Xn2",
+    "L"
+   ],
+   [
+    "BUF_N.Xn2",
+    "W"
+   ],
+   [
+    "BUF_N.Xm1",
+    "L"
+   ],
+   [
+    "BUF_N.Xm1",
+    "W"
+   ],
+   [
+    "BUF_N.Xm2",
+    "L"
+   ],
+   [
+    "BUF_N.Xm2",
+    "W"
+   ],
+   [
+    "BUF_N.X6",
+    "L"
+   ],
+   [
+    "BUF_N.X6",
+    "W"
+   ],
+   [
+    "BUF_N.X7",
+    "L"
+   ],
+   [
+    "BUF_N.X7",
+    "W"
+   ],
+   [
+    "BUF_N.Xcc",
+    "L"
+   ],
+   [
+    "BUF_N.Xcc",
+    "W"
+   ],
+   [
+    "BUF_N.XRz",
+    "l"
+   ],
+   [
+    "BUF_N.XRz",
+    "w"
+   ],
+   [
+    "BUF_N.Xcl",
+    "L"
+   ],
+   [
+    "BUF_N.Xcl",
+    "W"
+   ],
+   [
+    "BUF_P.Xt",
+    "L"
+   ],
+   [
+    "BUF_P.Xt",
+    "W"
+   ],
+   [
+    "BUF_P.X1",
+    "L"
+   ],
+   [
+    "BUF_P.X1",
+    "W"
+   ],
+   [
+    "BUF_P.X2",
+    "L"
+   ],
+   [
+    "BUF_P.X2",
+    "W"
+   ],
+   [
+    "BUF_P.Xp1",
+    "L"
+   ],
+   [
+    "BUF_P.Xp1",
+    "W"
+   ],
+   [
+    "BUF_P.Xp2",
+    "L"
+   ],
+   [
+    "BUF_P.Xp2",
+    "W"
+   ],
+   [
+    "BUF_P.Xc1",
+    "L"
+   ],
+   [
+    "BUF_P.Xc1",
+    "W"
+   ],
+   [
+    "BUF_P.Xc2",
+    "L"
+   ],
+   [
+    "BUF_P.Xc2",
+    "W"
+   ],
+   [
+    "BUF_P.Xn1",
+    "L"
+   ],
+   [
+    "BUF_P.Xn1",
+    "W"
+   ],
+   [
+    "BUF_P.Xn2",
+    "L"
+   ],
+   [
+    "BUF_P.Xn2",
+    "W"
+   ],
+   [
+    "BUF_P.Xm1",
+    "L"
+   ],
+   [
+    "BUF_P.Xm1",
+    "W"
+   ],
+   [
+    "BUF_P.Xm2",
+    "L"
+   ],
+   [
+    "BUF_P.Xm2",
+    "W"
+   ],
+   [
+    "BUF_P.X6",
+    "L"
+   ],
+   [
+    "BUF_P.X6",
+    "W"
+   ],
+   [
+    "BUF_P.X7",
+    "L"
+   ],
+   [
+    "BUF_P.X7",
+    "W"
+   ],
+   [
+    "BUF_P.Xcc",
+    "L"
+   ],
+   [
+    "BUF_P.Xcc",
+    "W"
+   ],
+   [
+    "BUF_P.XRz",
+    "l"
+   ],
+   [
+    "BUF_P.XRz",
+    "w"
+   ],
+   [
+    "BUF_P.Xcl",
+    "L"
+   ],
+   [
+    "BUF_P.Xcl",
+    "W"
+   ],
+   [
+    "ERRAMP.Xt",
+    "L"
+   ],
+   [
+    "ERRAMP.Xt",
+    "W"
+   ],
+   [
+    "ERRAMP.X1",
+    "L"
+   ],
+   [
+    "ERRAMP.X1",
+    "W"
+   ],
+   [
+    "ERRAMP.X2",
+    "L"
+   ],
+   [
+    "ERRAMP.X2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xp2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xc2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xn2",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm1",
+    "W"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "L"
+   ],
+   [
+    "ERRAMP.Xm2",
+    "W"
+   ],
+   [
+    "ERRAMP.X6",
+    "L"
+   ],
+   [
+    "ERRAMP.X6",
+    "W"
+   ],
+   [
+    "ERRAMP.X7",
+    "L"
+   ],
+   [
+    "ERRAMP.X7",
+    "W"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "L"
+   ],
+   [
+    "ERRAMP.Xcc",
+    "W"
+   ],
+   [
+    "ERRAMP.XRz",
+    "l"
+   ],
+   [
+    "ERRAMP.XRz",
+    "w"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xt",
+    "W"
+   ],
+   [
+    "TRIMAMP.X1",
+    "L"
+   ],
+   [
+    "TRIMAMP.X1",
+    "W"
+   ],
+   [
+    "TRIMAMP.X2",
+    "L"
+   ],
+   [
+    "TRIMAMP.X2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xp2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xc2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xn2",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm1",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xm2",
+    "W"
+   ],
+   [
+    "TRIMAMP.X6",
+    "L"
+   ],
+   [
+    "TRIMAMP.X6",
+    "W"
+   ],
+   [
+    "TRIMAMP.X7",
+    "L"
+   ],
+   [
+    "TRIMAMP.X7",
+    "W"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "L"
+   ],
+   [
+    "TRIMAMP.Xcc",
+    "W"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "l"
+   ],
+   [
+    "TRIMAMP.XRz",
+    "w"
+   ]
+  ],
+  "benchmarks/two_stage_opamp/spec.yaml": [
+   [
+    "Lfb",
+    "value"
+   ],
+   [
+    "Cin",
+    "value"
+   ],
+   [
+    "Cload",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.Xp3",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xp3",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xp4",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xp4",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xn1",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xn1",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xn2",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xn2",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Rdeg",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.Rstart",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.X1",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X1",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X2",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X2",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X3",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X3",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X4",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X4",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X5",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X5",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X6",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X6",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X7",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X7",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "l"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "mf"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "w"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "l"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "mf"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "w"
+   ]
+  ],
+  "benchmarks/two_stage_opamp/spec_topology_required.yaml": [
+   [
+    "Lfb",
+    "value"
+   ],
+   [
+    "Cin",
+    "value"
+   ],
+   [
+    "Cload",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.Xp3",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xp3",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xp4",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xp4",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xn1",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xn1",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xn2",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.Xn2",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Rdeg",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.Rstart",
+    "value"
+   ],
+   [
+    "OPAMP2STAGE.X1",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X1",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X2",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X2",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X3",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X3",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X4",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X4",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X5",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X5",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X6",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X6",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.X7",
+    "L"
+   ],
+   [
+    "OPAMP2STAGE.X7",
+    "W"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "l"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "mf"
+   ],
+   [
+    "OPAMP2STAGE.Xcc",
+    "w"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "l"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "mf"
+   ],
+   [
+    "OPAMP2STAGE.Xca",
+    "w"
+   ]
+  ]
+ },
+ "derived_criteria_and_focus": {
+  "benchmarks/bandgap/spec_seed_buf0_droop.yaml": {
+   "canonical_testbench": "dc_tc",
+   "testbenches": {
+    "dc_tc": {
+     "netlist": "benchmarks/bandgap/netlist.cir",
+     "criteria": [
+      {
+       "name": "vbgout_min",
+       "measurement": "vbgout_v",
+       "operator": ">=",
+       "threshold": 1.2,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbgout_max",
+       "measurement": "vbgout_v",
+       "operator": "<=",
+       "threshold": 1.28,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbg0_min",
+       "measurement": "vbg0_v",
+       "operator": ">=",
+       "threshold": 0.475,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg0_max",
+       "measurement": "vbg0_v",
+       "operator": "<=",
+       "threshold": 0.525,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_min",
+       "measurement": "vbg1_v",
+       "operator": ">=",
+       "threshold": 1.14,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg1_max",
+       "measurement": "vbg1_v",
+       "operator": "<=",
+       "threshold": 1.26,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "temperature_coefficient",
+       "measurement": "tc_ppm_per_c",
+       "operator": "<=",
+       "threshold": 70.0,
+       "unit": "ppm/C",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "quiescent_current",
+       "measurement": "iq_ua",
+       "operator": "<=",
+       "threshold": 300.0,
+       "unit": "uA",
+       "measurement_nets": [
+        "Vdd"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "startup": {
+     "netlist": "benchmarks/bandgap/netlist_startup.cir",
+     "criteria": [
+      {
+       "name": "startup_time",
+       "measurement": "startup_time",
+       "operator": "<=",
+       "threshold": 2e-05,
+       "unit": "s",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "psrr": {
+     "netlist": "benchmarks/bandgap/netlist_psrr.cir",
+     "criteria": [
+      {
+       "name": "psrr_dc",
+       "measurement": "psrr_bg_db",
+       "operator": "<=",
+       "threshold": -25.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "settling": {
+     "netlist": "benchmarks/bandgap/netlist_settling.cir",
+     "criteria": [
+      {
+       "name": "vbg0_droop",
+       "measurement": "vbg0_droop_mv",
+       "operator": "<=",
+       "threshold": 15.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_droop",
+       "measurement": "vbg1_droop_mv",
+       "operator": "<=",
+       "threshold": 50.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg0_residual",
+       "measurement": "vbg0_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_residual",
+       "measurement": "vbg1_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      }
+     ]
+    },
+    "amp_loops": {
+     "netlist": "benchmarks/bandgap/netlist_loops.cir",
+     "criteria": [
+      {
+       "name": "core_loop_gain",
+       "measurement": "core_gain_db",
+       "operator": ">=",
+       "threshold": 40.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "core_phase_margin",
+       "measurement": "core_pm_deg",
+       "operator": ">=",
+       "threshold": 50.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "trim_loop_gain",
+       "measurement": "trim_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "trim_phase_margin",
+       "measurement": "trim_pm_deg",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "buf1_loop_gain",
+       "measurement": "buf1_gain_db",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf1_phase_margin",
+       "measurement": "buf1_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf0_loop_gain",
+       "measurement": "buf0_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "buf0_phase_margin",
+       "measurement": "buf0_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "benchmarks/bandgap/spec_seed_tc.yaml": {
+   "canonical_testbench": "dc_tc",
+   "testbenches": {
+    "dc_tc": {
+     "netlist": "benchmarks/bandgap/netlist.cir",
+     "criteria": [
+      {
+       "name": "vbgout_min",
+       "measurement": "vbgout_v",
+       "operator": ">=",
+       "threshold": 1.2,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbgout_max",
+       "measurement": "vbgout_v",
+       "operator": "<=",
+       "threshold": 1.28,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbg0_min",
+       "measurement": "vbg0_v",
+       "operator": ">=",
+       "threshold": 0.475,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg0_max",
+       "measurement": "vbg0_v",
+       "operator": "<=",
+       "threshold": 0.525,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_min",
+       "measurement": "vbg1_v",
+       "operator": ">=",
+       "threshold": 1.14,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg1_max",
+       "measurement": "vbg1_v",
+       "operator": "<=",
+       "threshold": 1.26,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "temperature_coefficient",
+       "measurement": "tc_ppm_per_c",
+       "operator": "<=",
+       "threshold": 30.0,
+       "unit": "ppm/C",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "quiescent_current",
+       "measurement": "iq_ua",
+       "operator": "<=",
+       "threshold": 300.0,
+       "unit": "uA",
+       "measurement_nets": [
+        "Vdd"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "startup": {
+     "netlist": "benchmarks/bandgap/netlist_startup.cir",
+     "criteria": [
+      {
+       "name": "startup_time",
+       "measurement": "startup_time",
+       "operator": "<=",
+       "threshold": 2e-05,
+       "unit": "s",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "psrr": {
+     "netlist": "benchmarks/bandgap/netlist_psrr.cir",
+     "criteria": [
+      {
+       "name": "psrr_dc",
+       "measurement": "psrr_bg_db",
+       "operator": "<=",
+       "threshold": -25.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "settling": {
+     "netlist": "benchmarks/bandgap/netlist_settling.cir",
+     "criteria": [
+      {
+       "name": "vbg0_droop",
+       "measurement": "vbg0_droop_mv",
+       "operator": "<=",
+       "threshold": 50.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_droop",
+       "measurement": "vbg1_droop_mv",
+       "operator": "<=",
+       "threshold": 50.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg0_residual",
+       "measurement": "vbg0_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_residual",
+       "measurement": "vbg1_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      }
+     ]
+    },
+    "amp_loops": {
+     "netlist": "benchmarks/bandgap/netlist_loops.cir",
+     "criteria": [
+      {
+       "name": "core_loop_gain",
+       "measurement": "core_gain_db",
+       "operator": ">=",
+       "threshold": 40.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "core_phase_margin",
+       "measurement": "core_pm_deg",
+       "operator": ">=",
+       "threshold": 50.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "trim_loop_gain",
+       "measurement": "trim_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "trim_phase_margin",
+       "measurement": "trim_pm_deg",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "buf1_loop_gain",
+       "measurement": "buf1_gain_db",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf1_phase_margin",
+       "measurement": "buf1_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf0_loop_gain",
+       "measurement": "buf0_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "buf0_phase_margin",
+       "measurement": "buf0_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "benchmarks/bandgap/spec_seed_trim_pm.yaml": {
+   "canonical_testbench": "dc_tc",
+   "testbenches": {
+    "dc_tc": {
+     "netlist": "benchmarks/bandgap/netlist.cir",
+     "criteria": [
+      {
+       "name": "vbgout_min",
+       "measurement": "vbgout_v",
+       "operator": ">=",
+       "threshold": 1.2,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbgout_max",
+       "measurement": "vbgout_v",
+       "operator": "<=",
+       "threshold": 1.28,
+       "unit": "V",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "vbg0_min",
+       "measurement": "vbg0_v",
+       "operator": ">=",
+       "threshold": 0.475,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg0_max",
+       "measurement": "vbg0_v",
+       "operator": "<=",
+       "threshold": 0.525,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_min",
+       "measurement": "vbg1_v",
+       "operator": ">=",
+       "threshold": 1.14,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg1_max",
+       "measurement": "vbg1_v",
+       "operator": "<=",
+       "threshold": 1.26,
+       "unit": "V",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "temperature_coefficient",
+       "measurement": "tc_ppm_per_c",
+       "operator": "<=",
+       "threshold": 70.0,
+       "unit": "ppm/C",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "quiescent_current",
+       "measurement": "iq_ua",
+       "operator": "<=",
+       "threshold": 300.0,
+       "unit": "uA",
+       "measurement_nets": [
+        "Vdd"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "startup": {
+     "netlist": "benchmarks/bandgap/netlist_startup.cir",
+     "criteria": [
+      {
+       "name": "startup_time",
+       "measurement": "startup_time",
+       "operator": "<=",
+       "threshold": 2e-05,
+       "unit": "s",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "psrr": {
+     "netlist": "benchmarks/bandgap/netlist_psrr.cir",
+     "criteria": [
+      {
+       "name": "psrr_dc",
+       "measurement": "psrr_bg_db",
+       "operator": "<=",
+       "threshold": -25.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vbgout"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "ERRAMP",
+        "TRIMAMP"
+       ]
+      }
+     ]
+    },
+    "settling": {
+     "netlist": "benchmarks/bandgap/netlist_settling.cir",
+     "criteria": [
+      {
+       "name": "vbg0_droop",
+       "measurement": "vbg0_droop_mv",
+       "operator": "<=",
+       "threshold": 50.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_droop",
+       "measurement": "vbg1_droop_mv",
+       "operator": "<=",
+       "threshold": 50.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "vbg0_residual",
+       "measurement": "vbg0_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "vbg1_residual",
+       "measurement": "vbg1_resid_mv",
+       "operator": "<=",
+       "threshold": 5.0,
+       "unit": "mV",
+       "measurement_nets": [
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      }
+     ]
+    },
+    "amp_loops": {
+     "netlist": "benchmarks/bandgap/netlist_loops.cir",
+     "criteria": [
+      {
+       "name": "core_loop_gain",
+       "measurement": "core_gain_db",
+       "operator": ">=",
+       "threshold": 40.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "core_phase_margin",
+       "measurement": "core_pm_deg",
+       "operator": ">=",
+       "threshold": 50.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "ERRAMP"
+       ]
+      },
+      {
+       "name": "trim_loop_gain",
+       "measurement": "trim_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "trim_phase_margin",
+       "measurement": "trim_pm_deg",
+       "operator": ">=",
+       "threshold": 85.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BANDGAP",
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "buf1_loop_gain",
+       "measurement": "buf1_gain_db",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf1_phase_margin",
+       "measurement": "buf1_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf0_loop_gain",
+       "measurement": "buf0_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "buf0_phase_margin",
+       "measurement": "buf0_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "benchmarks/bandgap/spec_seed_topology.yaml": {
+   "canonical_testbench": "amp_loops",
+   "testbenches": {
+    "amp_loops": {
+     "netlist": "benchmarks/bandgap/netlist_seed_topology.cir",
+     "criteria": [
+      {
+       "name": "core_loop_gain",
+       "measurement": "core_gain_db",
+       "operator": ">=",
+       "threshold": 40.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE"
+       ]
+      },
+      {
+       "name": "core_phase_margin",
+       "measurement": "core_pm_deg",
+       "operator": ">=",
+       "threshold": 50.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "ampout",
+        "mpgate"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE"
+       ]
+      },
+      {
+       "name": "trim_loop_gain",
+       "measurement": "trim_gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "trim_phase_margin",
+       "measurement": "trim_pm_deg",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "trm_i",
+        "vfb"
+       ],
+       "focus_on_canonical": [
+        "BGR_CORE",
+        "TRIMAMP"
+       ]
+      },
+      {
+       "name": "buf1_loop_gain",
+       "measurement": "buf1_gain_db",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf1_phase_margin",
+       "measurement": "buf1_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b1_i",
+        "vbg1"
+       ],
+       "focus_on_canonical": [
+        "BUF_N"
+       ]
+      },
+      {
+       "name": "buf0_loop_gain",
+       "measurement": "buf0_gain_db",
+       "operator": ">=",
+       "threshold": 90.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      },
+      {
+       "name": "buf0_phase_margin",
+       "measurement": "buf0_pm_deg",
+       "operator": ">=",
+       "threshold": 80.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "b0_i",
+        "vbg0"
+       ],
+       "focus_on_canonical": [
+        "BUF_P"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "benchmarks/two_stage_opamp/spec.yaml": {
+   "canonical_testbench": "ac_loop_gain",
+   "testbenches": {
+    "ac_loop_gain": {
+     "netlist": "benchmarks/two_stage_opamp/netlist.cir",
+     "criteria": [
+      {
+       "name": "dc_gain",
+       "measurement": "gain_db",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      },
+      {
+       "name": "unity_gain_bandwidth",
+       "measurement": "ugbw_hz",
+       "operator": ">=",
+       "threshold": 1500000.0,
+       "unit": "Hz",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      },
+      {
+       "name": "phase_margin",
+       "measurement": "phase_margin_deg",
+       "operator": ">=",
+       "threshold": 60.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      }
+     ]
+    },
+    "psr_plus": {
+     "netlist": "benchmarks/two_stage_opamp/netlist_psr_plus.cir",
+     "criteria": [
+      {
+       "name": "psr_plus",
+       "measurement": "psr_plus_db",
+       "operator": "<=",
+       "threshold": -10.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      }
+     ]
+    },
+    "psr_minus": {
+     "netlist": "benchmarks/two_stage_opamp/netlist_psr_minus.cir",
+     "criteria": [
+      {
+       "name": "psr_minus",
+       "measurement": "psr_minus_db",
+       "operator": "<=",
+       "threshold": 0.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      }
+     ]
+    },
+    "settling_time": {
+     "netlist": "benchmarks/two_stage_opamp/netlist_settling.cir",
+     "criteria": [
+      {
+       "name": "settling_time_hi",
+       "measurement": "t_hi_last",
+       "operator": "<=",
+       "threshold": 2.8e-06,
+       "unit": "s",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      },
+      {
+       "name": "settling_time_lo",
+       "measurement": "t_lo_last",
+       "operator": "<=",
+       "threshold": 2.8e-06,
+       "unit": "s",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "benchmarks/two_stage_opamp/spec_topology_required.yaml": {
+   "canonical_testbench": "ac_loop_gain",
+   "testbenches": {
+    "ac_loop_gain": {
+     "netlist": "benchmarks/two_stage_opamp/netlist.cir",
+     "criteria": [
+      {
+       "name": "dc_gain",
+       "measurement": "gain_db",
+       "operator": ">=",
+       "threshold": 70.0,
+       "unit": "dB",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      },
+      {
+       "name": "unity_gain_bandwidth",
+       "measurement": "ugbw_hz",
+       "operator": ">=",
+       "threshold": 2500000.0,
+       "unit": "Hz",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      },
+      {
+       "name": "phase_margin",
+       "measurement": "phase_margin_deg",
+       "operator": ">=",
+       "threshold": 62.0,
+       "unit": "deg",
+       "measurement_nets": [
+        "vout"
+       ],
+       "focus_on_canonical": [
+        "OPAMP2STAGE"
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "moved_into_repo": {
+  "date": "2026-07-29",
+  "from": "session scratchpad (task6-ground-truth.json)",
+  "reason": "측정의 근거가 저장소 밖에 있으면 '측정된 것만 주장한다' 는 규약이 성립하지 않는다. 세션이 끝나면 세 거리 정의의 모든 채점 숫자가 재현 불가능해지고, 사전 등록이 가리킬 대상이 사라진다.",
+  "scorer": "scripts/score_knob_distance.py",
+  "schema_test": "tests/unit/test_task6_ground_truth.py"
+ },
+ "provenance": {
+  "why": "이 저장소의 규약은 '측정된 것만 주장한다' 이므로, 정답표의 각 항목은 그 주장이 어디서 왔는지를 스스로 말해야 한다. 세션 스크래치패드에만 있던 원본을 옮기면서 항목마다 provenance 를 붙였다.",
+  "codes": {
+   "ngspice_rerun": "ngspice 를 다시 돌려 확인했다. 재현에 필요한 덱과 변경은 같은 항목의 measured / reproduce 에 있다.",
+   "repo_file": "커밋된 파일의 특정 줄을 인용한다 — 클린 체크아웃에서 확인 가능.",
+   "run_log": "runs/ 아래 실행 산출물을 인용한다. **runs/ 는 .gitignore 에 있으므로 클린 체크아웃에 존재하지 않는다.** 이 근거는 이 기계의 작업 트리에서만 확인된다 — 재현하려면 그 실행을 다시 돌려야 하고, 그것은 LLM 호출을 포함한다.",
+   "same_as_previous_entry": "바로 앞 항목과 같은 근거. 그 항목의 provenance 를 읽어라.",
+   "none": "근거 없음. 채점에 쓰지 마라 — 그렇게 적혀 있는 것 자체가 이 항목의 사실이다.",
+   "unclassified_prose": "산문 근거가 있으나 위 어느 코드에도 안 맞는다. 사람이 읽어야 한다."
+  },
+  "ephemeral_paths": "원본의 evidence 문자열 여럿이 '/private/tmp/.../scratchpad/root/...' 아래의 덱 파일을 가리킨다. 그 디렉터리는 세션과 함께 사라졌다. 그 덱들을 만든 변경은 같은 항목의 measured 블록에 (refdes, param, 새 값) 으로 남아 있으므로 측정 자체는 커밋된 벤치마크 덱만으로 재현된다. 경로 문자열은 이력으로만 남긴다.",
+  "reproducible_from_clean_checkout": "scripts/score_knob_distance.py 가 내는 모든 숫자는 커밋된 벤치마크 덱과 이 파일만 읽으므로 클린 체크아웃에서 재현된다. run_log provenance 를 가진 항목의 근거는 재현되지 않는다 — 위 codes.run_log 참조."
+ }
+}
