@@ -1,11 +1,22 @@
-import json
 import os
+
+from analogcoder.json_io import dump as json_dump
 
 
 def write_result_json(run_dir: str, result: dict) -> str:
+    # `json_io.dump`는 비유한 float를 문자열 표지로 정규화한 뒤
+    # `allow_nan=False`로 쓴다. 이 파일에는 실제로 NaN이 들어간다 -
+    # `judge_tools.evaluate_criteria`가 측정이 없는 기준의 `actual`/`margin`에
+    # `math.nan`을 싣고, 그것은 정상 경로다(실측: `runs/pvt_sonnet_1`의
+    # `result.json`에 리터럴 `NaN` 8개, node의 `JSON.parse`가 파일 전체를
+    # 거부).
+    #
+    # **정규화 없이 `allow_nan=False`만 켜면 안 된다.** 그러면 여기서 터지는
+    # `ValueError`가 `cli.main()`의 다음 줄인 `write_report_md`까지 날린다 -
+    # 최적화 단계가 크래시해서 산출물이 통째로 사라졌던 사건과 같은 모양이다.
     path = os.path.join(run_dir, "result.json")
     with open(path, "w") as f:
-        json.dump(result, f, indent=2)
+        json_dump(result, f, indent=2)
     return path
 
 
@@ -197,6 +208,124 @@ def _resume_lines(resumed_from: dict | None) -> list[str]:
     return lines
 
 
+def _corner_label(raw: dict | None) -> str | None:
+    """한 코너의 좌표를 사람이 읽는 한 줄로. `cli.py`의 같은 이름 함수와 **같은
+    판별**을 쓴다: 좌표의 **부재**로 `(deck)`을 가리며, 이름 매칭이 아니다
+    (`(deck)`은 코너를 통과시키지 않은 덱 자신이고 `tt/27`은 진짜 코너다).
+
+    `run_full_pvt_sweep`은 항상 실제 좌표를 적으므로 `(deck)` 갈래는 오늘 이
+    호출부에서 도달하지 않는다. `corner_sim`의 `corner_worst`가 이리로 흘러드는
+    날의 벽이다.
+    """
+    if raw is None:
+        return None
+    if raw.get("voltage") is None or raw.get("temperature") is None:
+        return "(deck)"
+    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
+
+
+def _pvt_lines(sweep: dict | None) -> list[str]:
+    """**판정을 내리는** PVT 스윕. 키가 없으면 빈 목록(스윕이 안 돈 실행).
+
+    이 섹션이 없던 리포트는 실제로 이렇게 나왔다 - `runs/pvt_sonnet_1`을
+    렌더링하면 `**Status:** FAIL` 아래에 7개 기준이 **전부 `[PASS]`**이고
+    `[FAIL]`이 0줄, `corner` 문자열이 0회다. 같은 `result.json`의 `pvt_sweep`은
+    7개 전부 FAIL이고 `dc_gain`은 71.09 -> **3.14 dB**로 붕괴해 있었다.
+    리포트만 읽는 사람에게 남는 것은 "기준은 다 통과했는데 왜 FAIL이지"다.
+    "결과는 자기가 낸 덱을 설명해야 한다"의 네 번째 재발이자, 유일하게 실제
+    산출물에서 관측된 재발이다.
+
+    **통과한 스윕도 그린다.** 최적화/코너 축소/토폴로지 섹션은 "그 단계가 돌지
+    않았다"를 침묵으로 표현하는데, 여기서 같은 규칙을 값(overall_pass)에까지
+    밀면 "스윕이 통과했다"와 "스윕이 안 돌았다"가 같은 침묵이 된다. 그것이
+    이 저장소가 게이트에 대해 아홉 번 치른 값이다. 침묵은 **키의 부재**에만
+    대응한다.
+
+    코너 좌표를 함께 적는 이유: 45개 중 어디가 깨졌는지가 이 스윕이 만드는
+    유일한 추가 정보이고, 없으면 `result.json`을 열어야만 알 수 있다.
+    """
+    if not sweep:
+        return []
+
+    overall = "PASS" if sweep.get("overall_pass") else "FAIL"
+    lines = [
+        "",
+        "## PVT sweep",
+        "",
+        f"**Overall:** {overall} - {sweep.get('summary')}",
+    ]
+    per_corner = sweep.get("per_corner")
+    if per_corner is not None:
+        lines.append(f"**Corners simulated:** {len(per_corner)}")
+    lines += [
+        "**Role:** this sweep is the run's veto - a failure here forces the run to FAIL, "
+        "and it never turns a failing tuning loop into a PASS.",
+        "",
+    ]
+
+    worst = sweep.get("worst_case_corners") or {}
+    for c in sweep.get("criteria", []):
+        mark = "PASS" if c["pass"] else "FAIL"
+        entry = worst.get(c["name"])
+        label = _corner_label(entry)
+        if label is None:
+            # worst_case_measurements가 항목 자체를 안 만든 경우: 그
+            # measurement가 **어느 코너에도** 나타나지 않았다.
+            tail = " - the measurement appeared at no corner"
+        elif entry.get("value") is None:
+            # 이 항목은 argmax가 **아니다**. worst_case_measurements는 측정이
+            # 빠진 코너가 하나라도 있으면 그 중 첫 번째를 값 없이 적는다
+            # (`missing_corners[0]`). "여기가 최악이었다"로 적으면 데이터에
+            # 없는 주장을 하는 것이다.
+            tail = f" - no measurement at corner {label} (the first corner missing it)"
+        else:
+            tail = f" - worst at corner {label}"
+        lines.append(
+            f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} "
+            f"(margin {c['margin']}){tail}"
+        )
+    return lines
+
+
+def _final_criteria_provenance(result: dict) -> str:
+    """"Final criteria" 표가 **어느 조건의, 누가 낸** 측정인지.
+
+    후보가 셋이고 라벨이 없으면 이 표와 바로 아래 판정 스윕이 서로 다른 회로를
+    설명하고 있다는 사실이 보이지 않는다. 실측 `runs/pvt_sonnet_1`에서 이 표는
+    7개 전부 PASS(명목 한 점), 스윕은 7개 전부 FAIL이었다.
+
+    두 축은 서로 독립이라 따로 읽는다.
+
+    - **무엇을 쟀는가**: `corner_reduction.active`면 중간 루프가 본 값은 명목
+      한 점이 아니라 **선택 집합의 최악값**이다(`corner_sim.build_corner_simulate`).
+      아니면 코너를 통과시키지 않은 덱 한 점이다.
+    - **누가 판정했는가**: `cli.py`는 최적화가 기준을 재고 왔으면 이 표를
+      **덮는다**(`optimization["final_criteria"]`). 그때 이것은 LLM judge의
+      것이 아니라 bisection이 착지한 버전에 대한 `evaluate_criteria`의 판정이다.
+    """
+    reduction = result.get("corner_reduction") or {}
+    if reduction.get("active"):
+        final_set = reduction.get("final_set") or []
+        condition = (
+            f"the worst value across the mid-loop's reduced corner set "
+            f"({len(final_set)} corners"
+            + (f": {', '.join(final_set)}" if final_set else "")
+            + ")"
+        )
+    else:
+        condition = "the deck as it is - one simulation point, no corner rendering"
+
+    optimization = result.get("optimization") or {}
+    if optimization.get("final_criteria"):
+        judged_by = (
+            "`evaluate_criteria`, on the netlist version the optimization phase landed on"
+        )
+    else:
+        judged_by = "the `judge` agent, on the deck the tuning loop returned"
+
+    return f"Measured on {condition}; judged by {judged_by}."
+
+
 def write_report_md(run_dir: str, result: dict) -> str:
     lines = [
         "# Run Report",
@@ -207,14 +336,24 @@ def write_report_md(run_dir: str, result: dict) -> str:
     ]
     for name, path in result["final_netlist_paths"].items():
         lines.append(f"- {name}: `{path}`")
+    pvt_lines = _pvt_lines(result.get("pvt_sweep"))
     lines += [
         "",
         "## Final criteria",
         "",
+        f"*{_final_criteria_provenance(result)}*",
     ]
+    if pvt_lines:
+        # 없는 섹션을 가리키지 않는다 - 스윕이 안 돈 실행에서는 이 표가 곧
+        # 실행이 가진 유일한 판정이다.
+        lines.append(
+            "*These are **not the verdict**: the run's status is decided by the PVT sweep below.*"
+        )
+    lines.append("")
     for c in result["final_criteria"]:
         mark = "PASS" if c["pass"] else "FAIL"
         lines.append(f"- [{mark}] {c['name']}: target {c['target']}, actual {c['actual']} (margin {c['margin']})")
+    lines += pvt_lines
     lines += _resume_lines(result.get("resumed_from"))
     lines += _topology_lines(result.get("topology_swaps"))
     lines += _optimization_lines(result.get("optimization"))

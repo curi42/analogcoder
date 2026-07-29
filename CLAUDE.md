@@ -419,12 +419,35 @@ that number was measured.
   `except (AgentExecutionError, ValueError, OSError)`. The first two are
   `run_orchestration`'s documented pair (`ValueError` for an `apply_changes`
   failure on a *non-canonical* deck, which the addressing gates cannot see
-  because they only read the canonical text). **`OSError` is a third that only
-  this phase needs**: bisection re-reads a version deck from disk (`_texts_at`),
-  and a failed `open` is neither of the other two — `run_orchestration` never
-  re-reads, so it has no such case. The guard rolls back to the version the
-  phase started from (an unconfirmed pushed version must never be what the run
-  returns), logs `optimize_failed`, and returns a well-formed `UNCHANGED`.
+  because they only read the canonical text). The guard rolls back to the
+  version the phase started from (an unconfirmed pushed version must never be
+  what the run returns), logs `optimize_failed`, and returns a well-formed
+  `UNCHANGED`.
+  **`OSError` is the third, and it was wrong to describe it as this phase's
+  alone.** This entry used to justify the narrower `run_orchestration` guard
+  with "bisection re-reads a version deck from disk (`_texts_at`) …
+  `run_orchestration` never re-reads, so it has no such case". The second half
+  is false and always was: `orchestrator.py:250` calls
+  `state.current_netlist_texts()` at the head of **every outer iteration**, and
+  that is `open(path).read()` (`state.py`). Reproduced with mock agents — roll
+  back to v0, let the file vanish (tmp reaper, NFS reconnect), and the next
+  iteration's head read raised `FileNotFoundError` past both excepts, so
+  `_final_result` never ran and the run ended with no `result.json` and no
+  `report.md`: the exact outcome the optimization guard exists to prevent, in
+  the phase that costs ~103 min to reach. `run_orchestration` now catches
+  `OSError` too, with a **distinct** failure reason ("the run could not read or
+  write its own files") — "the netlist-apply path failed" and "the run could
+  not read its own deck" send the next reader to different places. **The
+  handler must not call `state.log_event`**: the same broken disk would fault
+  the handler and the guard would buy nothing. `_final_result` is safe there
+  because `current_netlist_paths()` reads only the in-memory version list.
+  One surface is deliberately left outside: `push_netlist_version`
+  (`orchestrator.py:182`) sits *before* the `try`, so an unwritable run-dir
+  still escapes. Pulling it inside is **not** the fix — the guard's whole
+  purpose is to still write `result.json`/`report.md` into that same directory,
+  `RunState.__post_init__` already `makedirs` it, and `entry_netlist_paths`
+  would need a placeholder before the `try` that the checkpoint snapshot would
+  then carry, trading a clean crash for a corrupt resume.
 - **The guard band can be infeasible at the baseline, and then no candidate can
   ever be accepted.** `benchmarks/bandgap/spec.yaml` is the measured case (see
   the ratio-fallback entry above). The condition is *not* "`pvt_corners` is
@@ -449,6 +472,60 @@ that number was measured.
   section (objective/area before→after, steps, corner confirmation, and the
   guard-infeasible / area-coverage / phase-failure reasons — without those the
   run still says PASS while the phase did nothing).
+- **Fourth recurrence of the same rule, and the only one caught in a real
+  stored artifact: `report.md` drew no line of the sweep that decides the
+  verdict.** `report.py` had no `pvt_sweep` string at all. Re-rendering
+  `runs/pvt_sonnet_1/result.json` with the old code printed **`**Status:**
+  FAIL` above seven criteria all marked `[PASS]`** — zero `[FAIL]` lines, zero
+  occurrences of "corner", zero worst-corner coordinates — while the same
+  file's `pvt_sweep` failed all seven, `dc_gain` collapsing 71.09 → **3.14 dB**
+  at `fs/1.98/125.0`. A reader of the report alone is left with "every
+  criterion passed, so why FAIL?". `_pvt_lines` now draws it, **including when
+  it passes**: the silence-means-did-not-run rule that the optimization /
+  corner-reduction / topology sections follow applies to the **key's absence**,
+  never to the value — folding `overall_pass` into it would make "the sweep
+  passed" and "the sweep never ran" the same silence.
+  **The deeper half was that "Final criteria" never said what it measured.**
+  There are three possible provenances and no way to tell them apart from the
+  report: the mid-loop LLM `judge` on one unrendered deck point; the same judge
+  on the **worst value across the reduced corner set** when `corner_reduction`
+  is active (`corner_sim.build_corner_simulate`); or `evaluate_criteria` on the
+  version bisection landed on, because `cli.py` **overwrites** the key with
+  `optimization["final_criteria"]`. The heading now carries both axes, derived
+  from `corner_reduction.active` and `optimization.final_criteria` — the only
+  two facts in `result` that decide it. A per-criterion detail worth keeping:
+  a `worst_case_corners` entry whose `value` is `None` is **not an argmax** —
+  `worst_case_measurements` writes `missing_corners[0]`, the first corner where
+  the measurement was absent — so the report says "no measurement at corner X",
+  not "worst at X". Calling it a worst case is the `OPAMP2STAGE drives
+  vdd,vss` error shape.
+- **`result.json` and `history.jsonl` were not RFC 8259 JSON, and the danger
+  was silent value corruption, not a parse error.** Both wrote bare `NaN` /
+  `-Infinity` (no `allow_nan` argument), and both reach that on the **normal**
+  path: `judge_tools.evaluate_criteria` puts `math.nan` in `actual`/`margin`
+  for a criterion whose measurement is missing, and `pvt.corner_severity`
+  returns `-math.inf` — whose own docstring calls "some corner where the AC
+  response never crosses 0 dB so ugbw does not come out" a normal case.
+  Measured: `runs/pvt_sonnet_1/result.json` carries **8** literal `NaN`s; node's
+  `JSON.parse` rejects the whole file, and **`jq` 1.7.1 does not reject — it
+  rewrites `NaN` to `null` and `-Infinity` to `-1.797e308`**, handing a
+  consumer a number no simulation ever produced. It shows up only on runs that
+  broke at corners, i.e. exactly the runs a human opens. `analogcoder/json_io.py`
+  is now the one place: `json_safe` (string markers) + `allow_nan=False`, in
+  that order — **normalisation first**, because `allow_nan=False` alone raises
+  `ValueError` inside `write_result_json` and takes `write_report_md` down with
+  it, the same shape as the optimization crash that lost both artifacts.
+  `null` is *not* the encoding: `null` means "no value in this field" and `NaN`
+  means "measured, and no value came out" — two different facts this repo has
+  paid for keeping apart. The marker is a **wire format**, so `history.read_events`
+  (the single reader of `history.jsonl`) restores it with `restore_non_finite`;
+  without that, `scripts/paired_tuner_probe.py` subtracting judge values through
+  `attempt_log.deltas_between` would `TypeError`. `cli_curate.py` had solved
+  this for its own artifacts first, with the rationale in a comment — the
+  control case was inside the repo while the main line stayed broken.
+  Known limits, recorded rather than fixed: `checkpoint.py` still serialises a
+  `judge_result` the same way, and a genuine string whose value is exactly
+  `"NaN"` would be restored as a float (no such field exists today).
 
 ### Corner reduction and re-entry
 

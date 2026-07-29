@@ -20,6 +20,8 @@
 import json
 import os
 
+from analogcoder.json_io import restore_non_finite
+
 RESUME_STEP = "resume"
 # resume 이벤트가 버린 줄 범위를 싣는 키. 반열린 구간 [start, end).
 DISCARDED_LINES_KEY = "discarded_lines"
@@ -57,10 +59,21 @@ def discarded_ranges(events: list[dict]) -> list[list[int]]:
 
 def _numbered(path) -> list[tuple[int, dict]]:
     """(물리 줄 번호, 이벤트). 빈 줄은 건너뛰되 **번호는 소비한다** - 번호가
-    밀리면 체크포인트가 기록한 줄 수와 어긋나 엉뚱한 범위를 버린다."""
+    밀리면 체크포인트가 기록한 줄 수와 어긋나 엉뚱한 범위를 버린다.
+
+    `restore_non_finite`로 비유한 값의 문자열 표지를 되돌린다. 표지는
+    `log_event`가 쓰는 **전송 형식**이고(그 이유는 `json_io`의 모듈 독스트링),
+    이 모듈은 그 파일을 읽는 유일한 곳이므로 되돌릴 자리도 여기다. 되돌리지
+    않으면 소비자가 판정값을 빼는 순간 - `scripts/paired_tuner_probe.py`가
+    `attempt_log.deltas_between`으로 하는 일 - `TypeError`가 난다.
+    """
     with open(path) as f:
         lines = f.read().splitlines()
-    return [(index, json.loads(line)) for index, line in enumerate(lines) if line.strip()]
+    return [
+        (index, restore_non_finite(json.loads(line)))
+        for index, line in enumerate(lines)
+        if line.strip()
+    ]
 
 
 def read_events(path, *, drop_discarded: bool = True) -> list[dict]:

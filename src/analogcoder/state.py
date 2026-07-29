@@ -1,6 +1,7 @@
-import json
 import os
 from dataclasses import dataclass, field
+
+from analogcoder.json_io import dumps as json_dumps
 
 
 @dataclass
@@ -64,5 +65,10 @@ class RunState:
         return self.current_netlist_paths()
 
     def log_event(self, step: str, data: dict) -> None:
+        # `json_io.dumps`는 비유한 float를 문자열 표지로 정규화한 뒤
+        # `allow_nan=False`로 쓴다. 그 이유 전부는 `json_io`의 모듈 독스트링에
+        # 있다 - 요지는 bare `NaN`이 RFC 8259가 아니고, jq가 그것을 거부하는
+        # 대신 `-1.797e308`로 **조용히 바꿔 준다**는 것이다.
+        # 되읽는 쪽은 `history.read_events`가 `restore_non_finite`로 되돌린다.
         with open(self.history_path, "a") as f:
-            f.write(json.dumps({"step": step, **data}) + "\n")
+            f.write(json_dumps({"step": step, **data}) + "\n")

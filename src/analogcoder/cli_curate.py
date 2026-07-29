@@ -23,7 +23,6 @@ import argparse
 import asyncio
 import json
 import logging
-import math
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -46,6 +45,7 @@ from analogcoder.curation import (
     scoped_comparison,
     verify_corners,
 )
+from analogcoder.json_io import json_safe
 from analogcoder.netlist import (
     extract_subckt_body,
     netlist_scale,
@@ -623,36 +623,15 @@ async def run_curation(args, sim_backend: SimulatorBackend | None = None, agent_
 # --- 산출물 -------------------------------------------------------------------
 
 
-# 비유한 float를 JSON으로 내보낼 때 쓰는 문자열 표지들. `json.dump`의 기본
-# 동작은 `NaN`/`Infinity`라는 **bare 토큰**을 쓰는 것인데, 그것은 RFC 8259가
-# 아니어서 엄격한 파서는 파일 전체를 거부한다(실측: `jq`와 JS `JSON.parse`
-# 둘 다 거부). 이 파일에는 실제로 NaN이 들어간다 - `per_criterion[...]
-# ["baseline"]`은 기존 본문이 후보가 낸 measurement를 못 낸 경우 `math.nan`
-# 이고, 그것은 정상 경로다.
+# 비유한 float를 JSON으로 내보내는 규칙은 `analogcoder.json_io` 한 곳에 있다.
+# 이 파일이 그 규칙을 **먼저** 세웠는데 본체(`result.json`/`history.jsonl`)는
+# 안 고쳐져 있었다 - 대조군이 저장소 안에 있는데 본체가 비표준 JSON을 내고
+# 있었다는 뜻이다. 근거 전문은 `json_io`의 모듈 독스트링에 옮겨 두었다.
 #
-# `null`로 바꾸지 않는다: 이 산출물에서 `null`은 이미 "그 필드가 없다"를
-# 뜻하고(예: `dominating_point: null`), NaN은 "쟀는데 값이 안 나왔다"는 다른
-# 사실이다. 둘을 같은 토큰으로 접으면 이 저장소가 반복해 온 실수를 산출물
-# 형식에서 다시 하는 것이다. 문자열 표지는 유효한 JSON이면서 그 구별을
-# 보존한다.
-_NON_FINITE_JSON = {"nan": "NaN", "inf": "Infinity", "-inf": "-Infinity"}
-
-
-def _json_safe(value):
-    """`json.dump(..., allow_nan=False)`가 던지는 대신, 비유한 float를 문자열
-    표지로 바꿔 **유효한** RFC 8259 JSON을 낸다. dict/list를 재귀적으로 훑고
-    그 밖의 값은 그대로 둔다."""
-    if isinstance(value, float):
-        if math.isnan(value):
-            return _NON_FINITE_JSON["nan"]
-        if math.isinf(value):
-            return _NON_FINITE_JSON["inf" if value > 0 else "-inf"]
-        return value
-    if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    return value
+# 이 파일에서 비유한 값이 나오는 자리: `per_criterion[...]["baseline"]`은
+# 기존 본문이 후보가 낸 measurement를 못 낸 경우 `math.nan`이고, 그것은 정상
+# 경로다.
+_json_safe = json_safe
 
 
 def write_curation_json(out_dir: str, result: dict) -> str:

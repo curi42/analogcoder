@@ -716,3 +716,26 @@ async def run_orchestration(
             "FAIL", state, max(outer_iter - 1, 0), judge_result,
             failure_reason=str(exc), topology_swaps=topology_swaps,
         )
+    except OSError as exc:
+        # **이 루프는 디스크를 되읽는다.** 매 외부 이터레이션 머리의
+        # `state.current_netlist_texts()`가 `state.py`에서 `open(path).read()`를
+        # 한다 - 롤백으로 되돌아간 버전 파일이 사라지면(tmp reaper, NFS 재연결)
+        # 여기서 `FileNotFoundError`가 난다. 가드가 없으면 `_final_result`가
+        # 돌지 않고, `cli.main()`의 `write_result_json`/`write_report_md`에
+        # 도달하지 못해 이미 여러 이터레이션을 산 실행이 산출물 없이 끝난다 -
+        # 최적화 단계가 정확히 이 이유로 `OSError`를 가드에 넣었다.
+        #
+        # **이 절에서는 디스크를 다시 건드리지 않는다.** `state.log_event`를
+        # 부르면 같은 디스크 문제로 핸들러가 다시 터져 가드가 있으나 마나가
+        # 된다. 사유는 반환 dict에만 싣는다. `_final_result`가 부르는
+        # `current_netlist_paths()`는 메모리 안의 `netlist_versions`만 읽으므로
+        # 안전하다.
+        #
+        # 사유 문구는 `ValueError` 쪽과 구별한다. "넷리스트 적용이 실패했다"와
+        # "실행이 자기 덱을 읽지 못했다"는 다른 사실이고, 뭉치면 다음 사람이
+        # 튜닝 제안을 들여다보며 원인을 찾는다.
+        return _final_result(
+            "FAIL", state, max(outer_iter - 1, 0), judge_result,
+            failure_reason=f"the run could not read or write its own files: {exc}",
+            topology_swaps=topology_swaps,
+        )

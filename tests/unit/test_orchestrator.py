@@ -1,5 +1,6 @@
 # tests/unit/test_orchestrator.py
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -1932,3 +1933,98 @@ async def test_a_rejected_attempt_puts_its_block_into_focus(tmp_path):
     # 들어온다.
     assert focus_events[0]["blocks"] == ["OTHER"]   # 아직 아무것도 안 건드렸다 - 폴백 아님
     assert "AMP" in focus_events[1]["blocks"]       # 거부가 초점을 끌어왔다
+
+
+# --- 감사 2.7: OSError가 run_orchestration을 그대로 뚫는다 --------------------
+#
+# CLAUDE.md는 `OSError`를 최적화 단계에만 넣은 이유를 "`run_orchestration`은
+# 디스크를 되읽지 않으므로 그런 경우가 없다"로 적었다. 코드는 반대다 -
+# `orchestrator.py`는 **매 외부 이터레이션 머리**에서
+# `state.current_netlist_texts()`를 부르고, 그것이 `state.py`에서
+# `open(path).read()`를 한다. 가드를 좁힌 근거가 성립하지 않는다.
+
+
+def _rollback_that_loses_the_deck(state, broken):
+    """롤백으로 v0로 되돌아간 **직후** 그 파일이 사라지는 상황(tmp reaper,
+    NFS 재연결). 이 지점과 다음 이터레이션 머리의 되읽기 사이에는 로그 호출이
+    없으므로, 뒤이어 터지는 것은 정확히 `current_netlist_texts`의 OSError다."""
+    real_rollback = state.rollback
+
+    def rollback():
+        paths = real_rollback()
+        for path in paths.values():
+            os.remove(path)
+        broken["disk"] = True
+        return paths
+
+    return rollback
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_netlist_version_is_a_clean_fail_not_an_uncaught_crash(tmp_path):
+    """**어떤 변형을 잡는가**: `except`에서 `OSError`를 빼는 변형. 그 상태에서는
+    예외가 `run_orchestration`을 뚫고 나가 `_final_result`가 돌지 않고,
+    `cli.main()`의 `write_result_json`/`write_report_md`에 도달하지 못해
+    `result.json`도 `report.md`도 써지지 않는다 - 최적화 단계가 크래시해서
+    산출물이 통째로 사라졌던 사건과 같은 모양이다.
+    """
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=lambda prev, new, changes: _async(
+            {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no progress"}
+        ),
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+    state.rollback = _rollback_that_loses_the_deck(state, {"disk": False})
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    # 결과는 여전히 자기가 낸 덱을 설명해야 한다.
+    assert result["final_netlist_paths"] == state.current_netlist_paths()
+    assert result["topology_swaps"] == []
+    # 사유가 "에이전트가 실패했다"나 "넷리스트 적용이 실패했다"로 읽히면 안
+    # 된다 - 실행이 자기 덱을 **읽지** 못한 것이다.
+    assert "could not read" in result["failure_reason"]
+    assert "netlist_v0_ac_loop_gain.cir" in result["failure_reason"]
+
+    # 그리고 이 가드가 사는 이유 그 자체: `cli.main()`이 하는 일을 여기서
+    # 그대로 해 본다. 예외가 새면 이 두 줄에 도달조차 못 한다.
+    from analogcoder.report import write_report_md, write_result_json
+
+    assert os.path.exists(write_result_json(str(tmp_path), result))
+    assert os.path.exists(write_report_md(str(tmp_path), result))
+
+
+@pytest.mark.asyncio
+async def test_the_oserror_handler_does_not_write_to_the_same_broken_disk(tmp_path):
+    """핸들러가 `state.log_event`를 부르면 같은 디스크 문제로 핸들러가 다시
+    터진다 - 그러면 가드가 있으나 마나다. `_final_result`는 메모리 안의
+    `netlist_versions`만 읽으므로 안전하고, 이 테스트는 그 성질을 못박는다.
+
+    **어떤 변형을 잡는가**: except 절 안에 `state.log_event(...)`를 넣는 변형
+    (사유를 이력에 남기고 싶은 자연스러운 충동이다).
+    """
+    broken = {"disk": False}
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=lambda prev, new, changes: _async(
+            {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no progress"}
+        ),
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+    state.rollback = _rollback_that_loses_the_deck(state, broken)
+
+    real_log_event = state.log_event
+
+    def log_event(step, data):
+        if broken["disk"]:
+            raise OSError(28, "No space left on device")
+        real_log_event(step, data)
+
+    state.log_event = log_event
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert "could not read" in result["failure_reason"]

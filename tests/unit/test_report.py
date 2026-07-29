@@ -1,5 +1,9 @@
 import json
+import math
 import os
+import subprocess
+
+import pytest
 
 from analogcoder.report import write_report_md, write_result_json
 
@@ -343,3 +347,285 @@ def test_a_resume_that_abandoned_nothing_says_so(tmp_path):
     with open(path) as f:
         content = f.read()
     assert "Abandoned history lines:** 0" in content
+
+
+# --- 감사 2.1: 리포트가 **판정을 내리는** PVT 스윕을 한 줄도 그리지 않았다 -----
+#
+# 이 픽스처의 숫자는 지어낸 것이 아니라 `runs/pvt_sonnet_1/result.json`에서
+# 그대로 옮긴 것이다. 그 실행을 옛 코드로 렌더링하면 `**Status:** FAIL` 아래에
+# 7개 기준이 **전부 `[PASS]`**로 적히고(중간 루프 judge의 값), `[FAIL]`은 0줄,
+# `corner` 문자열 0회, 최악 코너 좌표 0회다. 같은 파일의 `pvt_sweep`은 7개
+# 전부 FAIL이고 dc_gain은 71.09 -> 3.14 dB로 붕괴했다. 리포트만 읽는 사람은
+# "기준은 다 통과했는데 왜 FAIL이지"가 된다.
+#
+# "결과는 자기가 낸 덱을 설명해야 한다"의 **네 번째** 재발이고, 유일하게 실제
+# 산출물에서 관측된 재발이다.
+
+PVT_SONNET_1_SWEEP = {
+    "overall_pass": False,
+    "criteria": [
+        {"name": "dc_gain", "target": ">=60.0", "actual": 3.13783, "pass": False, "margin": -56.86217},
+        {"name": "unity_gain_bandwidth", "target": ">=1500000.0", "actual": math.nan, "pass": False, "margin": math.nan},
+        {"name": "phase_margin", "target": ">=60.0", "actual": math.nan, "pass": False, "margin": math.nan},
+        {"name": "psr_plus", "target": "<=-10.0", "actual": 26.2352, "pass": False, "margin": 36.2352},
+        {"name": "psr_minus", "target": "<=0.0", "actual": 9.53353, "pass": False, "margin": 9.53353},
+        {"name": "settling_time_hi", "target": "<=2.8e-06", "actual": math.nan, "pass": False, "margin": math.nan},
+        {"name": "settling_time_lo", "target": "<=2.8e-06", "actual": math.nan, "pass": False, "margin": math.nan},
+    ],
+    "summary": "one or more criteria failed",
+    "worst_case_corners": {
+        "dc_gain": {"process": "fs", "voltage": 1.98, "temperature": 125.0, "value": 3.13783},
+        "unity_gain_bandwidth": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": None},
+        "phase_margin": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": None},
+        "psr_plus": {"process": "sf", "voltage": 1.62, "temperature": -40.0, "value": 26.2352},
+        "psr_minus": {"process": "sf", "voltage": 1.8, "temperature": -40.0, "value": 9.53353},
+        "settling_time_hi": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+        "settling_time_lo": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+    },
+}
+
+PVT_SONNET_1_RESULT = {
+    "status": "FAIL",
+    "final_netlist_paths": {"ac_loop_gain": "runs/pvt_sonnet_1/netlist_v2_ac_loop_gain.cir"},
+    "run_dir": "runs/pvt_sonnet_1",
+    "iterations_used": 10,
+    # 중간 루프 judge가 **명목 한 점**에서 낸 값. 전부 통과다.
+    "final_criteria": [
+        {"name": "dc_gain", "target": ">=60.0", "actual": 71.0861, "pass": True, "margin": 11.0861},
+        {"name": "unity_gain_bandwidth", "target": ">=1500000.0", "actual": 2010000.0, "pass": True, "margin": 510000.0},
+        {"name": "phase_margin", "target": ">=60.0", "actual": 65.2, "pass": True, "margin": 5.2},
+        {"name": "psr_plus", "target": "<=-10.0", "actual": -15.12, "pass": True, "margin": -5.12},
+        {"name": "psr_minus", "target": "<=0.0", "actual": -3.36, "pass": True, "margin": -3.36},
+        {"name": "settling_time_hi", "target": "<=2.8e-06", "actual": 1.9e-06, "pass": True, "margin": -9e-07},
+        {"name": "settling_time_lo", "target": "<=2.8e-06", "actual": 1.8e-06, "pass": True, "margin": -1e-06},
+    ],
+    "failure_reason": "final PVT sweep failed: one or more criteria failed",
+    "pvt_sweep": PVT_SONNET_1_SWEEP,
+}
+
+
+def test_the_report_draws_the_pvt_sweep_that_decides_the_verdict(tmp_path):
+    """`runs/pvt_sonnet_1`을 렌더링하면 FAIL 7줄과 최악 코너 좌표가 보여야 한다.
+
+    **어떤 변형을 잡는가**: `_pvt_lines`를 통째로 지우거나 `write_report_md`에서
+    그 호출을 빼는 변형, 그리고 판정 스윕의 기준을 그리면서 **어느 코너에서**
+    깨졌는지를 빼는 변형. 코너 좌표가 없으면 "45개 중 어디가 문제인가"를
+    result.json을 열어야만 알 수 있고, 그것이 이 섹션이 존재하는 이유다.
+    """
+    path = write_report_md(str(tmp_path), PVT_SONNET_1_RESULT)
+    with open(path) as f:
+        content = f.read()
+
+    assert "## PVT sweep" in content
+    # 옛 코드의 실측: FAIL 0줄. 판정을 내린 스윕은 7개 전부 FAIL이다.
+    assert content.count("[FAIL]") >= 7
+    for name in (
+        "dc_gain",
+        "unity_gain_bandwidth",
+        "phase_margin",
+        "psr_plus",
+        "psr_minus",
+        "settling_time_hi",
+        "settling_time_lo",
+    ):
+        assert f"[FAIL] {name}" in content
+    # 붕괴한 값 자체.
+    assert "3.13783" in content
+    # 옛 코드의 실측: `corner` 0회, `fs/1.98/125.0` 0회.
+    assert "corner" in content
+    assert "fs/1.98/125.0" in content
+    assert "sf/1.62/-40.0" in content
+    assert "sf/1.8/-40.0" in content
+
+
+def test_a_worst_corner_with_no_value_is_not_reported_as_an_argmax(tmp_path):
+    """`value: None`은 "이 코너가 최악이었다"가 아니라 "여기서 처음으로 측정이
+    안 나왔다"이다(`pvt.worst_case_measurements`의 `missing_corners[0]`).
+
+    둘을 같은 문장으로 적으면 리포트가 데이터에 없는 구조적 주장을 한다 -
+    이 저장소가 `OPAMP2STAGE drives vdd,vss`에서 이미 치른 값이다.
+    """
+    path = write_report_md(str(tmp_path), PVT_SONNET_1_RESULT)
+    with open(path) as f:
+        content = f.read()
+
+    lines = [line for line in content.splitlines() if "unity_gain_bandwidth" in line and "[FAIL]" in line]
+    assert lines, content
+    line = lines[0]
+    assert "ss/1.62/125.0" in line
+    assert "no measurement" in line
+    assert "worst at" not in line
+
+
+def test_the_report_says_nothing_about_a_pvt_sweep_that_did_not_run(tmp_path):
+    """키가 없으면 빈 목록 - 최적화/코너 축소/토폴로지 섹션과 같은 규칙이다.
+    돌지 않은 단계에 빈 섹션을 그리면 "돌았는데 아무것도 못 했다"로 읽힌다."""
+    path = write_report_md(str(tmp_path), SAMPLE_RESULT)
+    with open(path) as f:
+        content = f.read()
+    assert "PVT sweep" not in content
+
+
+def test_a_passing_pvt_sweep_is_drawn_too(tmp_path):
+    """PASS로 끝난 실행에서도 그린다. "스윕이 통과했다"와 "스윕이 안 돌았다"가
+    같은 침묵이면 안 된다 - 이 저장소가 게이트에 대해 아홉 번 치른 값이다."""
+    sweep = {
+        "overall_pass": True,
+        "criteria": [{"name": "gain", "target": ">=19.5", "actual": 20.0, "pass": True, "margin": 0.5}],
+        "summary": "all criteria passed",
+        "worst_case_corners": {"gain": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": 20.0}},
+    }
+    path = write_report_md(str(tmp_path), {**SAMPLE_RESULT, "pvt_sweep": sweep})
+    with open(path) as f:
+        content = f.read()
+    assert "## PVT sweep" in content
+    assert "[PASS] gain" in content
+    assert "ss/1.62/125.0" in content
+
+
+# --- 감사 2.1의 더 깊은 절반: "Final criteria"가 어느 조건의 측정인가 --------
+#
+# 후보가 셋이다. 라벨이 없으면 판정 스윕과 나란히 놓인 두 표가 서로 다른 회로를
+# 설명하고 있다는 사실이 보이지 않는다.
+
+
+def test_final_criteria_says_it_is_the_mid_loop_judge_at_the_deck_as_it_is(tmp_path):
+    path = write_report_md(str(tmp_path), SAMPLE_RESULT)
+    with open(path) as f:
+        content = f.read()
+    assert "## Final criteria" in content
+    assert "`judge`" in content
+    # 코너를 렌더링하지 않은 덱 한 점.
+    assert "no corner rendering" in content
+
+
+def test_final_criteria_says_when_it_is_the_reduced_corner_sets_worst_case(tmp_path):
+    """코너 축소가 켜져 있으면 중간 루프 judge가 본 값은 명목 한 점이 아니라
+    **선택 집합의 최악값**이다(`corner_sim.build_corner_simulate`). 그 사실이
+    라벨에 없으면 판정 스윕과의 차이가 "코너를 안 봤다"로 잘못 읽힌다."""
+    path = write_report_md(str(tmp_path), CORNER_REDUCTION_RESULT)
+    with open(path) as f:
+        content = f.read()
+    # **Final criteria 블록 안에서** 확인한다. `"3 corners"`는 아래 Corner
+    # reduction 섹션이 이미 만족시키므로, 라벨을 통째로 지워도 통과하는
+    # 단언이 된다.
+    head = content.split("## Corner reduction")[0]
+    assert "reduced corner set" in head
+    assert "3 corners" in head
+
+
+def test_final_criteria_says_when_it_came_from_the_optimization_phases_landing(tmp_path):
+    """`cli.py`는 최적화가 기준을 재고 왔으면 `final_criteria`를 **덮는다**.
+    그때 이 표는 LLM judge의 것이 아니라 `evaluate_criteria`가 낸,
+    bisection이 착지한 버전의 판정이다."""
+    result = {
+        **SAMPLE_OPTIMIZED_RESULT,
+        "optimization": {
+            **SAMPLE_OPTIMIZED_RESULT["optimization"],
+            "final_criteria": SAMPLE_OPTIMIZED_RESULT["final_criteria"],
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "optimization phase landed" in content
+    assert "evaluate_criteria" in content
+
+
+def test_final_criteria_points_at_the_pvt_sweep_when_one_decided_the_verdict(tmp_path):
+    """이 결함의 핵심 증상 - 사람이 "기준은 다 통과했는데 왜 FAIL이지"가 되는
+    것 - 을 막는 한 줄. 스윕이 없으면 이 줄도 없어야 한다(없는 섹션을
+    가리키면 안 된다)."""
+    path = write_report_md(str(tmp_path), PVT_SONNET_1_RESULT)
+    with open(path) as f:
+        content = f.read()
+    # **Final criteria 블록 안에서만** 본다. 맨 아래 `failure_reason`이
+    # "final PVT sweep failed: ..."라 전문 검색은 이 줄을 지워도 통과한다.
+    block = content.split("## Final criteria", 1)[1].split("\n## ", 1)[0]
+    assert "PVT sweep" in block
+    assert "not the verdict" in block
+
+    # 스윕이 없으면 없는 섹션을 가리키지 않는다.
+    path = write_report_md(str(tmp_path), SAMPLE_RESULT)
+    with open(path) as f:
+        content = f.read()
+    assert "PVT sweep" not in content
+
+
+# --- 감사 2.3: result.json이 RFC 8259 JSON이 아니다 ---------------------------
+#
+# `judge_tools.evaluate_criteria`는 측정이 없는 기준에 `math.nan`을 싣고,
+# `pvt.corner_severity`는 `-math.inf`를 낸다 - 둘 다 **정상 경로**다. 실측:
+# `runs/pvt_sonnet_1/result.json`에 리터럴 `NaN`이 8개 있고 node의
+# `JSON.parse`가 파일 전체를 SyntaxError로 거부한다. jq 1.7.1은 거부하지 않고
+# `-Infinity`를 `-1.797e308`로 **조용히 바꿔 준다**.
+
+
+def _reject_non_rfc(token):
+    raise AssertionError(f"non-RFC 8259 constant in the artifact: {token}")
+
+
+def test_result_json_is_valid_rfc_8259_even_with_nan_and_infinity(tmp_path):
+    """**어떤 변형을 잡는가**: `write_result_json`에서 정규화나
+    `allow_nan=False` 중 하나를 빼는 변형. 둘 다 있어야 한다 - 정규화가 없으면
+    `allow_nan=False`가 리포트까지 날리는 ValueError가 되고, `allow_nan=False`가
+    없으면 나중에 정규화를 우회하는 경로가 조용히 비표준 JSON을 낸다."""
+    result = {
+        **SAMPLE_FAIL_RESULT,
+        "pvt_sweep": PVT_SONNET_1_SWEEP,
+        "per_corner_severity": [-math.inf, 0.5, math.inf],
+    }
+    path = write_result_json(str(tmp_path), result)
+    text = open(path).read()
+
+    # 파이썬 엄격 파서: 비-RFC 상수가 하나라도 있으면 터진다.
+    json.loads(text, parse_constant=_reject_non_rfc)
+    # 리터럴 토큰이 남아 있지 않은지 직접 확인 - `"NaN"`(따옴표 포함)은 유효한
+    # JSON 문자열이므로 bare 토큰만 잡아야 한다.
+    assert ": NaN" not in text and ": Infinity" not in text and ": -Infinity" not in text
+
+
+def test_a_non_finite_measurement_is_not_flattened_into_null(tmp_path):
+    """`null`은 "그 필드가 없다", `NaN`은 "쟀는데 값이 안 나왔다"로 **다른
+    사실**이다. 이 저장소는 그 구별로 여러 번 값을 치렀다
+    (`corner_unattributed_failure`, `deltas_between`이 없는 기준을 0.0으로 안
+    읽는 것). 산출물 형식에서 그 실수를 다시 하지 않는다.
+
+    같은 파일 안에 진짜 `null`(측정이 없어서 최악 코너에 값이 안 붙은 항목)과
+    NaN이 함께 있으므로, 둘이 여전히 구별되는지를 한 파일에서 확인한다.
+    """
+    result = {**SAMPLE_FAIL_RESULT, "pvt_sweep": PVT_SONNET_1_SWEEP}
+    path = write_result_json(str(tmp_path), result)
+    loaded = json.loads(open(path).read(), parse_constant=_reject_non_rfc)
+
+    ugbw = loaded["pvt_sweep"]["criteria"][1]
+    assert ugbw["name"] == "unity_gain_bandwidth"
+    assert ugbw["actual"] is not None          # null로 접히지 않았다
+    assert ugbw["actual"] == "NaN"             # "쟀는데 값이 안 나왔다"
+    # ...그리고 "그 필드에 값이 없다"는 여전히 null이다.
+    assert loaded["pvt_sweep"]["worst_case_corners"]["unity_gain_bandwidth"]["value"] is None
+
+
+def test_a_finite_result_round_trips_unchanged(tmp_path):
+    """정규화가 유한 값을 건드리면 안 된다 - 이 저장소의 산출물 대부분이
+    그것이다."""
+    path = write_result_json(str(tmp_path), SAMPLE_RESULT)
+    assert json.loads(open(path).read(), parse_constant=_reject_non_rfc) == SAMPLE_RESULT
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "node"], capture_output=True).returncode != 0,
+    reason="node not on PATH",
+)
+def test_result_json_parses_in_node(tmp_path):
+    """감사가 실제로 실패를 관측한 파서. 파이썬의 `json.loads`는 bare `NaN`을
+    받아 주기 때문에 파이썬만으로는 이 결함이 보이지 않는다."""
+    result = {**SAMPLE_FAIL_RESULT, "pvt_sweep": PVT_SONNET_1_SWEEP}
+    path = write_result_json(str(tmp_path), result)
+    proc = subprocess.run(
+        ["node", "-e", f"JSON.parse(require('fs').readFileSync({path!r}, 'utf8')); console.log('ok')"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "ok" in proc.stdout
