@@ -52,7 +52,7 @@ B_VALUES = [4.0, 6.0, 8.0, 11.0, 15.0, 20.0, 27.0]
 MEASUREMENTS = ("gain_db", "ugbw_hz", "phase_margin_deg")
 
 
-def _point(spec, tb, base_text, a, b, backend):
+def _point(tb, base_text, a, b, backend):
     """Xcc 는 정사각 캡이라 w 와 l 을 **함께** 움직인다 - 한쪽만 바꾸면 면적이
     아니라 종횡비를 바꾸는 것이고, 이 저장소가 보상 캡을 다룰 때 쓰는 축은
     면적이다."""
@@ -82,7 +82,7 @@ def main() -> None:
 
     grid = {}
     for a, b in itertools.product(A_VALUES, B_VALUES):
-        grid[(a, b)] = _point(spec, tb, base, a, b, backend)
+        grid[(a, b)] = _point(tb, base, a, b, backend)
 
     ship = (12.05, 8.0)
     print(f"출하 덱 {KNOB_A[0]}.w=l={ship[0]}  {KNOB_B[0]}.W={ship[1]}")
