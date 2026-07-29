@@ -115,7 +115,26 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
                 f" (epsilon={seed.get('epsilon')}, tau={seed.get('tau')}, "
                 f"dropped {len(dropped)} argmax corner(s))"
             )
+        # **알고리즘 지표를 여기 싣는다.** `points_per_tb`는 seed_from_sweep이
+        # 낸 값 그 자체(테스트벤치당 실제로 도는 점 수)이고, 두 모드 모두에서
+        # 뜻이 같다 - 웨이브 수는 워커 수에 딸린 배포 사실이라 지표가 아니고,
+        # 리포트만 보는 사람에게는 지금까지 이 숫자가 전혀 안 보였다.
+        if seed.get("points_per_tb") is not None:
+            line += f", points_per_tb={seed['points_per_tb']}"
         lines.append(line)
+        # **목표 피복률에 못 미친 씨앗이 성공처럼 읽히면 안 된다.** coverage
+        # 모드에서만 존재하는 값이라 `in seed`로 부재와 False를 구별한다 -
+        # argmax 모드에는 애초에 "목표"라는 개념이 없다.
+        if "reached_target" in seed:
+            reached = seed["reached_target"]
+            reached_line = f"**Coverage target reached:** reached_target={reached}"
+            if not reached:
+                reached_line += (
+                    " - **the seed did NOT reach its declared coverage target** "
+                    "(tau); the mid-loop corner set covers fewer criteria than "
+                    "the spec's coverage block asked for"
+                )
+            lines.append(reached_line)
 
     baselines = reduction.get("area_baselines")
     line = f"**Area-gate baselines:** {baselines}"

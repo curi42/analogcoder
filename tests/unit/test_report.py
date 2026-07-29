@@ -235,6 +235,82 @@ def test_write_report_md_says_nothing_about_the_seed_when_the_key_is_absent(tmp_
     assert "Corner seed" not in content
 
 
+def test_write_report_md_names_points_per_tb_in_argmax_mode(tmp_path):
+    """T4: `points_per_tb`가 이 기법의 알고리즘 지표다(웨이브 수는 워커 수에
+    딸린 배포 사실이라 지표가 아니다) - 리포트만 보는 사람에게는 지금까지
+    안 보였다."""
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {
+                "mode": "argmax", "epsilon": None, "tau": None, "dropped": [],
+                "points_per_tb": 8,
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "points_per_tb=8" in content
+
+
+def test_write_report_md_names_points_per_tb_in_coverage_mode(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {
+                "mode": "coverage", "epsilon": 0.05, "tau": 1.0,
+                "dropped": ["fs/1.98/125.0", "ss/1.62/27.0"],
+                "points_per_tb": 5, "reached_target": True,
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "points_per_tb=5" in content
+
+
+def test_write_report_md_flags_a_coverage_seed_that_missed_its_target(tmp_path):
+    """목표 피복률에 못 미친 씨앗이 성공처럼 읽히면 안 된다 - `reached_target`이
+    False일 때 눈에 띄어야 한다."""
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {
+                "mode": "coverage", "epsilon": 0.05, "tau": 1.0,
+                "dropped": [], "points_per_tb": 3, "reached_target": False,
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "reached_target=False" in content
+    assert "did NOT reach" in content or "DID NOT" in content.upper()
+
+
+def test_write_report_md_does_not_flag_a_coverage_seed_that_reached_its_target(tmp_path):
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "seed": {
+                "mode": "coverage", "epsilon": 0.05, "tau": 1.0,
+                "dropped": [], "points_per_tb": 3, "reached_target": True,
+            },
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "reached_target=True" in content
+    assert "did NOT reach" not in content
+
+
 def test_write_report_md_reports_an_inactive_corner_reduction_with_its_reason(tmp_path):
     result = {
         **SAMPLE_RESULT,

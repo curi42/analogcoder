@@ -318,6 +318,22 @@ def seed_from_sweep(sweep: dict, spec) -> tuple[CornerSet, dict]:
         if all_criteria is not None:
             record["total"] = len(all_criteria)
             record["covered"] = len(sweep.get("worst_case_corners", {}))
+            # **"N of 0"(covered > 0 이면서 total == 0)은 여기서 방어하지
+            # 않는다 - `cli.py`의 실제 호출 경로에서는 도달할 수 없기
+            # 때문이다.** `sweep["worst_case_corners"]`의 키는 항상
+            # `worst_case_measurements(corners, per_corner_measurements,
+            # tb.criteria)`가 `tb.criteria`를 순회하며 채우고,
+            # `spec.all_criteria`는 바로 그 `tb.criteria`들의 합집합이다 -
+            # 그리고 이 함수를 부르는 `cli.py`는 그 스윕을 만든 것과 **같은**
+            # `spec` 객체를 여기 넘긴다. 그래서 `total == 0`이면 애초에 어느
+            # 테스트벤치도 기준이 없었다는 뜻이고, `worst_case_corners`도
+            # 처음부터 비어 `covered == 0`이다 - "N of 0"이 나오려면
+            # `sweep`과 `spec`이 서로 다른 실행에서 온 것처럼 어긋나야 하고,
+            # 그것은 이 함수의 독스트링이 이미 적어 둔 별개의 한계(다른
+            # 출처의 `sweep`을 받으면 조용히 틀린 값을 받아들인다)다. 여기서
+            # 실제로 나타나는 것은 이 함수를 직접 부르는 단위 테스트의 목
+            # (test double)뿐이고, 거기에 방어를 두면 도달 불가능한 코드가
+            # 된다 - 이 저장소가 싫어하는 바로 그 종류.
     else:
         chosen, cover_record = coverage_seed(sweep, list(spec.all_criteria), coverage)
         record = {
