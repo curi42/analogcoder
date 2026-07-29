@@ -37,7 +37,9 @@ import math
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "src"))
+sys.path.insert(0, _HERE)
 
 from analogcoder.pvt import all_corners, run_full_pvt_sweep
 from analogcoder.netlist import apply_changes, resolve_includes
@@ -223,20 +225,28 @@ def analyse(spec_path, workers, perturb=None):
     }
 
 
-def _perturbation(width):
-    """CLAUDE.md가 기록한 교란: 두 증폭기의 테일 폭을 8에서 줄인다.
-    8 -> 4 가 buf1_loop_gain 과 buf1_phase_margin 을 실패시킨다고 적혀 있다."""
-    return [
-        {"refdes": "TRIMAMP.Xt", "param": "W", "new_value": str(width)},
-        {"refdes": "BUF_P.Xt", "param": "W", "new_value": str(width)},
-    ]
+# 교란 모양은 `scripts/perturbations.py` 가 소유한다. 예전에는 이 파일이
+# "두 증폭기의 테일 폭" 하나만 인자로 받았고, **한 종류로만 쟀다는 것이
+# `2026-07-29-theory-combination-results.md` §7-8 의 명시된 한계**였다.
+# 이제 이름으로 받고, `reentry_feasibility.py` 와 같은 목록을 쓴다.
+from perturbations import PERTURBATIONS
 
 
 if __name__ == "__main__":
     workers = (os.cpu_count() or 2) - 1
     spec_path = sys.argv[1]
-    widths = [float(w) for w in sys.argv[2:]] or [None]
-    out = [analyse(spec_path, workers, _perturbation(w) if w else None) for w in widths]
+    shapes = sys.argv[2:] or list(PERTURBATIONS)
+    unknown = [x for x in shapes if x not in PERTURBATIONS]
+    if unknown:
+        raise SystemExit(
+            f"unknown perturbation shape(s): {unknown}. "
+            f"known: {sorted(PERTURBATIONS)}"
+        )
+    out = []
+    for name in shapes:
+        row = analyse(spec_path, workers, PERTURBATIONS[name] or None)
+        row["shape"] = name
+        out.append(row)
     # 산출물은 **cwd** 에 쓴다. `os.path.dirname(__file__)` 로 쓰면 저장소의
     # `scripts/` 안에 결과 파일이 쌓인다.
     dest = os.environ.get("COVERAGE_FEASIBILITY_OUT", "coverage_feasibility.json")

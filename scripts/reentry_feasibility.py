@@ -41,7 +41,9 @@ import math
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "src"))
+sys.path.insert(0, _HERE)
 
 from analogcoder.corner_selection import coverage_seed, label
 from analogcoder.netlist import apply_changes, resolve_includes
@@ -53,45 +55,10 @@ from analogcoder.spec import CoverageConfig, load_spec
 WORSE_IS_SMALLER = {">=", ">"}
 
 
-# --------------------------------------------------------------- 교란 모양
-#
-# T7(필요조건 1을 여러 교란 모양으로)도 같은 목록을 쓴다. 한 종류의 교란만으로
-# 잰 것이 `2026-07-29-theory-combination-results.md` §7-8 의 명시된 한계다.
-# 그래서 여기서는 단일 블록 / 다중 블록, 서로 다른 소자 계열, 양 방향을 섞는다.
-PERTURBATIONS = {
-    "none": [],
-    # 다중 블록, 테일 축소 - 이미 실측된 모양(기준 6개 실패)
-    "tail_both_3": [
-        {"refdes": "TRIMAMP.Xt", "param": "W", "new_value": "3"},
-        {"refdes": "BUF_P.Xt", "param": "W", "new_value": "3"},
-    ],
-    "tail_both_4": [
-        {"refdes": "TRIMAMP.Xt", "param": "W", "new_value": "4"},
-        {"refdes": "BUF_P.Xt", "param": "W", "new_value": "4"},
-    ],
-    "tail_both_2": [
-        {"refdes": "TRIMAMP.Xt", "param": "W", "new_value": "2"},
-        {"refdes": "BUF_P.Xt", "param": "W", "new_value": "2"},
-    ],
-    # 단일 블록 - 실패가 한 블록만 가리키는지 본다(T9 의 정답표가 필요로 하는 것의 반대 예)
-    "tail_trim_3": [{"refdes": "TRIMAMP.Xt", "param": "W", "new_value": "3"}],
-    "tail_bufp_3": [{"refdes": "BUF_P.Xt", "param": "W", "new_value": "3"}],
-    # 다른 소자 계열(저항), 키우는 방향 - 이 저장소는 XRz.l 이 60에서 좋아지고
-    # 120에서 다시 무너진다고 기록한다. 축소만으로 잰 것이 아니라는 증거가 된다.
-    "rz_trim_120": [{"refdes": "TRIMAMP.XRz", "param": "l", "new_value": "120"}],
-    "rz_trim_60": [{"refdes": "TRIMAMP.XRz", "param": "l", "new_value": "60"}],
-    # 보상 캡 축소 - 위상 여유 계열을 직접 친다
-    "cc_trim_20": [{"refdes": "TRIMAMP.Xcc", "param": "W", "new_value": "20"}],
-    # 폴드/미러 축소 - 오늘 튜너가 **키운** 바로 그 소자들을 반대로 민다
-    "mirror_trim_4": [
-        {"refdes": "TRIMAMP.Xn1", "param": "W", "new_value": "4"},
-        {"refdes": "TRIMAMP.Xn2", "param": "W", "new_value": "4"},
-        {"refdes": "TRIMAMP.Xm1", "param": "W", "new_value": "4"},
-        {"refdes": "TRIMAMP.Xm2", "param": "W", "new_value": "4"},
-    ],
-    # 출력단 축소
-    "out_trim_20": [{"refdes": "TRIMAMP.X6", "param": "W", "new_value": "20"}],
-}
+# 교란 모양은 `scripts/perturbations.py` 가 소유한다 - `coverage_feasibility.py`
+# 와 같은 목록을 써야 "필요조건 1을 재진입이 발화한 바로 그 덱 상태에서
+# 쟀는가" 를 나중에 확인할 수 있다.
+from perturbations import PERTURBATIONS
 
 
 def _worse(op):
