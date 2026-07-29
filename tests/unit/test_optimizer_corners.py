@@ -498,3 +498,30 @@ async def test_an_unchanged_run_reports_the_baseline_criteria(tmp_path):
 
     assert result["status"] == "UNCHANGED"
     assert [c["actual"] for c in result["final_criteria"]] == [235.0]
+
+
+@pytest.mark.asyncio
+async def test_a_step_walked_back_by_corners_is_not_counted_as_a_search_rejection(tmp_path):
+    """코너 확인이 되돌린 단계는 **탐색이 거절한 것이 아니다.**
+
+    총계(steps_rejected)에는 `rejected + (accepted - survived)`로 이미 들어가
+    있었는데, 그러면 "탐색이 후보를 떨어뜨렸다"와 "nominal에서 통과한 단계를
+    코너가 뒤집었다"가 한 숫자가 된다 - 후자는 회로가 아니라 가드밴드가
+    말해 주는 사실이고, 이 저장소가 실측으로 4/10만 살아남는 것을 본 바로
+    그 경로다. 사유 표에서는 자기 칸을 가져야 한다."""
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 220.0, 210.0, 200.0, 200.0, 200.0])
+
+    def verify(texts):
+        return _sweep(not ("m=2" in texts["tb"] or "m=1" in texts["tb"]), 268.0)
+
+    agents.verify_corners = verify
+
+    result = await run_optimization({"tb": DECK}, _corner_spec(), state, agents)
+
+    by_reason = result["rejected_by_reason"]
+    # 수락 3, 착지 m=3 -> 살아남은 1, 코너가 되돌린 2.
+    assert result["steps_accepted"] == 1
+    assert by_reason["corner_walked_back"] == 2
+    assert sum(by_reason.values()) == result["steps_rejected"]

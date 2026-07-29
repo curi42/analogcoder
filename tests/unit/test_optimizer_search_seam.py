@@ -383,3 +383,107 @@ async def test_the_injected_ranking_is_ordered_and_the_strategy_sees_that_order(
 
     assert [k.param for k in seen["knobs"]] == ["l", "m"]
     assert [k.direction for k in seen["knobs"]] == ["increase", "decrease"]
+
+
+# --- 거절이 왜 거절인가 ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_rejection_count_is_split_by_reason_and_the_split_adds_up(tmp_path):
+    """'Steps: 0 accepted, 4 rejected'는 네 가지 서로 다른 사실의 합이다.
+
+    (a) 노브가 주소 게이트에 막혔다, (b) 그 주소는 합법인데 덱에 출발 값이
+    없다, (c) 전략이 이 노브를 소진했다, (d) 후보를 실제로 재고 수락 규칙이
+    떨어뜨렸다 - 그리고 (a)(b)(c)는 시뮬레이션을 **한 번도** 쓰지 않는다.
+    한 숫자로 접으면 "탐색이 열심히 했지만 여지가 없었다"와 "탐색이 노브에
+    접근조차 못 했다"가 구별되지 않는다. 이 저장소가 topology_unavailable에
+    사유 코드를 붙인 것과, area_check/refdes_check가 같은 키를 써서 사후
+    구별이 안 됐던 것과 같은 부류다."""
+    from analogcoder.optimizer import REJECTION_REASONS
+
+    # M1은 l=을 안 쓰고 같은 모델의 M2가 쓴다 - check_param_applicability의
+    # 동료 규칙이 admit 하는 바로 그 모양이라, 주소는 합법인데 한 걸음 옮길
+    # 출발 값이 없다. 게이트에 막힌 것과 **다른 사실**이다.
+    peer_deck = (
+        "* t\n"
+        ".subckt AMP a b vss\n"
+        "M1 a b vss vss NCH w=2e-6 m=4\n"
+        "M2 a b vss vss NCH w=2e-6 m=4 l=1e-6\n"
+        ".ends AMP\n"
+        "Xa p q 0 AMP\n"
+        "Vdd vdd 0 DC 1.8\n"
+        ".end\n"
+    )
+
+    async def reckless(run):
+        knob = run.knobs[0]
+        # (a) 그런 소자가 없다 - refdes 게이트.
+        assert run.knob_state(Knob("NOSUCH", "m", "decrease")) is None
+        # (b) 주소는 합법이나 M1의 줄에 l=이 없다.
+        assert run.knob_state(Knob("AMP.M1", "l", "decrease")) is None
+        # (c) 전략이 소진 판정.
+        state = run.knob_state(knob)
+        run.exhausted(knob, state, "no further value")
+        # (d) 재고 나서 수락 규칙에 떨어진다(iq가 올라간다).
+        run.spend_step(knob)
+        await run.attempt([ProposedStep(knob, state, 3.0)])
+
+    simulate, _ = _simulate([235.0, 400.0])
+    agents = OptimizerAgents(propose=_propose, simulate=simulate, search_strategy=reckless)
+    state = _state(tmp_path, deck=peer_deck)
+
+    result = await run_optimization({"tb": peer_deck}, _spec(), state, agents)
+
+    by_reason = result["rejected_by_reason"]
+    # 키는 **전부** 있어야 한다. 걸리지 않은 사유가 키째 사라지면 "이 사유로는
+    # 거절이 없었다"와 "이 사유가 코드에서 없어졌다"가 같은 모양이 된다.
+    assert set(by_reason) == set(REJECTION_REASONS)
+    assert by_reason["knob_gate"] == 1
+    assert by_reason["knob_no_value"] == 1
+    assert by_reason["exhausted"] == 1
+    assert by_reason["not_accepted"] == 1
+    assert by_reason["area_growth"] == 0
+    assert by_reason["area_budget"] == 0
+    assert by_reason["simulation_failed"] == 0
+    assert by_reason["corner_walked_back"] == 0
+    # 합이 총계와 어긋나면 둘 중 하나가 거짓말이다.
+    assert sum(by_reason.values()) == result["steps_rejected"] == 4
+
+
+@pytest.mark.asyncio
+async def test_an_over_budget_candidate_is_counted_as_the_budget_not_as_the_accept_rule(tmp_path):
+    """예산 초과는 시뮬레이션 **앞에서** 걸린다 - 재고 나서 떨어진 후보와
+    같은 칸에 세면 "이 탐색이 몇 번 쟀는가"를 결과에서 읽을 수 없다."""
+
+    async def reckless(run):
+        knob = run.knobs[0]
+        run.spend_step(knob)
+        await run.attempt([ProposedStep(knob, run.knob_state(knob), 5.0)])
+
+    simulate, calls = _simulate([235.0, 1.0])
+    agents = OptimizerAgents(propose=_propose, simulate=simulate, search_strategy=reckless)
+    state = _state(tmp_path)
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["rejected_by_reason"]["area_budget"] == 1
+    assert result["rejected_by_reason"]["not_accepted"] == 0
+    assert calls["n"] == 1  # 기준선 하나뿐 - 후보는 재지 않았다
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_rejects_nothing_still_reports_every_reason_at_zero(tmp_path):
+    """아무것도 거절되지 않은 실행에서도 사유 표는 통째로 실린다."""
+    from analogcoder.optimizer import REJECTION_REASONS
+
+    async def passive(run):
+        return None
+
+    simulate, _ = _simulate([235.0])
+    agents = OptimizerAgents(propose=_propose, simulate=simulate, search_strategy=passive)
+    state = _state(tmp_path)
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["rejected_by_reason"] == {name: 0 for name in REJECTION_REASONS}
+    assert result["steps_rejected"] == 0

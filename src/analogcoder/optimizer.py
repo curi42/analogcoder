@@ -240,6 +240,7 @@ def _result(
     area_after: float,
     accepted: int = 0,
     rejected: int = 0,
+    rejected_by_reason: dict[str, int] | None = None,
     pvt_sweep: dict | None = None,
     corner_failure: str | None = None,
     failure: str | None = None,
@@ -255,6 +256,15 @@ def _result(
         "area_after": area_after,
         "steps_accepted": accepted,
         "steps_rejected": rejected,
+        # steps_rejected를 사유별로 쪼갠 것. 합은 언제나 steps_rejected와 같고,
+        # 걸리지 않은 사유도 0으로 실린다 - 그러지 않으면 "이 사유로는 거절이
+        # 없었다"와 "이 사유가 사라졌다"가 같은 부재가 된다. REJECTION_REASONS의
+        # 주석이 어느 코드가 시뮬레이션을 쓰고 어느 코드가 안 쓰는지 적어 둔다.
+        "rejected_by_reason": dict(
+            rejected_by_reason
+            if rejected_by_reason is not None
+            else {name: 0 for name in REJECTION_REASONS}
+        ),
         # 돌려주는 넷리스트에 **통과한 스윕이 붙어 있을 때만** True다.
         # 코너를 잴 수단이 없었거나(pvt_sweep is None) 스윕이 실패했으면
         # False - 확인하지 않은 것을 확인했다고 말하지 않는다. 두 필드가 한
@@ -434,6 +444,11 @@ class Evaluation:
     gate: str | None = None
     # 끝까지 재지 못한 사유: 에어리어 게이트, 면적 예산, 시뮬레이션 실패.
     blocked: str | None = None
+    # 위 blocked를 **집계 가능한 코드**로 적은 것. 자유 문장은 사람이 읽는
+    # 것이고, 이것은 결과가 세는 것이다 - 사유를 사후에 문자열에서 되파싱하면
+    # 새 차단 지점 하나가 조용히 남의 칸에 들어간다(이 저장소가 area_check /
+    # refdes_check가 같은 `feedback` 키를 쓴 것으로 이미 겪은 모양이다).
+    blocked_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -590,6 +605,7 @@ class SearchOracle:
         if not area_ok:
             evaluation.gate = "area"
             evaluation.blocked = area_feedback
+            evaluation.blocked_by = "area_growth"
             return evaluation
 
         new_texts = {
@@ -607,6 +623,7 @@ class SearchOracle:
         )
         if not within:
             evaluation.blocked = budget_reason
+            evaluation.blocked_by = "area_budget"
             return evaluation
 
         self._simulations += 1
@@ -616,6 +633,9 @@ class SearchOracle:
             # (예: sky130 소자 bin을 벗어난 폭). 여기서 예외가 새어 나가면
             # 통과한 실행이 크래시가 된다.
             evaluation.blocked = sim_failure
+            # 위의 둘과 달리 이 갈래는 시뮬레이션을 **한 번 썼다**. 같은 칸에
+            # 세면 "몇 번 쟀는가"를 결과에서 읽을 수 없다.
+            evaluation.blocked_by = "simulation_failed"
             return evaluation
 
         evaluation.measurements = step_sim["measurements"]
@@ -625,6 +645,21 @@ class SearchOracle:
         )
         evaluation.objective = evaluation.measurements.get(self._spec.optimize.objective)
         return evaluation
+
+
+REJECTION_REASONS = (
+    # 시뮬레이션을 **한 번도 쓰지 않는** 셋.
+    "knob_gate",  # refdes/param/stimulus 게이트가 그 주소를 막았다
+    "knob_no_value",  # 주소는 합법인데 덱의 그 줄에 출발 값이 없다
+    "exhausted",  # 전략이 이 노브에 더 갈 곳이 없다고 판정했다
+    "area_growth",  # 소자별 성장 티어가 후보를 버렸다(적용 전)
+    "area_budget",  # 총 면적 예산이 후보를 버렸다(적용 후, 측정 전)
+    # 시뮬레이션을 쓴 둘.
+    "simulation_failed",  # 회로가 시뮬레이터를 통과하지 못했다
+    "not_accepted",  # 끝까지 재고 수락 규칙이 떨어뜨렸다
+    # 탐색 밖.
+    "corner_walked_back",  # nominal에서 수락됐다가 코너 확인에서 되돌려졌다
+)
 
 
 class SearchRun:
@@ -649,6 +684,10 @@ class SearchRun:
         self._records = records
         self._accepted = 0
         self._rejected = 0
+        # 사유별 집계. **모든** 코드를 0으로 미리 깔아 둔다 - 걸리지 않은 사유가
+        # 키째 없으면 "이 사유로는 거절이 없었다"와 "이 사유가 코드에서
+        # 사라졌다"가 읽는 쪽에서 같은 모양이 된다.
+        self._rejected_by = {name: 0 for name in REJECTION_REASONS}
         self._best_objective = objective_before
         self._spec = spec
         self._state = state
@@ -670,6 +709,16 @@ class SearchRun:
     @property
     def rejected(self) -> int:
         return self._rejected
+
+    @property
+    def rejected_by_reason(self) -> dict[str, int]:
+        """사유별 거절 수. 합은 언제나 `rejected`와 같다.
+
+        하나의 숫자로 접으면 "탐색이 열심히 했지만 여지가 없었다"와 "탐색이
+        노브의 절반에 주소 단계에서 접근조차 못 했다"가 같은 값이 된다 - 그리고
+        앞 다섯 코드는 시뮬레이션을 한 번도 쓰지 않으므로, 접힌 숫자만 보면
+        이 단계가 실제로 몇 번 쟀는지도 알 수 없다."""
+        return dict(self._rejected_by)
 
     @property
     def best_objective(self) -> float:
@@ -725,13 +774,19 @@ class SearchRun:
         아니라 주소이므로, 다른 값으로 다시 시도해도 같은 자리에서 막힌다."""
         state, gate, reason = self._oracle.knob_state(knob.refdes, knob.param)
         if state is None:
-            self._reject(self._event(knob, gate=gate, reason=reason))
+            # 게이트가 막은 것과 "주소는 합법인데 출발 값이 없다"는 다른
+            # 사실이다 - 오라클이 이미 둘을 갈라 놓았으므로(gate가 None인지),
+            # 집계도 갈라야 한다.
+            code = "knob_gate" if gate is not None else "knob_no_value"
+            self._reject(self._event(knob, gate=gate, reason=reason, reason_code=code), code)
         return state
 
     def exhausted(self, knob: Knob, state: KnobState, reason: str) -> None:
         """전략이 "이 노브는 더 갈 곳이 없다"고 판단한 경우. 사실이 사유와
         함께 이력에 남아야 하므로 전략이 조용히 넘어가지 못하게 문을 준다."""
-        self._reject(self._event(knob, state=state, reason=reason))
+        self._reject(
+            self._event(knob, state=state, reason=reason, reason_code="exhausted"), "exhausted"
+        )
 
     async def attempt(self, steps: list[ProposedStep]) -> StepOutcome:
         """후보 하나를 재고, **수락 규칙에 물어보고**, 그 결과를 실행에 반영한다.
@@ -753,11 +808,14 @@ class SearchRun:
         )
 
         head = steps[0]
+        # 재기 전에 막혔으면 그 차단 지점이 사유고, 끝까지 쟀으면 수락 규칙이다.
+        code = None if accepted else (evaluation.blocked_by or "not_accepted")
         event = self._event(
             head.knob,
             state=head.state,
             gate=evaluation.gate,
             reason=reason,
+            reason_code=code,
             accepted=accepted,
             after=parse_spice_value(evaluation.changes[0]["new_value"]),
             objective=evaluation.objective,
@@ -783,7 +841,7 @@ class SearchRun:
         else:
             if evaluation.pushed:
                 self._state.rollback()
-            self._rejected += 1
+            self._count_rejection(code)
 
         return StepOutcome(accepted=accepted, reason=reason, objective=evaluation.objective)
 
@@ -793,6 +851,7 @@ class SearchRun:
         state: KnobState | None = None,
         gate: str | None = None,
         reason: str | None = None,
+        reason_code: str | None = None,
         accepted: bool = False,
         after: float | None = None,
         objective: float | None = None,
@@ -814,11 +873,21 @@ class SearchRun:
             "accepted": accepted,
             "gate": gate,
             "reason": reason,
+            # 사유 **코드**. reason은 사람이 읽는 문장이고 이것은 세는 것이라,
+            # 결과의 rejected_by_reason을 이력에서 그대로 되셀 수 있다.
+            # 수락된 단계에서는 None이다.
+            "reason_code": reason_code,
         }
 
-    def _reject(self, event: dict) -> None:
-        self._state.log_event("optimize_step", event)
+    def _count_rejection(self, code: str) -> None:
+        if code not in self._rejected_by:
+            raise ValueError(f"unknown rejection reason {code!r}")
+        self._rejected_by[code] += 1
         self._rejected += 1
+
+    def _reject(self, event: dict, code: str) -> None:
+        self._state.log_event("optimize_step", event)
+        self._count_rejection(code)
 
 
 # 전략의 계약: SearchRun 하나를 받아 돌고, 아무것도 돌려주지 않는다. 결과는
@@ -982,7 +1051,12 @@ async def _search(
     strategy = agents.search_strategy or coordinate_descent
     await strategy(run)
 
-    return {"accepted": run.accepted, "rejected": run.rejected, "records": run.records}
+    return {
+        "accepted": run.accepted,
+        "rejected": run.rejected,
+        "rejected_by_reason": run.rejected_by_reason,
+        "records": run.records,
+    }
 
 
 async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
@@ -1226,16 +1300,23 @@ async def _optimize(
     )
     accepted = outcome["accepted"]
     rejected = outcome["rejected"]
+    rejected_by_reason = outcome["rejected_by_reason"]
     records = outcome["records"]
 
     def _final(
         status: str, version: int, accepted_count: int, rejected_count: int, sweep,
-        corner_failure: str | None = None,
+        corner_failure: str | None = None, walked_back: int = 0,
     ) -> dict:
         record = records[version]
+        # 코너 확인에서 되돌려진 단계는 탐색이 거절한 것이 아니다 - nominal에서
+        # 수락됐고 코너가 뒤집은 것이다. 총계에는 이미 들어가 있었으므로
+        # (rejected + accepted - survived), 사유 표에도 자기 칸으로 들어간다.
+        by_reason = dict(rejected_by_reason)
+        by_reason["corner_walked_back"] += walked_back
         return _result(
             status, state, objective_before, record["objective"], area_before, record["area"],
-            accepted=accepted_count, rejected=rejected_count, pvt_sweep=sweep,
+            accepted=accepted_count, rejected=rejected_count,
+            rejected_by_reason=by_reason, pvt_sweep=sweep,
             corner_failure=corner_failure, guard_infeasible=guard_infeasible,
             area_coverage=area_coverage, final_criteria=record.get("criteria"),
         )
@@ -1279,6 +1360,7 @@ async def _optimize(
     return _final(
         "UNCHANGED" if survived == 0 else "OPTIMIZED",
         landed, survived, rejected + (accepted - survived), landed_sweep,
+        walked_back=accepted - survived,
         # 확인 스윕이 아예 돌지 못했다면(터졌다면) 그 사유도 결과에 실린다 -
         # "코너가 깨져서 되돌아왔다"와 "스윕을 못 돌려서 되돌아왔다"는
         # 다른 사실이고, 후자는 고칠 대상이 회로가 아니다.
