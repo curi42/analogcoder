@@ -1950,3 +1950,56 @@ async def test_the_box_is_unfrozen_even_when_the_optimizer_raises(tmp_path):
             await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
 
     assert captured["corner_state"].probe_frozen is False
+
+
+# --- 이월 불변식 I3 (키 존재 계약): 코너 시드 실패의 이른 반환 ---------------
+
+
+@pytest.mark.asyncio
+async def test_the_corner_seed_failure_early_return_still_carries_topology_swaps(tmp_path):
+    """어느 종료 갈래로 끝나든 result 는 같은 필수 키 집합을 갖는다.
+
+    근거는 `_final_result` 의 독스트링(`orchestrator.py`)이다: *"키를 조건부로
+    넣지 않는 이유도 같다: '스왑이 없었다'와 '기록이 사라졌다'가 같은 부재로
+    보이면 안 된다."* `cli.py` 의 코너 시드 실패 이른 반환은 그 계약을 어기고
+    `topology_swaps` 만 빠뜨렸다 — `report.py` 는 `if not swaps: return []` 라
+    report.md 가 무사해서 사람 눈에는 안 보이고, `result.json` 을 기계로 읽는
+    소비자에게만 "스왑 0건"과 "이 실행은 스왑 기록을 아예 안 쓴다"가 같은
+    부재가 된다.
+
+    **이 갈래는 오늘 실행으로는 도달하지 않는다.** 그 자리의 주석이 그렇게
+    적고 있다: `_as_point` 가 거부하는 `(deck)` 항목을 `run_full_pvt_sweep` 은
+    만들지 않는다. 그래서 이 상태는 테스트가 직접 구성해야 하고
+    (`seed_from_sweep` 을 `ValueError` 로 대체), 그것이 이 테스트가 존재하는
+    이유다 — 도달 불가한 갈래의 계약 위반은 실행이 아니라 테스트에서만
+    발화한다. 도달하게 되는 날 이 단언이 먼저 서 있다.
+    """
+    run_dir = str(tmp_path / "runs" / "seedfail")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+
+    def exploding_seed(sweep, spec):
+        raise ValueError("no usable corner coordinates in the entry sweep")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=_sweep_sequence([entry], [])),
+        patch("analogcoder.cli.seed_from_sweep", new=exploding_seed),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration(_pass_result(run_dir))),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert result["status"] == "FAIL"
+    assert _one_history_event(run_dir, "corner_set_seed_failed")
+    assert result["topology_swaps"] == []
+    # 계약 전체를 여기서 한 번 확인한다. 필수 키는 `before` 에서 파생하지 않고
+    # 리터럴로 적는다 - 양쪽에서 동시에 사라진 키는 "일관됨"으로 통과하기 때문.
+    assert {
+        "status",
+        "final_netlist_paths",
+        "run_dir",
+        "iterations_used",
+        "final_criteria",
+        "topology_swaps",
+        "resumed_from",
+        "corner_reduction",
+    } <= set(result)

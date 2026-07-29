@@ -367,6 +367,13 @@ async def _run(args) -> dict:
             baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
             state.log_event("pvt_baseline_sweep", baseline_sweep)
 
+    # 시도를 가로질러 누적하는 유일한 result 키(I-2). 아래 코너 시드 실패의
+    # 이른 반환도 이 값을 실어야 하므로 그 앞에서 만든다 - 상세한 근거는 아래
+    # 재진입 루프 직전의 주석에 있다.
+    all_topology_swaps: list[dict] = (
+        [dict(s) for s in checkpoint.all_topology_swaps] if checkpoint is not None else []
+    )
+
     corner_state = None
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
     simulate_for_run = simulate_fn
@@ -409,6 +416,16 @@ async def _run(args) -> dict:
                 # 이 이른 반환에도 실린다 - 어느 갈래로 끝나든 결과는 자기가
                 # 재개된 것인지 말해야 한다.
                 "resumed_from": resumed_from,
+                # 같은 이유로 topology_swaps도 실린다(I-3, 키 존재 계약).
+                # _final_result의 독스트링이 그 계약을 적어 두었다: "키를
+                # 조건부로 넣지 않는 이유도 같다 - '스왑이 없었다'와 '기록이
+                # 사라졌다'가 같은 부재로 보이면 안 된다." 여기만 빠져 있었고,
+                # report.py는 빈 목록이면 섹션을 안 그리므로 report.md로는
+                # 보이지 않았다 - result.json을 기계로 읽는 소비자에게만
+                # 어긋난다. 하드코딩된 []가 아니라 누적값을 싣는 이유는, 이
+                # 갈래에 체크포인트가 실어 온 스왑이 있을 수 있고 그때 []는
+                # 없어진 기록을 없었던 것처럼 만들기 때문이다.
+                "topology_swaps": list(all_topology_swaps),
                 "corner_reduction": {
                     "active": False,
                     "reason": f"seeding the corner set from the entry sweep failed: {reason}",
@@ -498,9 +515,9 @@ async def _run(args) -> dict:
     # 덱**을 옳게 설명하고(그리고 시도별이라는 사실이
     # corner_reduction.attempts로 공개된다), topology_swaps는 **이어서 넘겨지는
     # 덱의 구조**를 설명한다. 누적 덱에 시도별 기록을 붙이는 것이 어긋남이다.
-    all_topology_swaps: list[dict] = (
-        [dict(s) for s in checkpoint.all_topology_swaps] if checkpoint is not None else []
-    )
+    #
+    # **정의는 위로 올라갔다** - 코너 시드 실패의 이른 반환이 이 값을 실어야
+    # 하기 때문이다(위 그 자리의 주석 참조).
 
     def _save(boundary: str, *, progress=None, orchestration_result=None) -> None:
         """경계 하나에서 체크포인트를 원자적으로 갈아 끼운다.
