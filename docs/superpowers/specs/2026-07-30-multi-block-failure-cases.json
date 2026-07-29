@@ -1,0 +1,196 @@
+{
+  "spec": "benchmarks/bandgap/spec_corner_reduction.yaml",
+  "rows": [
+    {
+      "shape": "none",
+      "failing": [],
+      "blocks_per_criterion": {},
+      "blocks": [],
+      "qualifies": false
+    },
+    {
+      "shape": "tail_both_4",
+      "failing": [
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "blocks_per_criterion": {
+        "buf1_loop_gain": [
+          "BUF_N"
+        ],
+        "buf1_phase_margin": [
+          "BUF_N"
+        ]
+      },
+      "blocks": [
+        "BUF_N"
+      ],
+      "qualifies": false
+    },
+    {
+      "shape": "tail_both_3",
+      "failing": [
+        "vbg0_residual",
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "blocks_per_criterion": {
+        "vbg0_residual": [
+          "BUF_P"
+        ],
+        "vbg1_residual": [
+          "BUF_N"
+        ],
+        "trim_loop_gain": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ],
+        "trim_phase_margin": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ],
+        "buf1_loop_gain": [
+          "BUF_N"
+        ],
+        "buf1_phase_margin": [
+          "BUF_N"
+        ]
+      },
+      "blocks": [
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "TRIMAMP"
+      ],
+      "qualifies": true
+    },
+    {
+      "shape": "tail_both_2",
+      "failing": [
+        "vbg0_residual",
+        "trim_loop_gain",
+        "buf1_loop_gain"
+      ],
+      "blocks_per_criterion": {
+        "vbg0_residual": [
+          "BUF_P"
+        ],
+        "trim_loop_gain": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ],
+        "buf1_loop_gain": [
+          "BUF_N"
+        ]
+      },
+      "blocks": [
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "TRIMAMP"
+      ],
+      "qualifies": true
+    },
+    {
+      "shape": "tail_trim_3",
+      "failing": [
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "blocks_per_criterion": {
+        "vbg1_residual": [
+          "BUF_N"
+        ],
+        "trim_loop_gain": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ],
+        "trim_phase_margin": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ],
+        "buf1_loop_gain": [
+          "BUF_N"
+        ],
+        "buf1_phase_margin": [
+          "BUF_N"
+        ]
+      },
+      "blocks": [
+        "BGR_CORE",
+        "BUF_N",
+        "TRIMAMP"
+      ],
+      "qualifies": true
+    },
+    {
+      "shape": "tail_bufp_3",
+      "failing": [],
+      "blocks_per_criterion": {},
+      "blocks": [],
+      "qualifies": false
+    },
+    {
+      "shape": "rz_trim_60",
+      "failing": [],
+      "blocks_per_criterion": {},
+      "blocks": [],
+      "qualifies": false
+    },
+    {
+      "shape": "rz_trim_120",
+      "failing": [
+        "trim_phase_margin"
+      ],
+      "blocks_per_criterion": {
+        "trim_phase_margin": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ]
+      },
+      "blocks": [
+        "BGR_CORE",
+        "TRIMAMP"
+      ],
+      "qualifies": false
+    },
+    {
+      "shape": "cc_trim_20",
+      "failing": [
+        "trim_phase_margin"
+      ],
+      "blocks_per_criterion": {
+        "trim_phase_margin": [
+          "BGR_CORE",
+          "TRIMAMP"
+        ]
+      },
+      "blocks": [
+        "BGR_CORE",
+        "TRIMAMP"
+      ],
+      "qualifies": false
+    },
+    {
+      "shape": "mirror_trim_4",
+      "failing": [],
+      "blocks_per_criterion": {},
+      "blocks": [],
+      "qualifies": false
+    },
+    {
+      "shape": "out_trim_20",
+      "failing": [],
+      "blocks_per_criterion": {},
+      "blocks": [],
+      "qualifies": false
+    }
+  ],
+  "qualifying": 3
+}
