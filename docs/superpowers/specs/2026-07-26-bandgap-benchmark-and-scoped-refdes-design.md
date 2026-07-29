@@ -719,7 +719,35 @@ minimisation sub-project, so it should have room to be optimised.
 |---|---|---|---|---|---|
 | `spec_seed_tc.yaml` | `tc_ppm_per_c ≤ 30` | 36.30 | `BGR_CORE.XRpa`/`XRpb` `l` 324.74→321.3 | 29.30 | `vbgout` 1.2389→1.2334, `vbg1` 1.1999→1.1947 (deliberately coupled) |
 | `spec_seed_trim_pm.yaml` | `trim_pm_deg ≥ 85` | 81.14 | `TRIMAMP.XRz` `l` 15→25 | 98.22 | `buf1_pm` 101.56→101.65 (unmoved) |
-| `spec_seed_buf0_droop.yaml` | `vbg0_droop_mv ≤ 15` | 19.93 | `BUF_P.X6.W` 20→55 (see the validation section — this row originally named `BUF_P.Xcl`, which the area gate blocks) | 14.79 | `vbg1_droop` 24.12→24.03 (unmoved) |
+| `spec_seed_buf0_droop.yaml` | `vbg0_droop_mv ≤ 15` | 19.93 | `BUF_P.Xt.W` 24→72 | 2.34 | `vbg1_droop` unmoved |
+| `spec_seed_buf0_droop.yaml` | (same) | 19.93 | `BUF_P.X6.W` 20→55 **and** `BUF_P.Xcl.W` 20→50 — **the pair, not X6 alone** | 14.79 | `vbg1_droop` 24.12→24.03 (unmoved) |
+
+**Correction (2026-07-29, re-measured).** The `buf0_droop` row above used to
+read `BUF_P.X6.W 20→55 … 14.79`, attributing that value to `X6` alone. It is
+not: `X6.W = 55` **on its own** measures **17.4892 mV** and fails the ≤ 15 mV
+threshold. 14.7865 mV is the value with `BUF_P.Xcl.W = 50` also applied, which
+is the deck the PASS run below actually built — it kept `Xcl` in iteration 1
+and only then walked `X6` up, so every `X6` number in that run's trace already
+carries the `Xcl` change. Baseline in the same session: 19.9324 mV. Three
+nominal ngspice points on `netlist_settling.cir`, no corners.
+
+The correction matters beyond bookkeeping: `X6` alone is *not* a second
+independent answer to this seed, so the seed has exactly one single-knob repair
+(`Xt.W`) and one two-knob repair (`{X6.W, Xcl.W}`). Any experiment that scores a
+ranker on "does it surface the correct knob" has to score the **set**, because
+surfacing `X6` without `Xcl` surfaces something that does not pass.
+`tests/fixtures/task6_ground_truth.json` records both sets with their
+provenance.
+
+**Also measured 2026-07-29, not previously recorded anywhere:**
+`TRIMAMP.Xcc.W` 40→60 lifts `trim_pm_deg` **81.1382 → 85.3114**, clearing the
+`≥ 85` threshold with 0.31° to spare, and the area gate approves it (1.5×). The
+other seven `amp_loops` criteria all still hold at that point (`core` 57.83 dB /
+66.05°, `trim_gain` 87.54 dB, `buf1` 97.98 dB / 101.34°, `buf0` 100.16 dB /
+104.33°). So `spec_seed_trim_pm.yaml` has **two** single-knob repairs, not one —
+`XRz.l` (98.22°, wide margin) and `Xcc.W` (85.31°, barely). Only the
+`amp_loops` testbench was re-measured; the other four were not, so "passes the
+whole spec" is not claimed for `Xcc.W`.
 
 The tc seed is the interesting one: `Rp/R1` moves `vbgout` and `vbg1` as well,
 so the tuner cannot fix TC in isolation — it has to keep two other criteria
@@ -806,9 +834,21 @@ a live run solved the topology-swap spec with a `Cc` + `M6.W` combination that
 was outside the recorded Cc-only sweep. A measured sweep bounds what is known to
 work; it does not bound what works.
 
-The header of `spec_seed_buf0_droop.yaml` and the culprit map now name both
-`BUF_P.Xt` and `BUF_P.X6` as reachable, and `BUF_P.Xcl` as the one that
-saturates — phrased so as not to claim the list is exhaustive.
+**Read the table above as a walk, not as three independent knob measurements.**
+Every `X6` row already carries the `Xcl.W = 50` from iteration 1, because
+kept changes accumulate in the deck. Re-measured 2026-07-29: `X6.W = 55` with
+`Xcl` back at its baseline gives **17.4892 mV**, not 14.79 — it fails. What the
+run found was a *combination*, `{Xcl.W = 50, X6.W = 55}`, and that is the third
+time this repo has recorded the same reading error (F2's declared `addresses`,
+the 3-change proposal's shared delta, and now this). The finding above survives
+unchanged in the form that matters — the gate's feedback moved the tuner off a
+saturating knob onto a productive one — but "X6 is a reachable knob" was too
+strong and should read "X6 is half of a reachable pair".
+
+The header of `spec_seed_buf0_droop.yaml` and the culprit map now name
+`BUF_P.Xt` as the single-knob answer and `{BUF_P.X6, BUF_P.Xcl}` as the pair,
+with `BUF_P.Xcl` alone saturating — phrased so as not to claim the list is
+exhaustive.
 
 ### All three seeds converge
 

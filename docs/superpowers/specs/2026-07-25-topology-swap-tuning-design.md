@@ -85,6 +85,24 @@ a real end-to-end proof that the feature *works*, but — see the note below —
 it turned out not to be a proof that the feature is *necessary* for every
 capable agent.
 
+> **The file no longer says 65.0 (noted 2026-07-29, verified by reading it).**
+> Everything above this line is pre-sky130: generic level-1 models, `Cc` in
+> picofarads, `M6.W` in microns. The 2026-07-26 PDK migration re-derived this
+> spec's thresholds — commit `0486791`, "re-derive spec_topology_required.yaml
+> thresholds for sky130" — and `benchmarks/two_stage_opamp/
+> spec_topology_required.yaml` now carries `phase_margin >= 62.0`,
+> `unity_gain_bandwidth >= 2.5 MHz`, `dc_gain >= 70.0` (against the default
+> `spec.yaml`'s 60.0 / 1.5 MHz / 60.0 — the variant raises **all three**, not
+> just phase margin). No document was updated at the time, so this file, the
+> plan section at the bottom, `2026-07-29-d1-remeasurement-design.md`, and
+> `CLAUDE.md`'s Benchmarks section all still said 65°.
+>
+> Only the *number in the file* is corrected here. Whether 62° is still out of
+> `Cc`-only reach on sky130 is **not** re-derived — the sweep tables above were
+> measured on the old models and no sky130 `Cc` sweep exists in this repo. The
+> caveat that already governs this spec (a live run solved it with `Cc` +
+> `M6.W`, outside the recorded sweep) applies at least as strongly at 62°.
+
 **Update after a real end-to-end run (2026-07-25):** a live Claude run against
 `spec_topology_required.yaml` passed in 2 iterations *without ever attempting
 a topology swap*. It found a two-parameter combination the `Cc`-only sweep
@@ -381,7 +399,9 @@ clean `FAIL` — exactly like every other agent in this pipeline.
    - library exhaustion (both topologies already in `tried_topologies`)
      falls back to parameter-only mode for the remaining iterations.
 5. `benchmarks/two_stage_opamp/spec_topology_required.yaml` (new) — same
-   circuit, `phase_margin` threshold raised to `65.0`. Real end-to-end run
+   circuit, `phase_margin` threshold raised to `65.0` (**as planned; the
+   shipped file has said `62.0` since the sky130 migration, commit `0486791` —
+   see the correction note above**). Real end-to-end run
    (both Claude and, time permitting, Ollama) against this spec is the
    feature's actual proof: parameter tuning alone must fail on it, and a
    correct implementation must reach `miller_nulling_resistor` and pass.

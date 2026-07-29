@@ -4,15 +4,23 @@
 # BUF_P - whatever is done inside BUF_P, vbg1_droop never leaves 23.93..24.22mV,
 # and growing BUF_N.Xcl changes vbg0 not at all.
 #
-# At least two knobs reach the threshold within the area gate: BUF_P.Xt, the
-# bias current (W 24 -> 72, the 3.0x limit for a 24um baseline, gives 2.34mV),
-# and BUF_P.X6, the output stage's drive strength (W 20 -> 55, 2.75x, gives
-# 14.79mV - found by a real run, not by the sweep). This list is not exhaustive.
+# ONE knob reaches the threshold on its own within the area gate: BUF_P.Xt, the
+# bias current (W 24 -> 72, the 3.0x limit for a 24um baseline, gives 2.34mV).
 #
-# The compensation cap does NOT work here: BUF_P.Xcl saturates at 16.79mV even
-# at its own 3.0x limit (W=60), so a proposal that only grows Xcl cannot pass
-# however many iterations it spends. Measured tables are in the design spec's
-# "Validation runs" section.
+# BUF_P.X6, the output stage's drive strength, does NOT reach it alone. This
+# header used to say `W 20 -> 55 gives 14.79mV`; re-measured 2026-07-29 against
+# real ngspice, W 20 -> 55 **alone** gives 17.4892mV and FAILS the <= 15mV
+# threshold. 14.7865mV is what that deck measures with `BUF_P.Xcl.W = 50` also
+# applied - which is the deck the PASS run actually produced, having kept Xcl
+# first and then walked X6 up. The number was right; what it was attributed to
+# was not. (Baseline re-measured in the same session: 19.9324mV.)
+#
+# The compensation cap does NOT work alone either: BUF_P.Xcl saturates at
+# 16.79mV even at its own 3.0x limit (W=60), so a proposal that only grows Xcl
+# cannot pass however many iterations it spends. It is still half of a working
+# repair - {X6.W=55, Xcl.W=50} passes where neither does alone. Measured tables
+# are in the design spec's "Validation runs" section, and the per-knob evidence
+# with provenance is in tests/fixtures/task6_ground_truth.json.
 circuit_name: bandgap
 testbenches:
   - name: dc_tc
