@@ -28,7 +28,9 @@ import os
 import pytest
 
 from analogcoder.cli import _argmax_drift
-from analogcoder.corner_selection import NOMINAL, CornerSet, grown_with, label, seed_from_sweep
+from analogcoder.corner_selection import (
+    NOMINAL, CornerSet, grown_with, label, raw_label, seed_from_sweep,
+)
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.netlist import apply_changes, resolve_includes
 from analogcoder.pvt import all_corners, run_full_pvt_sweep
@@ -171,7 +173,14 @@ async def test_the_judge_sees_a_worse_value_than_nominal_alone(entry_sweep, tmp_
     assert worst["corner_worst"]["quiescent_current"]["voltage"] == 1.98
 
     # 판정에 실제로 쓰이는 것은 씨앗 최악값이지 nominal이 아니다.
-    assert nominal["corner_worst"]["quiescent_current"]["process"] == "(deck)"
+    #
+    # **`"(deck)"`를 좌표 칸에서 찾지 않는다.** 예전에는 `corner_fields`가
+    # `{"process": "(deck)", ...}`를 적었는데 그것은 *이름*을 좌표 자리에 넣는
+    # 것이라(산출물 독자가 `ss`가 앉는 자리의 `"(deck)"`를 보고 코너가 아님을
+    # 알 방법이 없다) `{"corner_id": None}`로 바뀌었고, 사람이 읽는 이름은
+    # `raw_label`이 낸다. 그 함수가 규칙의 소유자이므로 여기서 dict 모양을
+    # 손으로 재현하지 않고 그것을 부른다.
+    assert raw_label(nominal["corner_worst"]["quiescent_current"]) == "(deck)"
 
     # **양면 창(window)은 measurements 하나에 담기지 않는다 - 그래서 그 하나를
     # 어떻게 고를지가 규칙이 되어야 했다.** vbgout_v에는 기준이 둘 붙어 있다
@@ -232,7 +241,17 @@ async def test_a_probe_run_records_its_corner_in_history(entry_sweep, tmp_path):
 
     # 탐침은 severity 오름차순 첫 번째 - 이 실행에서는 tt/1.62/27이다.
     assert result["probe"]["corner"] == "tt/1.62/27.0"
-    assert events == [("corner_probe", result["probe"])]
+    # **이벤트 스트림 전체를 고정하지 않는다.** 이 테스트가 거는 사실은 "탐침이
+    # 자기 코너를 기록한다"이고, 같은 경로가 그 밖에 무엇을 적는지는 다른
+    # 테스트의 소관이다. 전체 리스트를 걸어 두었더니 `_log_corner_render`가
+    # 이 경로에 들어온 61aa19c(2026-07-29)에서 조용히 깨졌다 - 그 커밋은
+    # test_corner_sim.py / test_corner_sim_ngspice.py / test_pvt.py 는
+    # 갱신했지만 이 파일은 **file-wide `slow` 마커**라 평소 사이클
+    # (`pytest -m "not slow"`)에서 돌지 않아 아무도 보지 못했다.
+    # 이웃 이벤트가 하나 늘 때마다 무관한 테스트가 깨지는 것은 회귀 신호가
+    # 아니라 잡음이다.
+    probes = [data for step, data in events if step == "corner_probe"]
+    assert probes == [result["probe"]]
 
     # 승격은 없다. 회전만 진행된다. **관찰된 범위를 정확히 적는다**: 위에서
     # testbenches를 dc_tc 하나로 줄였으므로 spec.all_criteria도 8개이고,
