@@ -49,6 +49,7 @@ from analogcoder.attempt_log import (  # noqa: E402
     render_attempts,
 )
 from analogcoder.control_block import measurement_nets  # noqa: E402
+from analogcoder.history import read_events  # noqa: E402
 from analogcoder.netlist import apply_changes  # noqa: E402
 from analogcoder.patterns import find_patterns  # noqa: E402
 from analogcoder.signal_path import build_signal_paths  # noqa: E402
@@ -155,8 +156,9 @@ def _record_rejected(
         )
 
 
-def read_events(history_path: Path) -> list[dict]:
-    return [json.loads(line) for line in open(history_path) if line.strip()]
+# read_events 는 analogcoder.history 에서 온다. 자체 구현을 들고 있으면 재개된
+# 실행의 로그에서 **버려진 이터레이션의 이벤트를 그대로 재생**하게 되고, 그러면
+# 이 스크립트가 복원하는 튜너 입력이 실행이 실제로 겪은 것과 달라진다.
 
 
 def replay(events: list[dict], initial_texts: dict[str, str], run_label: str = "") -> tuple[list[Timepoint], dict[str, str]]:
@@ -393,13 +395,37 @@ def build_arm_inputs(tp: Timepoint, spec, use_history: bool) -> ArmInputs:
     )
 
 
-async def run_sweep(points: list[Timepoint], spec, repeats: int, out_path: Path) -> dict:
+def _call_key(record: dict) -> tuple:
+    return (record["run"], record["outer_iter"], record["retry"], record["arm"], record["repeat"])
+
+
+def load_done(out_path: Path) -> dict[tuple, dict]:
+    """이미 답이 있는 호출. 스윕이 5시간 가까이 걸려 중간에 죽는 일이 실제로
+    일어났으므로(호출 29/150에서 프로세스가 죽었다), 재개는 선택이 아니다.
+
+    **결과가 None 인 기록은 done 으로 치지 않는다** - 떨어진 호출은 결측이고,
+    결측을 확정된 답으로 굳히면 그 쌍이 영원히 사라진다. 재개하면 다시 시도한다.
+    """
+    if not out_path.exists():
+        return {}
+    payload = json.loads(out_path.read_text())
+    return {
+        _call_key(r): r for r in payload.get("records", []) if r.get("result") is not None
+    }
+
+
+async def run_sweep(
+    points: list[Timepoint], spec, repeats: int, out_path: Path, resume: bool = False
+) -> dict:
     backend = ClaudeSDKBackend()
-    records: list[dict] = []
+    done_records = load_done(out_path) if resume else {}
+    records: list[dict] = list(done_records.values())
     failures: list[dict] = []
+    if done_records:
+        print(f"재개: 이미 끝난 호출 {len(done_records)}건은 건너뛴다", flush=True)
 
     total_calls = len(points) * repeats * 2
-    done = 0
+    done = len(done_records)
     started = time.time()
 
     for tp in points:
@@ -421,6 +447,8 @@ async def run_sweep(points: list[Timepoint], spec, repeats: int, out_path: Path)
                     "attempts_view_chars": len(inputs.attempts_view),
                     "netlist_view_chars": len(inputs.netlist_view),
                 }
+                if _call_key(record) in done_records:
+                    continue
                 try:
                     # 절대 동시에 부르지 않는다: claude-agent-sdk 는 동시
                     # 사용에서 깨지고 두 호출이 함께 실패한다.
@@ -607,6 +635,7 @@ def main(argv=None) -> int:
     parser.add_argument("--out", default="runs/paired_probe/results.json")
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
 
     spec = load_spec(args.spec)
@@ -639,7 +668,7 @@ def main(argv=None) -> int:
         return 0
 
     out_path = Path(args.out)
-    sweep = asyncio.run(run_sweep(all_points, spec, args.repeats, out_path))
+    sweep = asyncio.run(run_sweep(all_points, spec, args.repeats, out_path, resume=args.resume))
     summary = analyse(all_points, sweep["records"], args.repeats)
     summary["timepoints"] = len(all_points)
     summary["repeats"] = args.repeats

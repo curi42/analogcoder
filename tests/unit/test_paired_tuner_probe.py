@@ -381,6 +381,36 @@ def test_a_dropped_call_removes_its_pair_rather_than_counting_as_zero():
     assert summary["r_exact"]["b_rate"] == 0.0
 
 
+# --------------------------------------------------------------- 재개
+
+
+def test_resume_keeps_answered_calls_and_retries_dropped_ones(tmp_path):
+    """스윕이 5시간 가까이 걸려 실제로 중간에 죽었다. 재개는 선택이 아니다.
+
+    답이 있는 호출은 건너뛰되, `result: null` 인 호출은 결측이므로 다시
+    시도해야 한다 - 결측을 확정된 답으로 굳히면 그 쌍이 영원히 사라진다.
+    """
+    out = tmp_path / "results.json"
+    out.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {"run": "r", "outer_iter": 1, "retry": 2, "arm": "A", "repeat": 0,
+                     "result": {"any_exact": True, "any_knob": False, "proposed_changes": []}},
+                    {"run": "r", "outer_iter": 1, "retry": 2, "arm": "B", "repeat": 0,
+                     "result": None, "error": "boom"},
+                ]
+            }
+        )
+    )
+    done = probe.load_done(out)
+    assert set(done) == {("r", 1, 2, "A", 0)}
+
+
+def test_resume_on_a_missing_file_is_an_empty_start(tmp_path):
+    assert probe.load_done(tmp_path / "nope.json") == {}
+
+
 # --------------------------------------------------------------- 종단 확인
 
 
