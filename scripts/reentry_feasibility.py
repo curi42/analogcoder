@@ -166,6 +166,37 @@ def analyse(spec_path, coverage, shapes):
             outside = [l for l in labels if l not in seed]
             for d1 in shapes:
                 tbl = tables[d1]
+                # **조건 (1) 은 실행 전체의 성질이지 기준 하나의 성질이 아니다.**
+                # 중간 루프가 판정 스윕에 도달하려면 PASS 로 **빠져나가야** 하고,
+                # 그 PASS 는 `evaluate_criteria`의 `overall_pass` - 즉 **모든**
+                # 기준이 씨앗 최악값에서 통과해야 한다. 어느 한 기준이 씨앗 안에서
+                # 실패하면 루프는 거기서 계속 튜닝하고, 다른 기준의 최악이 집합
+                # 밖이든 말든 재진입은 발화하지 않는다.
+                #
+                # 첫 판은 이것을 **기준별로** 걸었고(그 기준이 씨앗 안에서
+                # 통과하는가), 그것은 조건 (1) 이 아니라 훨씬 약한 조건이다.
+                # 실측 차이: 9코너 격자에서 25/242 -> 9/242 이고 argmax 는
+                # 7 -> **0** 이 된다. 이 저장소가 반복해 온 실수 그대로 -
+                # 지표가 다른 답을 낼 수 있는 조건을 실제로 걸었는지.
+                mid_worst = {}
+                for c in criteria:
+                    vals = [
+                        tbl[c.name][labels.index(s)] for s in seed if s in labels
+                    ]
+                    # 씨앗 안 최악: ">=" 계열은 최솟값, 그 외는 최댓값.
+                    # 측정값이 없는 코너가 하나라도 있으면 `worst_case_measurements`
+                    # 와 같은 규약으로 그 기준을 통째로 뺀다 - 그러면
+                    # `evaluate_criteria` 가 그것을 실패로 접는다.
+                    if any(v is None or (isinstance(v, float) and v != v) for v in vals):
+                        continue
+                    if not vals:
+                        continue
+                    pick = min if c.operator in (">=", ">") else max
+                    mid_worst[c.measurement] = pick(
+                        [mid_worst[c.measurement], pick(vals)]
+                    ) if c.measurement in mid_worst else pick(vals)
+                mid_loop_passes = evaluate_criteria(mid_worst, criteria)["overall_pass"]
+
                 fired, detail = [], []
                 for c in criteria:
                     # `pvt.worst_case_measurements`가 `sweeps[d1]` 안에 이미
@@ -193,18 +224,14 @@ def analyse(spec_path, coverage, shapes):
                     #   (2) 판정 스윕이 그 기준을 실패시키고,
                     #   (3) 그 최악 코너가 집합 밖일 것.
                     # (1)이 곧 이 설계가 "낙관적 PASS" 라고 부르는 바로 그것이다.
-                    values = tbl[c.name]
-                    inside = [
-                        values[labels.index(s)] for s in seed if s in labels
-                    ]
-                    if any(_violates(v, c) for v in inside):
+                    if not mid_loop_passes:
                         continue
                     fired.append(c.name)
                     detail.append({
                         "criterion": c.name, "worst_corner": lbl,
                         "value": None if was_missing else worst,
                         "no_measurement": was_missing,
-                        "passes_everywhere_in_seed": True,
+                        "mid_loop_passed": True,
                     })
                 rows.append({
                     "mode": mode, "entry_deck": d0, "verdict_deck": d1,

@@ -748,24 +748,30 @@ that number was measured.
   nor any threshold, only each criterion's argmax. With 22 criteria the union
   saturates any small grid, so the only lever is a bigger grid — hence the
   voltage axis came back. Expect real reduction only where corners ≫ criteria.
-- **Re-entry is reachable, and the claim that it was not has been measured
-  false (2026-07-30).** Growth requires a *failing* criterion whose argmax sits
-  **outside** the set — and if a criterion's argmax is inside, the mid loop
-  measured that same corner and would have failed there first. This entry used
-  to conclude "this benchmark cannot reach it: the only outside corners are
-  `tt`, the typical corner, which is nobody's worst case. That is structure,
-  not luck." **`tt` being nobody's worst is a property of the *entry* deck
-  only.** The seed is taken from the entry sweep; the verdict is taken on a
-  deck the tuner *moved*. `scripts/reentry_feasibility.py` swept 11
-  perturbation shapes over every (entry deck, verdict deck) pair and found
-  **25 of 242** combinations firing on the 9-corner grid (argmax 7, coverage
-  18) — and every one of them lands on `tt/1.98` or `ss/1.98`. On
-  `tail_both_2`, `trim_loop_gain` and `buf1_loop_gain` have their worst at
-  `tt/1.98`, the exact corner the old text called nobody's worst.
-  The measurement needs all **three** conditions, not two: the mid loop must
-  exit **PASS** on the reduced set (the optimism this design is named for), the
-  verdict sweep must fail that criterion, and its worst corner must be outside.
-  Checking only the third inflates the count (29 → 25 here).
+- **Re-entry is not reachable in the argmax regime on this benchmark — the
+  original claim stands — but ε-coverage makes it reachable, and that
+  asymmetry is the useful fact (measured 2026-07-30).** Growth requires a
+  *failing* criterion whose argmax sits **outside** the set — and if a
+  criterion's argmax is inside, the mid loop measured that same corner and
+  would have failed there first. On the entry deck the only outside corners
+  are `tt`, the typical corner, which is nobody's worst case.
+  `scripts/reentry_feasibility.py` swept 11 perturbation shapes over every
+  (entry deck, verdict deck) pair: **9 of 242** combinations fire on the
+  9-corner grid, and they are **argmax 0, coverage 9** — all nine the
+  `cc_trim_20` deck, which is exactly the one case §8 of the results doc
+  measured end to end. A smaller seed leaves more outside, so the regime that
+  fires is the one that drops corners.
+  **Firing needs all three conditions, and "the mid loop exits PASS" is a
+  property of the run, not of one criterion.** The mid loop reaches the
+  verdict sweep only when `evaluate_criteria`'s `overall_pass` holds at the
+  seed's worst — *every* criterion. A first pass checked only the third
+  condition (29 firings), a second checked (1) **per criterion** (25), and
+  only the global form gives 9. **The per-criterion form was reported here as
+  "the claim has been measured false", with argmax 7 — that was wrong and the
+  whole-branch review caught it.** Under the correct predicate the argmax
+  regime, which is what every shipped spec runs, fires zero times.
+  The same weakening applies to any "does this ever happen" sweep: check the
+  condition the *system* branches on, not a per-item proxy for it.
   Still true and worth keeping: a smaller move (`TRIMAMP.Xt.W` 8 → 5.2488, the
   value the optimizer's bisection landed on) drifted exactly one argmax —
   `vbg1_residual`, `ff/1.98` → **`tt/1.62`, outside the set** — and it was not

@@ -66,7 +66,13 @@ def main() -> None:
         # 않는다** - 그런 스펙의 숫자는 실측이 아니라 "켰다면 이랬을 것"이라는
         # 투영이고, 둘을 같은 칸에 적으면 이 저장소가 반복해서 지불한 오류다.
         declared_reduction = red is not None and red.enabled
-        budget = red.retry_budget if red else 0
+        # **선언하지 않은 스펙의 예산은 0 이 아니라 기본값이다.** 이 줄들이
+        # 답하는 질문은 "축소를 **켜면** 어떻게 되는가" 이고, 켜면
+        # `retry_budget` 은 선언 없이도 기본 2 다(`spec.py`). 0 을 쓰면
+        # 예산이 10 이 되어 피복률이 3 배 낮게 나온다 - T12 의 유일한 산출물이
+        # 자기 공식에 대해 틀린 값이 된다(리뷰가 잡았다).
+        DEFAULT_RETRY_BUDGET = 2
+        budget = red.retry_budget if red else DEFAULT_RETRY_BUDGET
         seeds = [("argmax", argmax_seed)]
         if coverage_seed is not None:
             seeds = [("coverage", coverage_seed)]
