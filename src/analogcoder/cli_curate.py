@@ -609,12 +609,19 @@ async def _curate(args, sim_backend: SimulatorBackend, agent_backend: AgentBacke
 async def run_curation(args, sim_backend: SimulatorBackend | None = None, agent_backend: AgentBackend | None = None) -> dict:
     """`_curate`를 가드로 감싼다 - `run_optimization`과 같은 이유(모듈
     docstring). 무엇이 터지든 `INCONCLUSIVE` + 지금까지 쌓인 `_RunContext`로
-    끝나고, 이 함수 자체는 절대 예외를 내지 않는다."""
-    sim_backend = sim_backend if sim_backend is not None else NgspiceBackend()
-    agent_backend = agent_backend if agent_backend is not None else _build_agent_backend(args)
+    끝나고, 이 함수 자체는 절대 예외를 내지 않는다.
 
+    **백엔드 두 줄이 try 안에 있는 것이 요점이다.** 밖에 있을 때
+    `--agent-backend openai-compatible`에 `--llm-base-url`을 빠뜨리면
+    `_build_agent_backend`의 ValueError가 그대로 새어 나가 트레이스백으로
+    끝나고 out-dir은 생성조차 되지 않았다 - 위의 "절대 예외를 내지 않는다"와
+    "어느 단계에서 터져도 세 산출물을 다 쓴다"를 동시에 어긴다. 소실되는
+    작업은 없지만(시뮬 0회·LLM 0회), 산출물의 **부재**는 파이프라인 실패와
+    실행 자체가 없었던 것을 구별할 수 없게 만든다."""
     ctx = _RunContext()
     try:
+        sim_backend = sim_backend if sim_backend is not None else NgspiceBackend()
+        agent_backend = agent_backend if agent_backend is not None else _build_agent_backend(args)
         return await _curate(args, sim_backend, agent_backend, ctx)
     except Exception as exc:  # noqa: BLE001 - 이 파이프라인은 절대 트레이스백으로 끝나지 않는다
         return _finalize(ctx, verdict="INCONCLUSIVE", reason=f"unexpected error: {type(exc).__name__}: {exc}")

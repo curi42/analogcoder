@@ -1384,3 +1384,45 @@ async def test_the_variant_authors_rationale_reaches_both_artifacts(tmp_path):
     payload = json.loads((out_dir / "curation.json").read_text())
     assert payload["rationale"] == "I added Rz in series with Cc."
     assert "I added Rz in series with Cc." in (out_dir / "curation_report.md").read_text()
+
+
+# --- 가드가 백엔드 생성까지 덮는가 -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_backend_that_cannot_be_built_still_ends_with_all_three_artifacts(tmp_path):
+    """`--agent-backend openai-compatible`에 `--llm-base-url`을 빠뜨리면
+    `_build_agent_backend`가 ValueError를 던진다. 그 두 줄이 `run_curation`의
+    try **밖**에 있어, 함수 자신의 독스트링("이 함수 자체는 절대 예외를 내지
+    않는다")과 모듈 계약("어느 단계에서 터져도 세 산출물을 다 쓴다")이 동시에
+    깨지고 out-dir은 생성조차 되지 않았다.
+
+    소실되는 작업은 없다(시뮬 0회, LLM 0회). 깨지는 것은 계약 문구와 산출물
+    일관성이고, 그것은 다음 사람이 "산출물이 없다"를 파이프라인 실패가 아니라
+    실행 자체가 없었던 것으로 읽게 만든다."""
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(SPEC_NO_CORNERS)
+    out_dir = tmp_path / "out"
+    deck_path = tmp_path / "source_deck.cir"
+    deck_path.write_text(SOURCE_DECK)
+    args = _args(
+        tmp_path,
+        spec_path,
+        out_dir,
+        from_deck=str(deck_path),
+        from_block="BLOCK",
+        agent_backend="openai-compatible",
+        llm_base_url=None,
+        llm_model=None,
+    )
+
+    # 시뮬 백엔드는 주입하지 않는다 - 에이전트 백엔드 생성이 그보다 먼저
+    # 터지는지까지 이 테스트가 고정한다.
+    result = await run_curation(args)
+
+    assert result["verdict"] == "INCONCLUSIVE"
+    assert "--llm-base-url" in result["reason"]
+
+    write_curation_artifacts(str(out_dir), result)
+    for name in ("curation.json", "topology_candidate.py", "curation_report.md"):
+        assert (out_dir / name).exists(), f"{name}이 없다"
