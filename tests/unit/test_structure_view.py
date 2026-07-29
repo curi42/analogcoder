@@ -405,6 +405,18 @@ def test_render_netlist_unfolds_the_ancestors_of_a_nested_focus_path():
 def test_render_netlist_with_a_non_nested_focus_is_unchanged():
     # 조상 보정은 점 없는 경로에 대해 순수 no-op이어야 한다 - 벤치마크
     # 열한 개 덱이 전부 이 경우다.
-    assert render_netlist(NESTED, {"OUTER"}) == render_netlist(NESTED, {"OUTER"})
+    #
+    # 여기 있던 `render_netlist(...) == render_netlist(...)`는 같은 인자를
+    # 두 번 부른 항등식이라 어떤 구현에서도 참이었다 - 검사처럼 보이지만
+    # 아무것도 못 거른다. 이 저장소가 게이트에 대해 세운 질문("아무것도
+    # 안 할 때 어떻게 보이는가")은 단언에도 똑같이 걸린다.
     text = render_netlist(NESTED, {"OUTER"})
+
+    # 초점인 OUTER의 직속 부품은 보인다.
     assert "M2 a b vss vss NMOS W=10 L=1" in text
+    # 그리고 초점이 **아닌** 자손 INNER의 본문은 여전히 접힌다. 조상 보정은
+    # "부모를 초점으로 승격"이지 "자손을 함께 승격"이 아니다 - 후자로
+    # 구현하면 초점 뷰가 접기를 멈춰 컨텍스트 한계가 있는 모델에게
+    # 원문 전체를 도로 떠안기게 되고, 그것이 이 뷰의 존재 이유를 지운다.
+    assert "M1 c d vss vss NMOS W=10 L=1" not in text
+    assert "* ... (1 components elided)" in text
