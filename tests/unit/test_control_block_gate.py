@@ -252,11 +252,17 @@ def test_an_identical_control_block_is_accepted():
 
 
 def test_every_shipped_benchmark_control_block_is_accepted():
-    """게이트가 정상 동작을 막으면 불채택이다. 스펙 12개 · 컨트롤 블록 42개
-    전부를 자기 자신에 대해(에이전트가 원문을 그대로 되돌려준 경우) 먹인다."""
+    """게이트가 정상 동작을 막으면 불채택이다. 스펙 10개 · 컨트롤 블록 47개
+    전부를 자기 자신에 대해(에이전트가 원문을 그대로 되돌려준 경우) 먹인다.
+
+    **42 -> 47 은 드리프트 가드가 제 역할을 한 기록이다.** 2026-07-29 의
+    ε-근접 피복 작업이 `benchmarks/bandgap/spec_corner_coverage.yaml` 을
+    더했고 그 스펙이 테스트벤치 5개를 들고 온다. 게이트가 거부한 것은
+    **0건**이므로(확인함) 이것은 회귀가 아니라 숫자 갱신이다. 스펙 수도
+    12 라고 적혀 있었지만 실제로는 10 이었다 - 같이 고친다."""
     blocks = _benchmark_control_blocks()
 
-    assert len(blocks) == 42, f"컨트롤 블록 수가 42에서 {len(blocks)}로 바뀌었다"
+    assert len(blocks) == 47, f"컨트롤 블록 수가 47에서 {len(blocks)}로 바뀌었다"
 
     rejected = [
         (spec, name, check_control_block(block, block).detail)
