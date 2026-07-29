@@ -1,0 +1,920 @@
+{
+  "spec": "benchmarks/bandgap/spec_corner_reduction.yaml",
+  "answer_key": "docs/superpowers/specs/2026-07-30-task6-sufficient-blocks.json",
+  "preregistration": "docs/superpowers/specs/2026-07-29-theory-adoption-roadmap.md 「태스크 6 사전 등록」 (정답표 도착 전 커밋, edec7f6)",
+  "primary_configuration": {
+    "distance": "logdeg",
+    "aggregation": "min_distance",
+    "deck": "per_testbench"
+  },
+  "all_blocks": [
+    "BANDGAP",
+    "BGR_CORE",
+    "BUF_N",
+    "BUF_P",
+    "ERRAMP",
+    "TRIMAMP"
+  ],
+  "cases": [
+    {
+      "shape": "tail_both_3",
+      "scored": true,
+      "failing": [
+        "vbg0_residual",
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "sufficient_blocks": [
+        "BUF_N",
+        "ERRAMP",
+        "TRIMAMP"
+      ],
+      "unknown_blocks": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_P"
+      ],
+      "baseline": {
+        "focus": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "BUF_P",
+          "TRIMAMP"
+        ],
+        "focus_blocks": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "BUF_P",
+          "TRIMAMP"
+        ],
+        "failing_nets": [
+          "b1_i",
+          "trm_i",
+          "vbg0",
+          "vbg1",
+          "vfb"
+        ],
+        "worst_ranks": {
+          "TRIMAMP": 5,
+          "BUF_N": 5,
+          "BGR_CORE": 5,
+          "BUF_P": 5,
+          "ERRAMP": 6,
+          "BANDGAP": 5
+        },
+        "metric": 5
+      },
+      "cells": {
+        "per_testbench/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "BUF_N > BUF_P > {BANDGAP|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 1,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > TRIMAMP > BANDGAP > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 1,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P} > {BGR_CORE|ERRAMP|TRIMAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > {BUF_N|BUF_P} > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > BUF_P > BANDGAP > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 1,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "BUF_N > BUF_P > {BANDGAP|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 1,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > TRIMAMP > BUF_N > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P} > {BGR_CORE|ERRAMP|TRIMAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > {BUF_N|BUF_P} > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > BUF_P > BANDGAP > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 1,
+          "unresolved_criteria": []
+        }
+      },
+      "primary": {
+        "key": "per_testbench/logdeg/min_distance",
+        "metric": 2,
+        "baseline_metric": 5,
+        "improvement": 3
+      }
+    },
+    {
+      "shape": "tail_both_2",
+      "scored": true,
+      "failing": [
+        "vbg0_residual",
+        "trim_loop_gain",
+        "buf1_loop_gain"
+      ],
+      "sufficient_blocks": [
+        "TRIMAMP"
+      ],
+      "unknown_blocks": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P",
+        "ERRAMP"
+      ],
+      "baseline": {
+        "focus": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "BUF_P",
+          "TRIMAMP"
+        ],
+        "focus_blocks": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "BUF_P",
+          "TRIMAMP"
+        ],
+        "failing_nets": [
+          "b1_i",
+          "trm_i",
+          "vbg0",
+          "vbg1",
+          "vfb"
+        ],
+        "worst_ranks": {
+          "TRIMAMP": 5,
+          "BUF_N": 5,
+          "BGR_CORE": 5,
+          "BUF_P": 5,
+          "ERRAMP": 6,
+          "BANDGAP": 5
+        },
+        "metric": 5
+      },
+      "cells": {
+        "per_testbench/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BUF_N|BUF_P} > {BANDGAP|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > TRIMAMP > BANDGAP > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P} > {BGR_CORE|ERRAMP|TRIMAMP}",
+          "metric": 6,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > {BUF_N|BUF_P} > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|BUF_P} > BANDGAP > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 4
+          },
+          "order": "{BUF_N|BUF_P} > {BANDGAP|TRIMAMP} > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 4,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > {BUF_N|BUF_P} > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > TRIMAMP > BUF_N > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|BUF_P} > {BGR_CORE|ERRAMP|TRIMAMP}",
+          "metric": 6,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 3,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > {BUF_N|BUF_P} > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 4,
+            "ERRAMP": 6,
+            "BUF_P": 2,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|BUF_P} > BANDGAP > TRIMAMP > {BGR_CORE|ERRAMP}",
+          "metric": 4,
+          "unresolved_criteria": []
+        }
+      },
+      "primary": {
+        "key": "per_testbench/logdeg/min_distance",
+        "metric": 2,
+        "baseline_metric": 5,
+        "improvement": 3
+      }
+    },
+    {
+      "shape": "tail_trim_3",
+      "scored": true,
+      "failing": [
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "sufficient_blocks": [
+        "ERRAMP",
+        "TRIMAMP"
+      ],
+      "unknown_blocks": [
+        "BANDGAP",
+        "BGR_CORE",
+        "BUF_N",
+        "BUF_P"
+      ],
+      "baseline": {
+        "focus": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "TRIMAMP"
+        ],
+        "focus_blocks": [
+          "BANDGAP",
+          "BGR_CORE",
+          "BUF_N",
+          "TRIMAMP"
+        ],
+        "failing_nets": [
+          "b1_i",
+          "trm_i",
+          "vbg1",
+          "vfb"
+        ],
+        "worst_ranks": {
+          "TRIMAMP": 4,
+          "BUF_N": 4,
+          "BGR_CORE": 4,
+          "BUF_P": 6,
+          "ERRAMP": 6,
+          "BANDGAP": 4
+        },
+        "metric": 4
+      },
+      "cells": {
+        "per_testbench/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|TRIMAMP} > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > BUF_N > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > {BANDGAP|TRIMAMP} > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BUF_N|TRIMAMP} > BANDGAP > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > TRIMAMP > BANDGAP > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|BUF_N} > {BGR_CORE|BUF_P|ERRAMP|TRIMAMP}",
+          "metric": 6,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > BUF_N > TRIMAMP > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "per_testbench/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "BUF_N > BANDGAP > TRIMAMP > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "{BANDGAP|BUF_N|TRIMAMP} > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > BUF_N > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/hop/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 3
+          },
+          "order": "BUF_N > {BANDGAP|TRIMAMP} > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > BUF_N > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|TRIMAMP} > BUF_N > BUF_P > {BGR_CORE|ERRAMP}",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/logdeg/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 3,
+            "TRIMAMP": 2,
+            "ERRAMP": 6,
+            "BUF_P": 4,
+            "BGR_CORE": 5,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > TRIMAMP > BUF_N > BUF_P > BGR_CORE > ERRAMP",
+          "metric": 2,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_distance": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 6,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "{BANDGAP|BUF_N} > {BGR_CORE|BUF_P|ERRAMP|TRIMAMP}",
+          "metric": 6,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_rank": {
+          "worst_ranks": {
+            "BUF_N": 2,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 1
+          },
+          "order": "BANDGAP > BUF_N > TRIMAMP > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        },
+        "canonical/signal_flow/min_sum": {
+          "worst_ranks": {
+            "BUF_N": 1,
+            "TRIMAMP": 3,
+            "ERRAMP": 6,
+            "BUF_P": 6,
+            "BGR_CORE": 6,
+            "BANDGAP": 2
+          },
+          "order": "BUF_N > BANDGAP > TRIMAMP > {BGR_CORE|BUF_P|ERRAMP}",
+          "metric": 3,
+          "unresolved_criteria": []
+        }
+      },
+      "primary": {
+        "key": "per_testbench/logdeg/min_distance",
+        "metric": 2,
+        "baseline_metric": 4,
+        "improvement": 2
+      }
+    }
+  ],
+  "verdict": {
+    "rule": "1차 구성의 순위가 3건 전부에서 기준선보다 나쁘지 않고, 최소 2건에서 최소 1 순위 이상 좋아야 통과",
+    "n_scored_cases": 3,
+    "improvements": [
+      3,
+      3,
+      2
+    ],
+    "no_case_worse": true,
+    "n_cases_better_by_1_or_more": 3,
+    "passed": true,
+    "meaning": "1층은 채택 결정이 아니다. 통과는 '2층(LLM 쌍 프로브)을 돌릴 값이 있다'는 뜻이고, 불통과는 '거리 기반 블록 순서에 2층을 걸 근거가 없다'는 뜻이다.",
+    "null_pass_rate": {
+      "model": "동률 없는 균등 무작위 순열, 720개 전수 열거, 순열 하나를 세 케이스에 공통 적용",
+      "n_permutations": 720,
+      "n_passing": 552,
+      "pass_rate": 0.7666666666666667
+    }
+  }
+}

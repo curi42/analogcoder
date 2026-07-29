@@ -171,6 +171,37 @@ def _baseline(spec, structure, paths, canonical_text, failing, nets_by_meas, all
     }
 
 
+def _null_pass_rate(cases: list[tuple[list[str], int]], blocks: list[str]) -> dict:
+    """**무작위 블록 순서가 이 규칙을 통과하는 비율.** 사전 등록 규칙의 검정력이다.
+
+    왜 이것을 같이 내는가: 사전 등록의 두 번째 규칙("이 지표가 다른 답을 낼 수 있는
+    조건이 있었는가")은 지표에만 적용되는 것이 아니라 **판정 자체에도** 적용된다.
+    통과율이 높으면 "통과" 는 개입에 대한 증거가 아니라 기준선이 약하다는 사실의
+    재진술이다 - D1 의 `0.000` 과 같은 부류를 판정 층에서 잡는 장치다.
+
+    귀무 모형은 **동률 없는 균등 무작위 순열**이다: 블록 수가 6 이라 720개를 전수
+    열거하므로 표본 오차가 없다. 개입이 낸 순서가 세 케이스에서 동일했으므로
+    순열 하나를 세 케이스에 함께 적용한다 - 케이스마다 독립 순열을 뽑으면 개입보다
+    자유도가 큰 모형이 되어 통과율을 과소평가한다.
+    """
+    import itertools
+
+    n_pass = 0
+    total = 0
+    for perm in itertools.permutations(blocks):
+        pos = {b: i + 1 for i, b in enumerate(perm)}
+        deltas = [base - min(pos[b] for b in suf) for suf, base in cases]
+        total += 1
+        if all(d >= 0 for d in deltas) and sum(1 for d in deltas if d >= 1) >= 2:
+            n_pass += 1
+    return {
+        "model": "동률 없는 균등 무작위 순열, 720개 전수 열거, 순열 하나를 세 케이스에 공통 적용",
+        "n_permutations": total,
+        "n_passing": n_pass,
+        "pass_rate": n_pass / total,
+    }
+
+
 def _order_string(worst_ranks: dict[str, int]) -> str:
     groups: dict[int, list[str]] = defaultdict(list)
     for b, r in worst_ranks.items():
@@ -318,6 +349,11 @@ def main() -> int:
                     "있다'는 뜻이고, 불통과는 '거리 기반 블록 순서에 2층을 걸 근거가 "
                     "없다'는 뜻이다."),
     }
+    if scored:
+        out["verdict"]["null_pass_rate"] = _null_pass_rate(
+            [(c["sufficient_blocks"], c["primary"]["baseline_metric"]) for c in scored],
+            sorted(all_blocks),
+        )
     if n_cases != 3:
         out["verdict"]["void_reason"] = (
             f"채점 가능한 케이스가 3건이 아니라 {n_cases}건이다. 사전 등록의 최소 효과 "
@@ -329,6 +365,12 @@ def main() -> int:
     print(f"채점된 케이스 {n_cases}건, 개선 {deltas}")
     print(f"  3건 전부 나쁘지 않다: {no_worse} / 1 순위 이상 좋아진 케이스: {n_better}")
     print(f"  => 1층 {'통과' if passed else '불통과'}")
+    null = out["verdict"].get("null_pass_rate")
+    if null:
+        print(f"\n  검정력: 무작위 순서 {null['n_permutations']}개 중 {null['n_passing']}개가 "
+              f"같은 규칙을 통과한다 (**{null['pass_rate']:.1%}**).")
+        print("  => 통과율이 높으면 '통과' 는 개입의 증거가 아니라 기준선이 약하다는")
+        print("     사실의 재진술이다. 이 숫자를 판정과 함께 읽어야 한다.")
     if n_cases != 3:
         print(f"  !! {out['verdict']['void_reason']}")
     print(f"  {out['verdict']['meaning']}")

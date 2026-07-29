@@ -1,0 +1,375 @@
+{
+  "spec": "benchmarks/bandgap/spec_corner_reduction.yaml",
+  "multi_block_cases_source": "docs/superpowers/specs/2026-07-30-multi-block-failure-cases.json",
+  "multipliers": [
+    0.5,
+    2.0,
+    4.0
+  ],
+  "workers": 9,
+  "area_gate_applied": false,
+  "cases": [
+    {
+      "shape": "tail_both_3",
+      "expected_failing": [
+        "vbg0_residual",
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "reproduced_failing": [
+        "vbg0_residual",
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "reproduced": true,
+      "relevant_testbenches": [
+        "settling",
+        "amp_loops"
+      ],
+      "n_candidates": 501,
+      "n_skipped": 0,
+      "skipped_knobs": [],
+      "n_stage1_pass": 341,
+      "n_stage2_pass": 3,
+      "stage2_attempts_per_block_cap": 12,
+      "block_state": {
+        "BANDGAP": {
+          "state": "capped",
+          "stage1_candidates": 23,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 11
+        },
+        "BGR_CORE": {
+          "state": "capped",
+          "stage1_candidates": 59,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 47
+        },
+        "BUF_N": {
+          "state": "confirmed",
+          "stage1_candidates": 68,
+          "stage2_attempts": 7,
+          "skipped_after_confirm": 61,
+          "unattempted_at_cap": 0
+        },
+        "BUF_P": {
+          "state": "capped",
+          "stage1_candidates": 92,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 80
+        },
+        "ERRAMP": {
+          "state": "confirmed",
+          "stage1_candidates": 43,
+          "stage2_attempts": 1,
+          "skipped_after_confirm": 42,
+          "unattempted_at_cap": 0
+        },
+        "TRIMAMP": {
+          "state": "confirmed",
+          "stage1_candidates": 56,
+          "stage2_attempts": 5,
+          "skipped_after_confirm": 51,
+          "unattempted_at_cap": 0
+        }
+      },
+      "sufficient_knobs": [
+        {
+          "refdes": "BUF_N.X1",
+          "param": "L",
+          "before": "1.0",
+          "after": "4.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg0_resid_mv": 0.5381,
+              "vbg1_resid_mv": 0.009,
+              "trim_gain_db": 72.5136,
+              "trim_pm_deg": 86.1577,
+              "buf1_gain_db": 96.555,
+              "buf1_pm_deg": 101.633
+            },
+            "stage2_overall_pass": true
+          }
+        },
+        {
+          "refdes": "ERRAMP.Xt",
+          "param": "L",
+          "before": "4.0",
+          "after": "2.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg0_resid_mv": 0.5375,
+              "vbg1_resid_mv": 0.005,
+              "trim_gain_db": 72.5149,
+              "trim_pm_deg": 85.9446,
+              "buf1_gain_db": 97.9841,
+              "buf1_pm_deg": 101.154
+            },
+            "stage2_overall_pass": true
+          }
+        },
+        {
+          "refdes": "TRIMAMP.Xt",
+          "param": "W",
+          "before": "3.0",
+          "after": "6.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg0_resid_mv": 0.5381,
+              "vbg1_resid_mv": 0.004,
+              "trim_gain_db": 81.5734,
+              "trim_pm_deg": 83.2853,
+              "buf1_gain_db": 97.9842,
+              "buf1_pm_deg": 101.346
+            },
+            "stage2_overall_pass": true
+          }
+        }
+      ],
+      "sufficient_blocks": [
+        "BUF_N",
+        "ERRAMP",
+        "TRIMAMP"
+      ],
+      "perturbed_blocks": [
+        "BUF_P",
+        "TRIMAMP"
+      ],
+      "perturbed_blocks_match_sufficient_blocks": false
+    },
+    {
+      "shape": "tail_both_2",
+      "expected_failing": [
+        "vbg0_residual",
+        "trim_loop_gain",
+        "buf1_loop_gain"
+      ],
+      "reproduced_failing": [
+        "vbg0_residual",
+        "trim_loop_gain",
+        "buf1_loop_gain"
+      ],
+      "reproduced": true,
+      "relevant_testbenches": [
+        "settling",
+        "amp_loops"
+      ],
+      "n_candidates": 501,
+      "n_skipped": 0,
+      "skipped_knobs": [],
+      "n_stage1_pass": 353,
+      "n_stage2_pass": 1,
+      "stage2_attempts_per_block_cap": 12,
+      "block_state": {
+        "BANDGAP": {
+          "state": "capped",
+          "stage1_candidates": 23,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 11
+        },
+        "BGR_CORE": {
+          "state": "capped",
+          "stage1_candidates": 66,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 54
+        },
+        "BUF_N": {
+          "state": "capped",
+          "stage1_candidates": 82,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 70
+        },
+        "BUF_P": {
+          "state": "capped",
+          "stage1_candidates": 91,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 79
+        },
+        "ERRAMP": {
+          "state": "capped",
+          "stage1_candidates": 45,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 33
+        },
+        "TRIMAMP": {
+          "state": "confirmed",
+          "stage1_candidates": 46,
+          "stage2_attempts": 5,
+          "skipped_after_confirm": 41,
+          "unattempted_at_cap": 0
+        }
+      },
+      "sufficient_knobs": [
+        {
+          "refdes": "TRIMAMP.Xt",
+          "param": "W",
+          "before": "2.0",
+          "after": "8.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg0_resid_mv": 0.5947,
+              "trim_gain_db": 87.5449,
+              "buf1_gain_db": 97.9842
+            },
+            "stage2_overall_pass": true
+          }
+        }
+      ],
+      "sufficient_blocks": [
+        "TRIMAMP"
+      ],
+      "perturbed_blocks": [
+        "BUF_P",
+        "TRIMAMP"
+      ],
+      "perturbed_blocks_match_sufficient_blocks": false
+    },
+    {
+      "shape": "tail_trim_3",
+      "expected_failing": [
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "reproduced_failing": [
+        "vbg1_residual",
+        "trim_loop_gain",
+        "trim_phase_margin",
+        "buf1_loop_gain",
+        "buf1_phase_margin"
+      ],
+      "reproduced": true,
+      "relevant_testbenches": [
+        "settling",
+        "amp_loops"
+      ],
+      "n_candidates": 501,
+      "n_skipped": 0,
+      "skipped_knobs": [],
+      "n_stage1_pass": 342,
+      "n_stage2_pass": 2,
+      "stage2_attempts_per_block_cap": 12,
+      "block_state": {
+        "BANDGAP": {
+          "state": "capped",
+          "stage1_candidates": 23,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 11
+        },
+        "BGR_CORE": {
+          "state": "capped",
+          "stage1_candidates": 59,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 47
+        },
+        "BUF_N": {
+          "state": "capped",
+          "stage1_candidates": 68,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 56
+        },
+        "BUF_P": {
+          "state": "capped",
+          "stage1_candidates": 92,
+          "stage2_attempts": 12,
+          "skipped_after_confirm": 0,
+          "unattempted_at_cap": 80
+        },
+        "ERRAMP": {
+          "state": "confirmed",
+          "stage1_candidates": 43,
+          "stage2_attempts": 1,
+          "skipped_after_confirm": 42,
+          "unattempted_at_cap": 0
+        },
+        "TRIMAMP": {
+          "state": "confirmed",
+          "stage1_candidates": 57,
+          "stage2_attempts": 5,
+          "skipped_after_confirm": 52,
+          "unattempted_at_cap": 0
+        }
+      },
+      "sufficient_knobs": [
+        {
+          "refdes": "ERRAMP.Xt",
+          "param": "L",
+          "before": "4.0",
+          "after": "2.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg1_resid_mv": 0.007,
+              "trim_gain_db": 72.5149,
+              "trim_pm_deg": 86.0319,
+              "buf1_gain_db": 97.9841,
+              "buf1_pm_deg": 101.147
+            },
+            "stage2_overall_pass": true
+          }
+        },
+        {
+          "refdes": "TRIMAMP.Xt",
+          "param": "W",
+          "before": "3.0",
+          "after": "6.0",
+          "is_count": false,
+          "evidence": {
+            "stage1_measurements": {
+              "vbg1_resid_mv": 0.005,
+              "trim_gain_db": 81.5734,
+              "trim_pm_deg": 83.3034,
+              "buf1_gain_db": 97.9842,
+              "buf1_pm_deg": 101.342
+            },
+            "stage2_overall_pass": true
+          }
+        }
+      ],
+      "sufficient_blocks": [
+        "ERRAMP",
+        "TRIMAMP"
+      ],
+      "perturbed_blocks": [
+        "TRIMAMP"
+      ],
+      "perturbed_blocks_match_sufficient_blocks": true
+    }
+  ],
+  "limits": {
+    "single_knob_only": "\uac01 \ud6c4\ubcf4\ub294 \ub178\ube0c \ud558\ub098\ub9cc \uc6c0\uc9c1\uc778\ub2e4. \uc774 \uc800\uc7a5\uc18c\ub294 \ub2e8\uc77c \ub178\ube0c \uc2a4\uc715\uc774 \ub193\uce5c \uc870\ud569\uc5d0\uc11c \ub2f5\uc744 \ucc3e\uc740 \uc801\uc774 \ub450 \ubc88 \uc788\ub2e4(CLAUDE.md - Cc+M6.W, TRIMAMP.XRz.l+Xcc.W). \uadf8\ub798\uc11c \uc774 \ud30c\uc77c\uc758 \ucda9\ubd84 \ube14\ub85d \uc9d1\ud569\uc740 \ud558\ud55c\uc774\ub2e4.",
+    "three_point_grid": "\uac12 \uaca9\uc790\uac00 x0.5/x2/x4 \uc138 \uc810\uc774\ub2e4. \uc774\uac83\ub3c4 \ud558\ud55c \ubc29\ud5a5\uc774\ub2e4.",
+    "stage2_capped_per_block": "2\ub2e8\uacc4\ub294 \ube14\ub85d\ub9c8\ub2e4 \ucd5c\ub300 12\uac1c \ud6c4\ubcf4\ub9cc \ud655\uc778\ud558\uace0, \ud558\ub098\uac00 \ud655\uc815\ub418\uba74 \uadf8 \ube14\ub85d\uc758 \ub098\uba38\uc9c0\ub294 \uac74\ub108\ub6f4\ub2e4. \uc774 \uce21\uc815\uc774 \ub2f5\ud558\ub294 \uc9c8\ubb38\uc774 \ube14\ub85d \ub2e8\uc704\uc774\uae30 \ub54c\ubb38\uc774\ub2e4. block_state \uc758 state \ub97c \ubc18\ub4dc\uc2dc \ud568\uaed8 \uc77d\uc5b4\ub77c - 'capped' \ub294 '\uadf8 \ube14\ub85d\uc5d0 \ucda9\ubd84\ud55c \ub178\ube0c\uac00 \uc5c6\ub2e4'\uac00 \uc544\ub2c8\ub77c **\ubaa8\ub978\ub2e4**\ub294 \ub73b\uc774\uace0, 'exhausted' \ub9cc\uc774 \ud6c4\ubcf4\ub97c \uc804\ubd80 \uc2dc\ub3c4\ud588\ub2e4\ub294 \ub73b\uc774\ub2e4.",
+    "direction_of_bound": "\uc21c\uc704 \uc9c0\ud45c\ub294 '\uac00\uc7a5 \uc55e\uc120 *\uc54c\ub824\uc9c4* \ucda9\ubd84 \ube14\ub85d\uc758 \uc21c\uc704'\ub97c \uc7b0\ub2e4. \uc2e4\uc81c\ub85c\ub294 \ucda9\ubd84\ud558\uc9c0\ub9cc \uc5ec\uae30\uc11c \ubabb \uc7a1\uc740 \ube14\ub85d\uc774 \ub354 \uc55e\uc5d0 \uc788\uc73c\uba74 \uc9c0\ud45c\ub294 \uc21c\uc704\ub97c \uc2e4\uc81c\ubcf4\ub2e4 \ub098\uc058\uac8c \ud3c9\uac00\ud55c\ub2e4 - \ucc44\ud0dd\uc5d0 \ubd88\ub9ac\ud55c \ubc29\ud5a5(\uc548\uc804\ud55c \ubc29\ud5a5)\uc774\ub77c \uc774 \ud558\ud55c\uc744 \uc9c0\uae08 \uc4f8 \uc218 \uc788\ub2e4."
+  },
+  "total_simulation_count": 10701,
+  "cache_stats": {
+    "hits": 47,
+    "misses": 10654,
+    "entries": 10654
+  },
+  "wall_clock_seconds": 1877.287162065506
+}
