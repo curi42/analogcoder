@@ -377,3 +377,34 @@ def test_focus_misses_resolves_an_unqualified_refdes_via_the_netlist_not_the_dot
     changes = [{"refdes": "M9", "param": "W"}]
 
     assert focus_misses({"DRIVER"}, changes, CHAIN) == ["M9"]
+
+
+def test_render_netlist_unfolds_the_ancestors_of_a_nested_focus_path():
+    # §3.3. select_focus는 모든 갈래를 _with_ancestors에 통과시키지만,
+    # render_netlist를 부르는 곳이 select_focus만은 아니다:
+    # orchestrator가 verify_pre에게 보여줄 뷰를 만들 때 초점을 제안이
+    # 지목한 블록으로 확장한다(`focus | resolved_blocks`). 그 확장 경로에는
+    # 조상 보정이 없어, 제안이 중첩 정의를 지목하면 부모가 접히면서 지목된
+    # 소자가 뷰에서 사라진다 - verify_pre는 "뷰에 없는 것은 거부하라"는
+    # 지시를 받고 있고, 그 거부 3회는 즉시 하드 FAIL이라 토폴로지
+    # 에스컬레이션과 남은 이터레이션을 전부 버린다.
+    #
+    # 조상 보정을 렌더러 자신에게 두면 호출자가 누구든 이 계약이 유지된다:
+    # "중첩 정의를 접힘의 단위로 삼는다"는 것이 렌더러의 규칙이므로,
+    # 그 규칙이 초점을 무효로 만드는 보정도 렌더러가 진다.
+    text = render_netlist(NESTED, {"OUTER.INNER"})
+
+    assert "M1 c d vss vss NMOS W=10 L=1" in text
+    # OUTER 자신은 초점이 아니므로 그 직속 부품은 여전히 접힌다 - 조상
+    # 보정은 "부모를 초점으로 승격"이 아니라 "부모의 폴딩이 자손을 삼키지
+    # 않게 한다"이다. 여기서는 자손이 통째로 보여야 하므로 폴딩 자체가
+    # 시작되지 않는다.
+    assert ".subckt INNER c d vss" in text
+
+
+def test_render_netlist_with_a_non_nested_focus_is_unchanged():
+    # 조상 보정은 점 없는 경로에 대해 순수 no-op이어야 한다 - 벤치마크
+    # 열한 개 덱이 전부 이 경우다.
+    assert render_netlist(NESTED, {"OUTER"}) == render_netlist(NESTED, {"OUTER"})
+    text = render_netlist(NESTED, {"OUTER"})
+    assert "M2 a b vss vss NMOS W=10 L=1" in text

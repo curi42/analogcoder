@@ -244,8 +244,21 @@ def render_netlist(netlist_text: str, focus: set[str]) -> str:
     component"로 잡혀, E1이 겪은 것과 같은 모양(연속 줄을 딴 소자로 착각)의
     왜곡이 재발한다. 다만 화면에 실제로 내는 것은 원문 물리 줄이다 - 이
     뷰는 프롬프트 텍스트일 뿐 재파싱될 구조가 아니므로 원래 서식을 그대로
-    보여주는 쪽이 사람이 읽기에도 맞다."""
-    names = {_definition_name(path) for path in focus}
+    보여주는 쪽이 사람이 읽기에도 맞다.
+
+    조상 보정(_with_ancestors)은 **여기서** 한다. 위의 폴딩 규칙이 초점을
+    무효로 만드는 경우("OUTER.INNER"만 초점이면 OUTER가 접히면서 INNER의
+    본문까지 함께 묻힌다)를 만드는 것이 이 함수 자신이므로, 그 보정도 이
+    함수가 진다. select_focus가 이미 자기 결과에 같은 보정을 걸지만
+    render_netlist의 호출자가 select_focus만은 아니다 - orchestrator는
+    verify_pre에게 보여줄 뷰의 초점을 제안이 지목한 블록으로 확장하고
+    (`focus | resolved_blocks`), 그 확장 경로에는 보정이 없었다. 결과는
+    "뷰에 없는 것은 거부하라"고 지시받은 verify_pre에게 지목된 소자가
+    안 보이는 뷰를 주는 것이고, 그 거부 3회는 즉시 하드 FAIL이라
+    토폴로지 에스컬레이션과 남은 이터레이션을 전부 버린다. 점 없는 경로에
+    대해서는 순수 no-op이라 중첩이 없는 덱(벤치마크 열한 개 전부)에서는
+    출력이 바이트 단위로 같다."""
+    names = {_definition_name(path) for path in _with_ancestors(focus)}
     physical_lines = netlist_text.splitlines()
 
     # 논리 줄의 첫 물리 줄(앵커)에서만 판정하고, 나머지 물리 줄(`+` 연속)은
