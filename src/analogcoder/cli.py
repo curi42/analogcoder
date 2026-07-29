@@ -23,7 +23,7 @@ from analogcoder.checkpoint import (
     restore_state,
     write_checkpoint,
 )
-from analogcoder.corner_selection import grown_with, label, seed_from_sweep
+from analogcoder.corner_selection import grown_with, label, raw_label, seed_from_sweep
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.history import count_events, discarded_ranges, line_count, read_events
 from analogcoder.netlist import resolve_includes
@@ -85,27 +85,6 @@ def _no_drift() -> dict:
     }
 
 
-def _corner_label(raw: dict | None) -> str | None:
-    """worst_case_corners 항목 하나의 사람이 읽는 이름.
-
-    corner_selection.label과 **같은 문자열**을 내야 한다 - 두 이름이 갈리면
-    final_set과 argmax_drift를 나란히 놓고 읽을 수 없다.
-
-    `(deck)` 갈래는 **오늘 두 호출부(진입 스윕·판정 스윕) 중 어느 쪽에서도
-    도달하지 않는다** - run_full_pvt_sweep은 항상 실제 좌표를 적는다. 미래의
-    호출부(예: corner_sim의 corner_worst, 실측에서 (deck) 항목 4개를 담고 있는
-    것을 확인했다)를 위한 벽이며, 판별은 좌표의 **부재**로 한다(이름 매칭이
-    아니다). 조건은 corner_selection._as_point의 거부 조건과 **같은 방향**이어야
-    한다("둘 중 하나라도 없으면") - 한쪽은 `or`, 다른 쪽은 `and`로 두면 반쪽짜리
-    좌표에서 둘이 서로 다른 말을 한다. 저쪽은 거부하고 이쪽은 적기만 하는데,
-    argmax 계측은 순수한 기록이고 기록이 실행을 멈출 수는 없기 때문이다."""
-    if raw is None:
-        return None
-    if raw.get("voltage") is None or raw.get("temperature") is None:
-        return "(deck)"
-    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
-
-
 def _argmax_drift(entry_sweep: dict, verdict_sweep: dict) -> dict:
     """기준별 최악 코너가 진입 스윕과 판정 스윕 사이에서 움직였는가.
 
@@ -151,8 +130,8 @@ def _argmax_drift(entry_sweep: dict, verdict_sweep: dict) -> dict:
     for name in names:
         entry_raw = entry_wc.get(name)
         final_raw = final_wc.get(name)
-        entry_label = _corner_label(entry_raw)
-        final_label = _corner_label(final_raw)
+        entry_label = raw_label(entry_raw)
+        final_label = raw_label(final_raw)
 
         if entry_raw is None or final_raw is None:
             status = "unpaired"
@@ -578,7 +557,7 @@ async def _run(args) -> dict:
             {
                 "corners": [label(c) for c in corner_state.corner_set.corners],
                 "by_criterion": {
-                    name: _corner_label(raw)
+                    name: raw_label(raw)
                     for name, raw in baseline_sweep.get("worst_case_corners", {}).items()
                 },
                 "outside": len(corner_state.corner_set.probe_order),
@@ -924,7 +903,7 @@ async def _run(args) -> dict:
             # 여기서 두 사실이 갈린다. 실패한 기준에 **최악 코너가 붙어 있는가**로
             # 나뉘며, 둘을 한 문장으로 뭉개면 데이터가 뒷받침하지 않는 구조적
             # 주장을 하게 된다.
-            attributed = [(name, _corner_label(worst[name])) for name in failing_names if name in worst]
+            attributed = [(name, raw_label(worst[name])) for name in failing_names if name in worst]
             if attributed:
                 # **경로 불일치.** 실패한 코너가 전부 이미 중간 루프의 집합 안에
                 # 있다면, 두 실행 경로가 같은 덱의 같은 코너를 두고 서로 다른 말을

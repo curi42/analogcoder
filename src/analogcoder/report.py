@@ -1,5 +1,6 @@
 import os
 
+from analogcoder.corner_selection import raw_label
 from analogcoder.json_io import dump as json_dump
 
 
@@ -208,22 +209,6 @@ def _resume_lines(resumed_from: dict | None) -> list[str]:
     return lines
 
 
-def _corner_label(raw: dict | None) -> str | None:
-    """한 코너의 좌표를 사람이 읽는 한 줄로. `cli.py`의 같은 이름 함수와 **같은
-    판별**을 쓴다: 좌표의 **부재**로 `(deck)`을 가리며, 이름 매칭이 아니다
-    (`(deck)`은 코너를 통과시키지 않은 덱 자신이고 `tt/27`은 진짜 코너다).
-
-    `run_full_pvt_sweep`은 항상 실제 좌표를 적으므로 `(deck)` 갈래는 오늘 이
-    호출부에서 도달하지 않는다. `corner_sim`의 `corner_worst`가 이리로 흘러드는
-    날의 벽이다.
-    """
-    if raw is None:
-        return None
-    if raw.get("voltage") is None or raw.get("temperature") is None:
-        return "(deck)"
-    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
-
-
 def _pvt_lines(sweep: dict | None) -> list[str]:
     """**판정을 내리는** PVT 스윕. 키가 없으면 빈 목록(스윕이 안 돈 실행).
 
@@ -267,7 +252,7 @@ def _pvt_lines(sweep: dict | None) -> list[str]:
     for c in sweep.get("criteria", []):
         mark = "PASS" if c["pass"] else "FAIL"
         entry = worst.get(c["name"])
-        label = _corner_label(entry)
+        label = raw_label(entry)
         if label is None:
             # worst_case_measurements가 항목 자체를 안 만든 경우: 그
             # measurement가 **어느 코너에도** 나타나지 않았다.

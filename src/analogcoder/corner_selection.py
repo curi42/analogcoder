@@ -54,6 +54,36 @@ def label(point: CornerPoint | None) -> str:
     return f"{point.process}/{point.voltage}/{point.temperature}"
 
 
+def raw_label(raw: dict | None) -> str | None:
+    """`worst_case_corners` 항목 **하나**(원시 dict)의 사람이 읽는 이름.
+
+    `label`의 dict 판이며, 좌표를 이미 갖고 있는 `CornerPoint`가 아니라
+    산출물에서 되읽은 dict를 받는다. 세 갈래가 서로 다른 사실이다:
+
+    - `None` — 그 기준에 최악 코너 항목이 **없다**
+    - `"(deck)"` — 항목은 있는데 **좌표가 없다**(`pvt._corner_fields`가
+      렌더링을 거치지 않은 덱에 적는 모양)
+    - `p/v/t` — 진짜 코너
+
+    **판별은 좌표의 부재로 한다. 이름 매칭이 아니다** — `_as_point`의 거부
+    조건과 같은 방향("둘 중 하나라도 없으면")이어야 하고, 한쪽은 `or` 다른
+    쪽은 `and`로 두면 반쪽짜리 좌표에서 둘이 서로 다른 말을 한다. 반응은
+    반대다: 저쪽은 거부하고 이쪽은 적기만 하는데, argmax 계측은 순수한
+    기록이고 기록이 실행을 멈출 수는 없기 때문이다.
+
+    **여기 사는 이유**: `cli.py`와 `report.py`가 이 함수를 각자 복사해
+    갖고 있었고 두 독스트링 모두 "다른 쪽과 같은 문자열을 내야 한다"고
+    **주장만** 했다. 강제하는 것은 없었고, `report.py`의 사본에는 테스트가
+    하나도 없었다. `label`·`_as_point`와 같은 파일에 두면 좌표 부재의
+    판별이 한 곳에 모인다.
+    """
+    if raw is None:
+        return None
+    if raw.get("voltage") is None or raw.get("temperature") is None:
+        return "(deck)"
+    return f"{raw['process']}/{raw['voltage']}/{raw['temperature']}"
+
+
 def _as_point(raw: dict) -> CornerPoint:
     """worst_case_corners/per_corner 항목 하나를 코너로 읽는다.
 

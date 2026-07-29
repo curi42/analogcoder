@@ -5,13 +5,15 @@ import pytest
 from analogcoder.corner_selection import (
     NOMINAL,
     CornerSet,
+    _as_point,
     grown_with,
     label,
     next_probe,
     promote,
+    raw_label,
     seed_from_sweep,
 )
-from analogcoder.pvt import CornerPoint
+from analogcoder.pvt import CornerPoint, _corner_fields
 from analogcoder.spec import PVTCorners
 
 FS = CornerPoint(process="fs", voltage=1.98, temperature=125.0)
@@ -237,3 +239,44 @@ def test_a_deck_entry_is_rejected_rather_than_turned_into_a_corner(_spec):
     cs = CornerSet(corners=(NOMINAL, FS), probe_order=())
     with pytest.raises(ValueError, match=r"\(deck\)"):
         grown_with(cs, _sweep({"gain": deck_entry}), ["gain"])
+
+
+# ------------------------------------------------- 원시 dict의 코너 이름
+
+
+def test_a_raw_corner_entry_gets_the_same_name_as_the_point_it_describes():
+    """`raw_label`과 `label`이 갈리면 `final_set`과 `argmax_drift`를 나란히
+    놓고 읽을 수 없다. 그 일치는 두 곳의 독스트링이 **주장만** 하고 아무것도
+    강제하지 않던 것이다 - `cli.py`와 `report.py`가 같은 함수를 각자 복사해
+    갖고 있었고, `report.py`의 사본에는 테스트가 하나도 없었다."""
+    for point in (FS, SF, SS, CornerPoint(process="tt", voltage=1.8, temperature=27.0)):
+        assert raw_label(_corner_fields(point)) == label(point)
+
+
+def test_a_raw_entry_with_no_coordinates_is_named_but_never_a_corner(_spec):
+    """같은 판별을 두 함수가 **반대 방향으로** 쓴다. `_as_point`는 거부하고
+    `raw_label`은 이름만 적는다 - 계측은 순수한 기록이고 기록이 실행을 멈출
+    수는 없기 때문이다. 갈라지면 안 되는 것은 판별이지 반응이 아니다."""
+    deck = _corner_fields(NOMINAL)
+
+    assert raw_label(deck) == label(NOMINAL) == "(deck)"
+    with pytest.raises(ValueError, match=r"\(deck\)"):
+        seed_from_sweep(_sweep({"gain": dict(deck, value=41.0)}), _spec)
+
+
+def test_a_half_coordinate_entry_takes_the_same_branch_in_both():
+    """조건이 한쪽은 `or`, 다른 쪽은 `and`이면 반쪽짜리 좌표에서 둘이 서로
+    다른 말을 한다. 오늘 이 모양을 만드는 호출부는 없다 - 미래의 벽이다."""
+    for half in (
+        {"process": "ss", "voltage": 1.62, "temperature": None},
+        {"process": "ss", "voltage": None, "temperature": 125.0},
+    ):
+        assert raw_label(half) == "(deck)"
+        with pytest.raises(ValueError):
+            _as_point(half)
+
+
+def test_no_entry_at_all_is_no_name_at_all():
+    """`None`은 "그 기준에 최악 코너 항목이 없다"이고 `(deck)`은 "항목은
+    있는데 좌표가 없다"다. 서로 다른 사실이다."""
+    assert raw_label(None) is None

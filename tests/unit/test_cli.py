@@ -1729,14 +1729,14 @@ def test_a_coordinate_less_entry_is_labelled_as_the_deck():
     # 둘 중 하나라도 없으면 그것은 코너가 아니다. 한쪽만 `and`로 두면 반쪽짜리
     # 항목에서 저쪽은 거부하고 이쪽은 "ss/1.62/None"이라는 있지도 않은 코너
     # 이름을 적는다.
-    assert cli._corner_label(None) is None
-    assert cli._corner_label(
+    assert cli.raw_label(None) is None
+    assert cli.raw_label(
         {"process": "(deck)", "voltage": None, "temperature": None, "value": 1.2}
     ) == "(deck)"
-    assert cli._corner_label(
+    assert cli.raw_label(
         {"process": "ss", "voltage": 1.62, "temperature": None, "value": 1.2}
     ) == "(deck)"
-    assert cli._corner_label(
+    assert cli.raw_label(
         {"process": "ss", "voltage": 1.62, "temperature": -40.0, "value": 1.2}
     ) == "ss/1.62/-40.0"
 
