@@ -20,7 +20,7 @@ def make_spec(*testbench_names):
     # spec.circuit_name)와 measurement_nets(tb.control_block)를 직접 호출하므로
     # 가짜 spec도 이 필드들을 갖춰야 한다.
     testbenches = [
-        SimpleNamespace(name=n, criteria=[], control_block=".control\n.endc\n")
+        SimpleNamespace(name=n, criteria=[], control_block=".control\n.endc\n", fragments=None)
         for n in testbench_names
     ]
     return SimpleNamespace(
@@ -1576,7 +1576,7 @@ GAIN_CONTROL_BLOCK = ".control\nac dec 10 1 1meg\nmeas ac gain_db find vdb(vout)
 
 def _two_subckt_spec():
     gain_criterion = SimpleNamespace(name="gain", measurement="gain_db", operator=">=", threshold=19.5)
-    tb = SimpleNamespace(name="ac_loop_gain", criteria=[gain_criterion], control_block=GAIN_CONTROL_BLOCK)
+    tb = SimpleNamespace(name="ac_loop_gain", criteria=[gain_criterion], control_block=GAIN_CONTROL_BLOCK, fragments=None)
     return SimpleNamespace(circuit_name="two_subckt", testbenches=[tb], canonical=tb)
 
 
@@ -1617,12 +1617,12 @@ async def test_two_testbenches_defining_the_same_measurement_name_do_not_collaps
         name="ac_loop_gain",
         criteria=[gain],
         control_block=".control\nmeas ac gain_db find vdb(vout) at=1k\n.endc\n",
-    )
+        fragments=None)
     tb_ref = SimpleNamespace(
         name="psr",
         criteria=[],
         control_block=".control\nmeas ac gain_db find vdb(iref) at=1k\n.endc\n",
-    )
+        fragments=None)
     spec = SimpleNamespace(
         circuit_name="two_subckt", testbenches=[tb_out, tb_ref], canonical=tb_out
     )
@@ -1895,7 +1895,7 @@ FOCUS_TEST_SPEC = SimpleNamespace(
             control_block=".control\nmeas ac gain find v(vother)\n.endc\n",
         )
     ],
-)
+        fragments=None)
 FOCUS_TEST_SPEC.canonical = FOCUS_TEST_SPEC.testbenches[0]
 
 

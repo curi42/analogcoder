@@ -183,7 +183,7 @@ def _trimamp_own_loop_slot() -> tuple[Slot, dict[str, str]]:
         analyses=real_tb.analyses,
         control_block=augmented_control_block,
         criteria=trim_criteria,
-    )
+        fragments=None)
     scoped_spec = SimpleNamespace(
         testbenches=[tb],
         all_criteria=trim_criteria,

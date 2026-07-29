@@ -72,13 +72,13 @@ def _spec_two_testbenches():
         netlist_path="/benchmarks/x/netlist.cir",
         control_block=SPEC_CONTROL_BLOCK,
         criteria=[Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)],
-    )
+        fragments=None)
     tb2 = types.SimpleNamespace(
         name="tb2",
         netlist_path="/benchmarks/x/netlist_psr.cir",
         control_block=".ac dec 10 1 1meg",
         criteria=[Criterion(name="psr", measurement="h", operator=">=", threshold=10.0)],
-    )
+        fragments=None)
     return types.SimpleNamespace(
         circuit_name="x",
         testbenches=[tb1, tb2],
@@ -101,7 +101,7 @@ def _spec_ge_40(criteria=None, corner_reduction=None):
         netlist_path="/benchmarks/x/netlist.cir",
         control_block=SPEC_CONTROL_BLOCK,
         criteria=list(criteria),
-    )
+        fragments=None)
     return types.SimpleNamespace(
         circuit_name="x",
         testbenches=[tb],
@@ -215,6 +215,9 @@ async def test_the_mid_loop_records_which_corner_rewrites_reached_the_deck(tmp_p
     assert len(renders) == 1
     assert renders[0] == {
         "testbench": "tb",
+        # 어느 경로가 이 덱을 만들었는지. 조합 경로의 `states`는 모양이 다르므로,
+        # 이 칸이 없으면 두 모양을 같은 어휘로 읽게 된다.
+        "mode": "rewrite",
         "states": {
             "process_include": "applied",
             "temperature": "applied",

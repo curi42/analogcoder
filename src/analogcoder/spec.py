@@ -120,6 +120,14 @@ class PVTCorners:
     process: list[str] = field(default_factory=list)
     voltage: list[float] = field(default_factory=list)
     temperature: list[float] = field(default_factory=list)
+    nominal: str | None = None
+    """조합형 테스트벤치에서 "임계값이 정해진 그 덱"이 어느 코너인지.
+
+    단일 파일 경로에는 이런 것이 없고 있어서도 안 된다 - 거기서 nominal은
+    렌더링을 거치지 않은 **덱 그 자체**이고, `tt/27`은 실제 코너일 뿐
+    nominal이 아니다. 조합 모델에는 그 "덱 그 자체"가 존재하지 않는다:
+    코너가 입력이므로 코너를 고르기 전에는 덱이 없다. 그래서 **사람이
+    선언**해야 한다 - 이름이나 순서에서 알아내면 그것이 금지된 추측이다."""
 
     def __post_init__(self):
         """축만 주고 만들면 **여기서 한 번** 전개된다 - 곱은 생성 시점의
@@ -161,6 +169,21 @@ class CornerReduction:
     probe: bool = True
 
 
+@dataclass(frozen=True)
+class FragmentRef:
+    """조합 덱을 이루는 조각 하나의 **선언**.
+
+    `kind`는 `"file"`(절대경로) 또는 `"corner_slot"`(코너가 채워지는 자리).
+    `tunable`은 이 조각이 튜너가 고치고 버전으로 남는 조각이라는 뜻이고,
+    조합형 테스트벤치에 정확히 하나 있어야 한다 - 그것이
+    `Testbench.netlist_path`가 되므로 `RunState`·체크포인트·`resolve_includes`
+    소비자가 전부 오늘 그대로 동작한다."""
+
+    kind: str
+    path: str | None = None
+    tunable: bool = False
+
+
 @dataclass
 class Testbench:
     name: str
@@ -168,6 +191,19 @@ class Testbench:
     analyses: list[str]
     control_block: str
     criteria: list[Criterion]
+    fragments: tuple[FragmentRef, ...] | None = None
+    """`None`이면 오늘의 단일 파일 테스트벤치 - 그 경로는 한 글자도 바뀌지
+    않는다. 조합형이면 조각 선언 목록이고, 덱은 시뮬레이션 **직전에**
+    `compose.deck_for`가 만든다."""
+
+    @property
+    def corner_slot_index(self) -> int | None:
+        if self.fragments is None:
+            return None
+        for index, ref in enumerate(self.fragments):
+            if ref.kind == "corner_slot":
+                return index
+        return None
 
 
 @dataclass
@@ -185,6 +221,19 @@ class TargetSpec:
     @property
     def all_criteria(self) -> list[Criterion]:
         return [c for tb in self.testbenches for c in tb.criteria]
+
+    def nominal_corner(self) -> CornerPoint | None:
+        """조합형 테스트벤치의 "임계값이 정해진 그 덱"에 해당하는 코너.
+
+        선언이 없으면 `None`이고, 그때 조합 경로는 nominal 덱을 만들 수 없다고
+        **시끄럽게** 실패한다 - 아무 코너나 골라 nominal이라고 부르는 것이
+        이 저장소가 금지한 추측이다."""
+        if self.pvt_corners is None or self.pvt_corners.nominal is None:
+            return None
+        for corner in self.pvt_corners.corners:
+            if corner.corner_id == self.pvt_corners.nominal:
+                return corner
+        return None
 
 
 def _load_criteria(raw_criteria: list[dict]) -> list[Criterion]:
@@ -236,7 +285,7 @@ def _axis(raw_pvt: dict, key: str) -> list:
     return value
 
 
-def _load_pvt_corners(raw: dict) -> PVTCorners | None:
+def _load_pvt_corners(raw: dict, spec_dir: str) -> PVTCorners | None:
     raw_pvt = raw.get("pvt_corners")
     if raw_pvt is None:
         return None
@@ -255,7 +304,17 @@ def _load_pvt_corners(raw: dict) -> PVTCorners | None:
                 f"pvt_corners declares both an explicit 'corners' list and the axis "
                 f"key(s) {axes_present} - declare one or the other, never both"
             )
-        return _explicit_corners(raw_pvt["corners"])
+        return _explicit_corners(raw_pvt["corners"], raw_pvt.get("nominal"), spec_dir)
+
+    if "nominal" in raw_pvt:
+        # 축 선언 경로에서 nominal은 **덱 그 자체**이고 코너가 아니다. 여기서
+        # 코너 하나를 nominal이라 부르게 두면 `tt/27`이 nominal로 둔갑하는,
+        # `corner_selection.NOMINAL`이 존재하는 바로 그 이유가 무너진다.
+        raise ValueError(
+            "pvt_corners.nominal only applies to a composed testbench's corner slot, "
+            "where the deck does not exist until a corner is chosen. On the axis-declared "
+            "path nominal is the unrendered deck itself, not any corner"
+        )
 
     process = _axis(raw_pvt, "process")
     for entry in process:
@@ -288,7 +347,38 @@ def _load_pvt_corners(raw: dict) -> PVTCorners | None:
     )
 
 
-def _explicit_corners(raw_corners) -> PVTCorners:
+_AXIS_KEYS = ("process", "voltage", "temperature")
+
+
+def _label_corner(index: int, entry: dict, spec_dir: str) -> CornerPoint:
+    """라벨로 선언된 서명 코너 하나. `id` + `include`.
+
+    **`include`가 가리키는 파일의 내용은 읽지 않는다.** 코너 파일은
+    불투명하고, 안을 들여다보고 축을 해석하는 것은 파일명에서 뜻을 읽는 것과
+    같은 부류의 추측이다. 조합 덱의 코너 슬롯에 들어가는 것은 이 절대경로를
+    가리키는 `.include` 한 줄뿐이다."""
+    mixed = [key for key in _AXIS_KEYS if key in entry]
+    if mixed:
+        raise ValueError(
+            f"pvt_corners.corners[{index}] declares both an id and the axis key(s) "
+            f"{mixed}: a corner is either a label whose file realises it, or a point in "
+            f"an axis grid - which one wins would have to be guessed"
+        )
+    if not isinstance(entry["id"], str) or not entry["id"]:
+        raise ValueError(f"pvt_corners.corners[{index}].id must be a non-empty string")
+    include = entry.get("include")
+    if not isinstance(include, str) or not include:
+        raise ValueError(
+            f"pvt_corners.corners[{index}] has no 'include': a label with no file behind "
+            f"it cannot be realised, and a corner slot filled with nothing would run some "
+            f"other corner's deck under this corner's name"
+        )
+    return CornerPoint(
+        corner_id=entry["id"], payload=os.path.join(spec_dir, include)
+    )
+
+
+def _explicit_corners(raw_corners, nominal, spec_dir: str) -> PVTCorners:
     """사람이 고른 서명 코너 목록. 축 선언으로는 표현할 수 없는 부분 격자다.
 
     `process`/`voltage`/`temperature`는 **비워 둔다**. 열거에서 축을 역산해
@@ -312,6 +402,9 @@ def _explicit_corners(raw_corners) -> PVTCorners:
                 f"pvt_corners.corners[{index}] must be a mapping with process/voltage/"
                 f"temperature, not {type(entry).__name__}: {entry!r}"
             )
+        if "id" in entry:
+            points.append(_label_corner(index, entry, spec_dir))
+            continue
         for key in ("process", "voltage", "temperature"):
             if key not in entry:
                 # 빠진 좌표를 기본값으로 채우면 N개 코너가 조용히 같은 조건을
@@ -340,15 +433,23 @@ def _explicit_corners(raw_corners) -> PVTCorners:
 
     # `CornerSet`이 중복을 불변식으로 거부하므로, 통과시키면 나중에 진단이
     # `ValueError`로 바뀌어 사유가 흐려진다. 선언 자리에서 거부한다.
-    seen: set[CornerPoint] = set()
+    # **정체성으로 본다.** 라벨 모델에서 `corner_sig01`/`Corner1001`/`" corner_sig01"`
+    # 은 필드 기반 중복 검사가 구별하지 못하는 서로 다른 세 코너이고, 정규화
+    # (strip, 대소문자)는 코드가 추측하면 안 된다. 그래서 선언 자리가 방어선이다.
+    seen: set[str] = set()
     for point in points:
-        if point in seen:
+        if point.corner_id in seen:
             raise ValueError(
-                f"pvt_corners.corners has a duplicate corner: "
-                f"{point.process}/{point.voltage}/{point.temperature}"
+                f"pvt_corners.corners has a duplicate corner: {point.corner_id}"
             )
-        seen.add(point)
-    return PVTCorners(corners=points)
+        seen.add(point.corner_id)
+
+    if nominal is not None and not any(p.corner_id == nominal for p in points):
+        raise ValueError(
+            f"pvt_corners.nominal is {nominal!r}, which names no declared corner: "
+            f"{[p.corner_id for p in points]}"
+        )
+    return PVTCorners(corners=points, nominal=nominal)
 
 
 def _load_optimize(raw: dict) -> OptimizeSpec | None:
@@ -441,21 +542,144 @@ def _reject_name_collisions(testbenches: list[Testbench]) -> None:
                 )
 
 
+def _load_fragments(tb: dict, spec_dir: str) -> tuple[tuple[FragmentRef, ...], str]:
+    """조합형 테스트벤치의 조각 선언과, 그중 **버전으로 남는** 조각의 경로.
+
+    분석 3이 정한 버전 관리 경계가 여기 있다: 조각만 버전으로 남기고 조합은
+    시뮬레이션 직전에 한다. 튜너가 고치는 조각을 `netlist_path`로 돌려주므로
+    `RunState`·`checkpoint`·`resolve_includes`의 소비자가 전부 오늘 그대로
+    동작한다."""
+    raw_fragments = tb["compose"]
+    if not isinstance(raw_fragments, list) or not raw_fragments:
+        raise ValueError(
+            f"testbench {tb['name']!r}: compose must be a non-empty list of fragments"
+        )
+
+    refs: list[FragmentRef] = []
+    for index, entry in enumerate(raw_fragments):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"testbench {tb['name']!r}: compose[{index}] must be a mapping "
+                f"({{file: ...}} or {{corner_slot: true}}), not {entry!r}"
+            )
+        if entry.get("corner_slot"):
+            if "file" in entry:
+                raise ValueError(
+                    f"testbench {tb['name']!r}: compose[{index}] is both a file and the "
+                    f"corner_slot"
+                )
+            refs.append(FragmentRef(kind="corner_slot"))
+            continue
+        if "file" not in entry:
+            raise ValueError(
+                f"testbench {tb['name']!r}: compose[{index}] has neither 'file' nor "
+                f"'corner_slot': {entry!r}"
+            )
+        refs.append(
+            FragmentRef(
+                kind="file",
+                path=os.path.join(spec_dir, entry["file"]),
+                tunable=bool(entry.get("tunable", False)),
+            )
+        )
+
+    tunable = [ref for ref in refs if ref.tunable]
+    if len(tunable) != 1:
+        raise ValueError(
+            f"testbench {tb['name']!r}: exactly one composed fragment must be marked "
+            f"tunable (found {len(tunable)}) - that fragment is the one the tuner edits "
+            f"and the one the run versions, so with none there is nothing to tune and "
+            f"with two the version stack would have to guess which"
+        )
+    slots = [ref for ref in refs if ref.kind == "corner_slot"]
+    if len(slots) > 1:
+        raise ValueError(
+            f"testbench {tb['name']!r}: more than one corner_slot ({len(slots)}) - the "
+            f"same corner file pulled in twice is a duplicate-directive collision, which "
+            f"ngspice reports (if at all) only as a redefinition warning nobody reads"
+        )
+    return tuple(refs), tunable[0].path
+
+
+def _load_testbench(tb: dict, spec_dir: str) -> Testbench:
+    has_compose = "compose" in tb
+    has_netlist = "netlist" in tb
+    if has_compose and has_netlist:
+        # 어느 쪽이 이기는지 **추측해야** 한다. 축 선언과 명시 코너 목록이
+        # 함께 있을 때와 같은 규율.
+        raise ValueError(
+            f"testbench {tb['name']!r} declares both 'netlist' and 'compose' - declare "
+            f"one or the other, never both"
+        )
+    if not has_compose and not has_netlist:
+        raise ValueError(f"testbench {tb['name']!r} declares neither 'netlist' nor 'compose'")
+
+    fragments = None
+    if has_compose:
+        fragments, netlist_path = _load_fragments(tb, spec_dir)
+    else:
+        netlist_path = os.path.join(spec_dir, tb["netlist"])
+
+    return Testbench(
+        name=tb["name"],
+        netlist_path=netlist_path,
+        analyses=tb["analyses"],
+        control_block=tb["control_block"],
+        criteria=_load_criteria(tb["criteria"]),
+        fragments=fragments,
+    )
+
+
+def _reject_unrealisable_corners(testbenches: list[Testbench], pvt: PVTCorners | None) -> None:
+    """조합형 테스트벤치와 선언된 코너가 서로 실현 가능한지.
+
+    셋 다 같은 실패 모양을 막는다: **N개 코너가 전부 같은 조건을 돌면서
+    코너별 값으로 보고되는 것.** `netlist_startup.cir`의 45코너가 실은 15조건이던
+    사고와 같은 계열이고, 그때 아무 로그도 다르지 않았다."""
+    composed = [tb for tb in testbenches if tb.fragments is not None]
+    if not composed:
+        return
+    slotted = [tb for tb in composed if tb.corner_slot_index is not None]
+
+    if pvt is not None:
+        without = [tb.name for tb in composed if tb.corner_slot_index is None]
+        if without:
+            raise ValueError(
+                f"composed testbench(es) {without} have no corner_slot while the spec "
+                f"declares pvt_corners: every corner would run the same deck and be "
+                f"reported under its own name"
+            )
+
+    if not slotted:
+        return
+    if pvt is None:
+        raise ValueError(
+            f"composed testbench(es) {[tb.name for tb in slotted]} declare a corner_slot "
+            f"but the spec declares no pvt_corners: there is nothing to fill the slot with"
+        )
+    missing = [c.corner_id for c in pvt.corners if c.payload is None]
+    if missing:
+        raise ValueError(
+            f"corner(s) {missing} carry no payload to fill a corner_slot with. A corner "
+            f"reaching a composed deck has to name the file that realises it"
+        )
+    if pvt.nominal is None:
+        raise ValueError(
+            f"composed testbench(es) {[tb.name for tb in slotted]} declare a corner_slot, "
+            f"so pvt_corners.nominal must name the corner the thresholds were set at. "
+            f"There is no unrendered deck in the composed model - the deck does not exist "
+            f"until a corner is chosen - and picking one by name or position is a guess"
+        )
+
+
 def load_spec(path: str) -> TargetSpec:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
     spec_dir = os.path.dirname(os.path.abspath(path))
-    testbenches = [
-        Testbench(
-            name=tb["name"],
-            netlist_path=os.path.join(spec_dir, tb["netlist"]),
-            analyses=tb["analyses"],
-            control_block=tb["control_block"],
-            criteria=_load_criteria(tb["criteria"]),
-        )
-        for tb in raw["testbenches"]
-    ]
+    testbenches = [_load_testbench(tb, spec_dir) for tb in raw["testbenches"]]
     _reject_name_collisions(testbenches)
+    pvt_corners = _load_pvt_corners(raw, spec_dir)
+    _reject_unrealisable_corners(testbenches, pvt_corners)
 
-    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=_load_pvt_corners(raw), optimize=_load_optimize(raw), corner_reduction=_load_corner_reduction(raw))
+    return TargetSpec(circuit_name=raw["circuit_name"], testbenches=testbenches, pvt_corners=pvt_corners, optimize=_load_optimize(raw), corner_reduction=_load_corner_reduction(raw))

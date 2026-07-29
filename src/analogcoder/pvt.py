@@ -48,6 +48,11 @@ class CornerRender:
 
     text: str
     states: dict
+    mode: str = "rewrite"
+    """어느 경로가 이 덱을 만들었는지. `"rewrite"`는 단일 파일 덱을 정규식
+    셋으로 고쳐 쓴 오늘의 경로, `"composed"`는 조각을 이어 붙이고 코너 슬롯을
+    채운 경로다. `states`의 모양이 둘 사이에 다르므로, 이 칸이 없으면
+    history.jsonl을 읽는 사람이 두 모양을 같은 어휘로 읽는다."""
 
 
 _SUPPLY_LINE = re.compile(r"^Vdd\s")
@@ -216,6 +221,31 @@ def render_corner_netlist(
     return render_corner_report(
         netlist_text, process, voltage, temperature, benchmark_dir
     ).text
+
+
+def deck_for_corner(tb, netlist_text: str, corner, benchmark_dir: str, nominal=None) -> CornerRender:
+    """이 테스트벤치의 덱을, 이 코너에 대해. **두 경로가 여기서 하나로 만난다.**
+
+    - 조합형 테스트벤치(`tb.fragments`)는 `compose.deck_for`로 간다: 정규식이
+      하나도 없고, 코너는 슬롯에 채워지는 조각이다.
+    - 단일 파일 테스트벤치는 오늘의 `render_corner_report` 그대로다 - 벤치마크
+      11개 덱이 쓰는 경로이고 한 글자도 바뀌지 않는다.
+
+    돌려주는 것이 양쪽 다 `CornerRender`인 이유는 호출부가 `corner_render`
+    사건을 **테스트벤치마다 한 번, 무조건** 적기 때문이다. 두 경로가 서로 다른
+    타입을 내면 그 기록이 한쪽에서만 남는다."""
+    if tb.fragments is None:
+        return render_corner_report(
+            netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
+        )
+    from analogcoder.compose import deck_for  # 순환 import 회피: compose는 netlist만 안다
+
+    composed = deck_for(tb, netlist_text, corner, nominal=nominal)
+    return CornerRender(
+        text=composed.text,
+        states={**composed.records, "shared_nets": len(composed.report["shared_nets"])},
+        mode="composed",
+    )
 
 
 def all_corners(pvt: PVTCorners) -> list[CornerPoint]:
@@ -432,15 +462,16 @@ def run_full_pvt_sweep(
     for tb in spec.testbenches:
         netlist_text = netlist_texts[tb.name]
         for index, corner in enumerate(corners):
-            render = render_corner_report(
-                netlist_text, corner.process, corner.voltage, corner.temperature, benchmark_dir
-            )
+            render = deck_for_corner(tb, netlist_text, corner, benchmark_dir)
             # **테스트벤치마다 한 번, 그리고 무조건 적는다.** 상태는 덱의 성질이지
             # 코너의 성질이 아니므로 코너마다 적으면 45배의 같은 줄이 되고, 실패
             # 시에만 적으면 "확인했고 멀쩡했다"와 "검사가 사라졌다"가 구별되지
             # 않는다 - optimize_guard_infeasible이 이미 치른 값이다.
             if index == 0 and log_event is not None:
-                log_event("corner_render", {"testbench": tb.name, "states": render.states})
+                log_event(
+                    "corner_render",
+                    {"testbench": tb.name, "mode": render.mode, "states": render.states},
+                )
             points.append(((tb.name, index), (render.text, tb.control_block)))
 
     raw_results = map_points(

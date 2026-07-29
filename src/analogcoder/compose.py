@@ -42,9 +42,9 @@ ngspice-46으로 재현한 실패에서 나왔다(2026-07-29):
 
 import os
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from analogcoder.netlist import logical_lines, parse_netlist, split_tokens
+from analogcoder.netlist import logical_lines, parse_netlist, resolve_includes, split_tokens
 
 
 class ComposeError(ValueError):
@@ -331,3 +331,70 @@ def compose(fragments, *, title: str) -> ComposedDeck:
         "top_level_contributions": contributions,
     }
     return ComposedDeck(text=text, records=records, report=report)
+
+
+def deck_for(tb, netlist_text: str, corner, *, nominal=None) -> ComposedDeck:
+    """조합형 테스트벤치 하나의 덱을, 이 코너에 대해.
+
+    **여기에는 정규식이 하나도 없다.** 코너는 슬롯에 **채워지는** 조각이지
+    텍스트에서 찾아 고쳐 쓰는 것이 아니다. 오늘의 단일 파일 경로가 쓰는
+    `pvt.render_corner_report`의 재작성 세 개 - include 교체, `.temp` 주입,
+    `^Vdd` 전압 치환 - 는 이 경로에 존재하지 않는다: 코너 파일이 자기 안에서
+    모델·온도·공급 전압을 정하고, 우리는 그 파일을 가리키는 `.include` 한
+    줄을 자리에 넣을 뿐이다. 그 줄이 **셋**이고(`records`), 그래서 0건 매치가
+    조용히 지나갈 자리가 없다.
+
+    **코너 파일의 내용은 읽지 않는다.** 불투명한 파일이고, 안을 들여다보고
+    축을 해석하는 것은 파일명에서 뜻을 읽는 것과 같은 부류의 추측이다.
+
+    조각의 출처가 둘로 갈리는 것이 버전 관리 경계다: tunable 조각의 텍스트는
+    **호출자가 주는 것**(버전 스택이 들고 있는 것)이고, 나머지는 디스크에서
+    각자 자기 디렉터리 기준으로 `resolve_includes`를 거쳐 읽는다 -
+    `benchmark_dir`처럼 canonical 하나의 디렉터리를 모든 조각에 쓰면 조각이
+    여러 디렉터리에 있을 때 그 유도가 성립하지 않는다.
+
+    `corner`가 `None`이면 nominal - 조합 모델에는 "렌더링을 거치지 않은 덱"이
+    없으므로, 그 자리는 스펙이 **선언한** nominal 코너가 채운다."""
+    if tb.fragments is None:
+        raise ComposeError(f"testbench {tb.name!r} is not composed")
+
+    point = corner if corner is not None else nominal
+    fragments: list[Fragment] = []
+    slot_filled = 0
+    for index, ref in enumerate(tb.fragments):
+        if ref.kind == "corner_slot":
+            if point is None:
+                raise ComposeError(
+                    f"testbench {tb.name!r} has a corner_slot but no corner to fill it "
+                    f"with (and no declared nominal corner): composing without it would "
+                    f"run this point on whatever the other fragments happen to set"
+                )
+            if point.payload is None:
+                raise ComposeError(
+                    f"corner {point.corner_id!r} carries no payload, so the corner_slot of "
+                    f"testbench {tb.name!r} cannot be filled: skipping it silently would "
+                    f"run this corner on another corner's deck under this corner's name"
+                )
+            fragments.append(
+                Fragment(name="<corner>", text=f'.include "{point.payload}"\n')
+            )
+            slot_filled += 1
+            continue
+        if ref.tunable:
+            fragments.append(Fragment(name=f"{index}:{ref.path}", text=netlist_text))
+            continue
+        with open(ref.path) as f:
+            text = f.read()
+        fragments.append(
+            Fragment(name=f"{index}:{ref.path}", text=resolve_includes(text, os.path.dirname(ref.path)))
+        )
+
+    deck = compose(fragments, title=f"{tb.name} (composed)")
+    return replace(
+        deck,
+        records={
+            **deck.records,
+            "corner_slot_filled": slot_filled,
+            "corner": point.corner_id if point is not None else None,
+        },
+    )

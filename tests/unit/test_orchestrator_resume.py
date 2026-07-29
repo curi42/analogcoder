@@ -26,7 +26,7 @@ TB = "ac_loop_gain"
 SPEC = SimpleNamespace(
     circuit_name="fake",
     testbenches=[SimpleNamespace(name=TB, criteria=[], control_block=".control\n.endc\n")],
-)
+        fragments=None)
 SPEC.canonical = SPEC.testbenches[0]
 
 PASS_AT = 14

@@ -442,8 +442,8 @@ def test_full_sweep_verdict_fails_the_low_side_of_a_two_sided_window():
         Criterion(name="vbgout_max", measurement="vbgout_v", operator="<=", threshold=1.28),
     ]
     tb = SimpleNamespace(
-        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria
-    )
+        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria,
+        fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         canonical=tb,
@@ -477,8 +477,8 @@ def test_the_sweep_logs_which_corner_rewrites_applied_per_testbench():
 
     criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
     tb = SimpleNamespace(
-        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria
-    )
+        name="dc", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria,
+        fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         canonical=tb,
@@ -591,7 +591,7 @@ def test_the_sweep_exposes_every_corner_s_own_measurements(tmp_path):
     from analogcoder.pvt import run_full_pvt_sweep
 
     criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
-    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria)
+    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria, fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         canonical=tb,
@@ -617,7 +617,7 @@ def test_each_corner_entry_carries_its_own_severity(tmp_path):
     from analogcoder.pvt import run_full_pvt_sweep
 
     criteria = [Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)]
-    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria)
+    tb = SimpleNamespace(name="tb", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=criteria, fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb],
         canonical=tb,
@@ -648,11 +648,11 @@ def test_per_corner_measurements_merge_across_testbenches(tmp_path):
     gain_criterion = Criterion(name="gain", measurement="g", operator=">=", threshold=40.0)
     iq_criterion = Criterion(name="iq", measurement="i", operator="<=", threshold=300.0)
     tb1 = SimpleNamespace(
-        name="tb1", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[gain_criterion]
-    )
+        name="tb1", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[gain_criterion],
+        fragments=None)
     tb2 = SimpleNamespace(
-        name="tb2", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[iq_criterion]
-    )
+        name="tb2", netlist_path="/tmp/x.cir", control_block=".control\nop\n.endc", criteria=[iq_criterion],
+        fragments=None)
     spec = SimpleNamespace(
         testbenches=[tb1, tb2],
         canonical=tb1,
