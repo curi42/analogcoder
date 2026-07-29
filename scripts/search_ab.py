@@ -322,10 +322,13 @@ def run_side(
     record = {
         "side": side,
         "strategy": strategy_name,
-        "corner_regime": (
-            "argmax" if corner_regime is None
-            else f"coverage:{corner_regime.epsilon}:{corner_regime.tau}"
-        ),
+        # M9(T19): 이 지점에서 `corner_regime`은 **항상 None**이다 - 위 가드가
+        # 그 외의 모든 값을 함수 진입 시점에 거부하고 함수를 빠져나가므로,
+        # `else` 분기는 도달 불가능한 코드였다. 죽은 분기가 "이 하니스가
+        # coverage 체제를 기록할 수 있다"고 광고하는 것 자체가 #11과 같은
+        # 종류의 거짓이라, 상수로 정리한다 - 반영하려면 위 가드부터 고쳐야
+        # 한다(가드가 지나갈 때만 `corner_regime`이 None 아닌 값일 수 있다).
+        "corner_regime": "argmax",
         "spec": os.path.relpath(args.spec, os.getcwd()),
         "knob_ranking": ranking,
         "step_budget": args.max_steps,

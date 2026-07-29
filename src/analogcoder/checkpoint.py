@@ -55,7 +55,18 @@ from analogcoder.state import RunState
 # run_orchestration 전체가 건너뛰어져 스냅샷이 다시 찍힐 기회조차 없다 -
 # T10이 고친 거짓 `corner_path_disagreement` FAIL이 재개 실행에서만 되살아나는
 # 자리다. 조용히 읽어 주는 대신 재개를 거부해 처음부터 다시 돈다.
-CHECKPOINT_SCHEMA_VERSION = 3
+#
+# 3 -> 4: `Checkpoint`에 `promotion_reentries`가 늘었다(T19, M10). 같은 이유를
+# 세 번째로 반복한다: cli.py는 탐침 승격 재진입마다 `grown_labels`에 빈
+# 리스트를 밀어 `len(grown) == attempts` 불변식을 지키는데, 그 사실 자체
+# ("이 attempt는 성장이 아니라 승격 재진입이었다")는 `grown_labels`에서
+# 되읽을 수 없다 - 빈 리스트는 "아무 근거 없이 재진입했다"로도 읽힌다.
+# 옛 체크포인트는 이 필드를 몰라서 조용히 읽으면 재개된 실행의
+# `result["corner_reduction"]["promotion_reentries"]`가 재개 이전 attempt의
+# 승격 재진입 기록을 잃는다 - T2(`corner_seed`)와 C1(`last_judged_corners`)이
+# 정확히 같은 모양으로 두 번 값을 치른 자리이므로, 세 번째로 조용히 읽어
+# 주는 대신 재개를 거부해 처음부터 다시 돈다.
+CHECKPOINT_SCHEMA_VERSION = 4
 CHECKPOINT_FILENAME = "checkpoint.json"
 
 BOUNDARY_OUTER_ITERATION = "outer_iteration"
@@ -121,6 +132,16 @@ class Checkpoint:
     # 거기서 되읽을 수 없다. 재개한 실행의 result가 이것을 잃으면 리포트가
     # "성장 없음"이라고 말하면서 집합은 자라 있다.
     grown_labels: list[list[str]] = field(default_factory=list)
+    # 탐침 승격 재진입의 **기록**(M10, T19) - `grown_labels`와 나란히 쌓이지만
+    # 다른 사실이다. `grown_labels`의 해당 attempt 항목은 항상 빈 리스트([])다
+    # (그 attempt는 코너를 하나도 더하지 않았다) - 그래서 그 사실만으로는
+    # "성장할 것이 없어 재진입 안 함"과 "성장할 것은 없지만 새 코너를 판정하러
+    # 재진입함"을 구별할 수 없다. 각 항목은
+    # `{"attempt": int, "criteria": [...], "corners": [...]}`이고 `attempt`는
+    # `corner_set_grown` 이벤트가 쓰는 것과 같은(증가 후) 번호다. **무조건**
+    # 담는다(승격 재진입이 없었던 실행은 빈 리스트) - 조건부로 담으면 "승격
+    # 재진입이 없었다"와 "체크포인트가 이 필드를 잊었다"가 같아진다.
+    promotion_reentries: list[dict] = field(default_factory=list)
     # `corner_selection.seed_from_sweep`의 **기록**(두 번째 반환값) - "어떤 방식
     # (argmax/coverage)으로 씨앗을 뽑았는가"다. `corner_set`에서 파생되지
     # **않는다** - 집합은 결과 코너들만 들고 있고, 어느 모드가 그것을 골랐는지,
@@ -192,6 +213,7 @@ def build_checkpoint(
     all_topology_swaps: list[dict] | None = None,
     corner_set: CornerSet | None = None,
     grown_labels: list[list[str]] | None = None,
+    promotion_reentries: list[dict] | None = None,
     corner_seed: dict | None = None,
     last_judged_corners: "frozenset[str] | None" = None,
     progress: LoopProgress | None = None,
@@ -211,6 +233,7 @@ def build_checkpoint(
         all_topology_swaps=[dict(s) for s in (all_topology_swaps or [])],
         corner_set=corner_set,
         grown_labels=[list(g) for g in (grown_labels or [])],
+        promotion_reentries=[dict(p) for p in (promotion_reentries or [])],
         corner_seed=dict(corner_seed) if corner_seed is not None else None,
         last_judged_corners=(
             frozenset(last_judged_corners) if last_judged_corners is not None else None
@@ -375,6 +398,10 @@ def to_payload(checkpoint: Checkpoint) -> dict:
         "all_topology_swaps": [dict(s) for s in checkpoint.all_topology_swaps],
         "corner_set": _corner_set_payload(checkpoint.corner_set),
         "grown_labels": [list(g) for g in checkpoint.grown_labels],
+        # **무조건 나간다** - grown_labels와 같은 규칙(T19, M10). 조건부로 쓰면
+        # "승격 재진입이 없었다"(빈 리스트)와 "체크포인트가 이 필드를 잊었다"
+        # (필드 부재)가 같아진다.
+        "promotion_reentries": [dict(p) for p in checkpoint.promotion_reentries],
         # **무조건 나간다** - simulator_identity와 같은 규칙. 조건부로 쓰면
         # `null`("이번 회차에 씨앗을 안 뽑았다")과 "필드가 통째로 없다"가 같아져,
         # "축소가 꺼져 있었다"와 "체크포인트가 이 필드를 잊었다"를 사후에
@@ -405,6 +432,7 @@ def from_payload(payload: dict) -> Checkpoint:
         all_topology_swaps=[dict(s) for s in payload.get("all_topology_swaps", [])],
         corner_set=_corner_set_from_payload(payload.get("corner_set")),
         grown_labels=[list(g) for g in payload.get("grown_labels", [])],
+        promotion_reentries=[dict(p) for p in payload.get("promotion_reentries", [])],
         corner_seed=(
             dict(payload["corner_seed"]) if payload.get("corner_seed") is not None else None
         ),

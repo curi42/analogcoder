@@ -481,6 +481,14 @@ async def test_resuming_at_the_optimization_boundary_preserves_the_last_judged_s
     assert _history_events(run_dir, "corner_path_disagreement") == []
     assert len(_history_events(run_dir, "corner_probe_promotion_reentry")) == 1
     assert result["status"] == "PASS"
+    # M10(T19): 이 재진입은 재개된 실행 **안에서** 처음 일어났다(재개 이전에는
+    # attempt==0이었다) - 그래도 결과는 그것을 승격 재진입으로 실어야 한다.
+    corner_reduction = result["corner_reduction"]
+    assert len(corner_reduction["grown"]) == corner_reduction["attempts"] == 1
+    assert corner_reduction["grown"] == [[]]
+    assert corner_reduction["promotion_reentries"] == [
+        {"attempt": 1, "criteria": ["pm"], "corners": ["ss/1.98/125.0"]}
+    ]
 
 
 @pytest.mark.asyncio
@@ -534,7 +542,13 @@ async def test_an_attempt_boundary_checkpoint_restores_the_attempt_counter(tmp_p
     payload = json.loads(open(path).read())
     payload["boundary"] = BOUNDARY_ATTEMPT
     payload["attempt"] = 2
-    payload["grown_labels"] = [["ss/1.62/27"], ["ff/1.98/27"]]
+    payload["grown_labels"] = [[], ["ff/1.98/27"]]
+    # M10(T19): attempt 1은 승격 재진입이었다(코너를 하나도 더하지 않아
+    # grown_labels[0]이 []다) - promotion_reentries가 그 attempt·기준·코너를
+    # 담아 재개된 실행으로도 살아 있어야 한다.
+    payload["promotion_reentries"] = [
+        {"attempt": 1, "criteria": ["gain"], "corners": ["ss/1.62/27"]}
+    ]
     payload["progress"] = None
     payload["orchestration_result"] = None
     with open(path, "w") as f:
@@ -552,7 +566,13 @@ async def test_an_attempt_boundary_checkpoint_restores_the_attempt_counter(tmp_p
     # attempt > 0 이므로 원본이 아니라 **수렴된 덱**에서 다시 시작한다.
     assert captured["calls"][0]["initial"] == {"ac_loop_gain": TUNED}
     assert result["corner_reduction"]["attempts"] == 2
-    assert result["corner_reduction"]["grown"] == [["ss/1.62/27"], ["ff/1.98/27"]]
+    assert result["corner_reduction"]["grown"] == [[], ["ff/1.98/27"]]
+    # **반증 확인 대상**: cli.py가 체크포인트에서 promotion_reentries를 복원하지
+    # 않으면(초기화만 하고 checkpoint.promotion_reentries를 안 읽으면) 이
+    # 단언은 빈 리스트를 보고 실패한다.
+    assert result["corner_reduction"]["promotion_reentries"] == [
+        {"attempt": 1, "criteria": ["gain"], "corners": ["ss/1.62/27"]}
+    ]
     assert result["resumed_from"]["boundary"] == BOUNDARY_ATTEMPT
 
 

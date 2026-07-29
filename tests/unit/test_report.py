@@ -176,6 +176,80 @@ def test_write_report_md_reports_the_corner_reduction_phase(tmp_path):
     assert "re-anchored" in content        # 1보다 크다는 사실의 의미
 
 
+def test_write_report_md_draws_a_growth_line_for_a_pure_growth_attempt(tmp_path):
+    """M10(T19): `grown`이 아예 그려지지 않던 결함. attempts > 0이면 무엇이
+    더해졌는지 리포트에 한 줄 나와야 한다."""
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "attempts": 1,
+            "grown": [["ff/1.98/27.0"]],
+            "promotion_reentries": [],
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "**Corner set growth:**" in content
+    assert "attempt 1: added ff/1.98/27.0" in content
+
+
+def test_write_report_md_marks_a_promotion_reentry_attempt_distinctly_from_a_growth_attempt(
+    tmp_path,
+):
+    """M10(T19) 핵심: 승격 재진입 attempt는 `grown`에 빈 리스트를 신는다 -
+    그것을 "아무것도 안 했다"로 그리면 승격 재진입이 리포트에서 완전히
+    사라진다. `promotion_reentries`로 그 attempt를 짚어 성장 attempt와
+    구별되게 그린다.
+
+    **반증 확인 대상**: `promotion_reentries`를 무시하고 `grown[i-1]`만 보는
+    변형으로 되돌리면, attempt 2가 "no corner added"류의 일반 문구가 되고
+    "promoted by the probe"/구체적 기준·코너가 사라져 이 단언들이 실패한다.
+    """
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "attempts": 2,
+            "grown": [["ff/1.98/27.0"], []],
+            "promotion_reentries": [
+                {"attempt": 2, "criteria": ["trim_phase_margin"], "corners": ["ss/1.98/27.0"]}
+            ],
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "attempt 1: added ff/1.98/27.0" in content
+    assert "attempt 2: no corner added" in content
+    assert "trim_phase_margin at ss/1.98/27.0" in content
+    assert "promoted by the probe" in content
+
+
+def test_write_report_md_draws_no_promotion_line_when_promotion_reentries_is_empty(tmp_path):
+    """`promotion_reentries`가 비어 있으면 그 사실에 대한 줄을 그리지 않는다 -
+    이 섹션의 기존 규칙(path_disagreement/reentry_skipped와 같다)과 같다.
+
+    attempt 2가 코너를 하나도 더하지 않았는데(`grown[1] == []`)
+    `promotion_reentries`도 비어 있는 경우로 짠다 - `grown`의 빈 리스트만 보고
+    "승격 재진입이었을 것"이라고 추측하는 변형이라면 여기서 "promoted by the
+    probe"를 잘못 그린다."""
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            **CORNER_REDUCTION_RESULT["corner_reduction"],
+            "attempts": 2,
+            "grown": [["ff/1.98/27.0"], []],
+            "promotion_reentries": [],
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+    assert "promoted by the probe" not in content
+
+
 def test_write_report_md_says_nothing_about_corner_reduction_when_the_key_is_absent(tmp_path):
     # corner_reduction 키가 없는 결과(예: 씨앗 실패 이전의 옛 실행, 다른 호출부)
     # 에 빈 섹션을 그리면 "돌았는데 아무것도 못 했다"로 읽힌다.

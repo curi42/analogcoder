@@ -227,6 +227,35 @@ def test_a_last_judged_corners_of_none_round_trips_as_none_not_as_a_missing_key(
     assert payload["last_judged_corners"] is None
 
 
+def test_the_promotion_reentries_record_round_trips_through_json(tmp_path):
+    """M10(T19): `grown_labels`가 탐침 승격 재진입 attempt에 빈 리스트를 신는
+    것만으로는 "성장 없이 재진입 안 함"과 "성장 없이 승격 판정을 위해
+    재진입함"을 구별할 수 없다. `promotion_reentries`가 그 attempt·기준·코너를
+    담아야 재개된 실행도 그 구별을 잃지 않는다."""
+    spec_path, spec = make_spec(tmp_path)
+    promotion_reentries = [
+        {"attempt": 1, "criteria": ["pm"], "corners": ["ss/1.98/125.0"]}
+    ]
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, promotion_reentries=promotion_reentries)
+
+    back = from_payload(json.loads(json.dumps(to_payload(cp))))
+
+    assert back.promotion_reentries == promotion_reentries
+
+
+def test_promotion_reentries_of_none_round_trips_as_an_empty_list_not_a_missing_key(tmp_path):
+    """`corner_seed`/`last_judged_corners`와 같은 규칙 - 조건부로 쓰면 "승격
+    재진입이 없었다"(빈 리스트)와 "체크포인트가 이 필드를 잊었다"(필드 부재)가
+    같아진다."""
+    spec_path, spec = make_spec(tmp_path)
+    _, cp = make_checkpoint(tmp_path, spec_path, spec, promotion_reentries=None)
+
+    payload = to_payload(cp)
+
+    assert "promotion_reentries" in payload
+    assert payload["promotion_reentries"] == []
+
+
 def test_a_corner_set_payload_that_breaks_an_invariant_is_refused_on_load(tmp_path):
     """CornerSet.__post_init__을 통과시켜 되살린다 - 역직렬화가 불변식을 우회하는
     뒷문이 되면 next_probe가 이미 선택된 코너를 또 고른다."""
@@ -450,6 +479,31 @@ def test_a_different_schema_version_is_refused(tmp_path):
     write_checkpoint(run_dir, cp)
     payload = read_payload(run_dir)
     payload["schema_version"] = CHECKPOINT_SCHEMA_VERSION + 1
+    with open(os.path.join(run_dir, CHECKPOINT_FILENAME), "w") as f:
+        json.dump(payload, f)
+
+    with pytest.raises(CheckpointRejected) as exc:
+        load_checkpoint(run_dir, spec_path, spec)
+
+    assert "schema version" in str(exc.value)
+
+
+def test_a_pre_t19_checkpoint_without_promotion_reentries_is_refused_not_silently_read(tmp_path):
+    """T19(M10): 스키마 3(이 필드가 생기기 전)이 쓴 체크포인트를 시뮬레이션한다 -
+    `promotion_reentries` 키가 아예 없다. T2(`corner_seed`)/C1
+    (`last_judged_corners`)과 같은 이유로, 조용히 읽어 주면(기본값 []로
+    채우면) 재개된 실행이 이전 시도의 승격 재진입 기록을 잃는다 - 그래서
+    거부하고 처음부터 다시 돈다.
+
+    **반증 확인 대상**: `CHECKPOINT_SCHEMA_VERSION`을 3으로 되돌리면(또는 이
+    필드를 추가하면서 버전을 올리지 않으면) 이 체크포인트가 그대로 통과되어
+    `pytest.raises`가 실패한다."""
+    spec_path, spec = make_spec(tmp_path)
+    run_dir, cp = make_checkpoint(tmp_path, spec_path, spec)
+    write_checkpoint(run_dir, cp)
+    payload = read_payload(run_dir)
+    payload["schema_version"] = 3
+    del payload["promotion_reentries"]
     with open(os.path.join(run_dir, CHECKPOINT_FILENAME), "w") as f:
         json.dump(payload, f)
 

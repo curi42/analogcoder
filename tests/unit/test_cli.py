@@ -1485,6 +1485,46 @@ async def test_a_corner_promoted_after_the_last_judgment_re_enters_instead_of_a_
     assert "new information" in result.get("failure_reason", "") or result["status"] == "PASS"
     assert result["status"] == "PASS"
 
+    # M10(T19): 승격 재진입은 `grown`에 코너를 하나도 더하지 않지만, 그
+    # attempt 자체는 셌으므로 불변식 len(grown) == attempts는 여전히 지켜져야
+    # 한다 - grown에 빈 리스트를 밀지 않으면(구현을 되돌리면) 이 단언이
+    # attempts=1, len(grown)=0으로 어긋나며 실패한다.
+    corner_reduction = result["corner_reduction"]
+    assert len(corner_reduction["grown"]) == corner_reduction["attempts"]
+    assert corner_reduction["grown"] == [[]]
+    # 그리고 두 경로(성장 vs 승격 재진입)를 구별하는 것이 이 결함의 핵심이다 -
+    # `promotion_reentries`가 그 attempt·기준·코너를 담아야 한다. 이 필드
+    # 자체를 지우면(또는 append를 빼먹으면) 아래 단언들이 실패한다.
+    assert corner_reduction["promotion_reentries"] == [
+        {"attempt": 1, "criteria": ["pm"], "corners": ["ss/1.98/125.0"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_promotion_reentries_is_an_empty_list_not_absent_when_no_promotion_happened(
+    tmp_path,
+):
+    # 이 저장소의 반복된 규칙: "없었다"와 "이 필드가 사라졌다"는 같은 부재가
+    # 아니다. 승격 재진입이 아예 없었던(순수 성장) 실행에서도
+    # `promotion_reentries`는 **키로서 존재**하고 값은 빈 리스트여야 한다 -
+    # `.get`으로 조건부로만 실으면 이 단언이 실패한다(키 자체가 없어지거나
+    # None이 된다).
+    run_dir = str(tmp_path / "runs" / "c_no_promotion")
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("fs", 55.0)})
+    verdict_fail = _sweep({"gain": _wc("ff", 12.0), "pm": _wc("fs", 55.0)}, failing=["gain"])
+    verdict_pass = _sweep({"gain": _wc("ff", 45.0), "pm": _wc("fs", 55.0)})
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, verdict_fail, verdict_pass], [])),
+        patch("analogcoder.cli.run_orchestration",
+              new=_orchestration_sequence([_pass_result(run_dir)], [])),
+    ):
+        result = await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    assert "promotion_reentries" in result["corner_reduction"]
+    assert result["corner_reduction"]["promotion_reentries"] == []
+
 
 @pytest.mark.asyncio
 async def test_reduction_is_inactive_and_says_why_without_pvt_corners(tmp_path):
@@ -2352,6 +2392,10 @@ async def test_the_corner_seed_failure_early_return_still_carries_topology_swaps
         "resumed_from",
         "corner_reduction",
     } <= set(result)
+    # M10(T19): 같은 계약이 corner_reduction 안의 promotion_reentries에도
+    # 걸린다 - 이 갈래는 재진입 루프를 시작조차 못 했으므로 승격 재진입도
+    # 0건이고, 키 부재가 아니라 빈 리스트로 말해야 한다.
+    assert result["corner_reduction"]["promotion_reentries"] == []
 
 
 # --- 감사 §2.2: argmax 이동은 argmax끼리만 비교한다 --------------------------

@@ -99,7 +99,42 @@ def _corner_reduction_lines(reduction: dict | None) -> list[str]:
         f"**Mid-loop corner set:** {len(final_set)} corners"
         + (f" ({', '.join(final_set)})" if final_set else "")
     )
-    lines.append(f"**Re-entry attempts:** {reduction.get('attempts')}")
+    attempts = reduction.get("attempts") or 0
+    lines.append(f"**Re-entry attempts:** {attempts}")
+
+    # M10(T19): 재진입에는 두 종류가 있고 지금까지 리포트는 **어느 쪽도
+    # 그리지 않았다.** `grown`은 코너가 실제로 늘어난 attempt만 담고, 탐침
+    # 승격 재진입 attempt는 `grown`에 빈 리스트를 신는다 - 그것만 보면
+    # "무엇을 더했는지 기록이 없다"로 읽히지 "새 코너를 판정하러
+    # 재진입했다"로 읽히지 않는다. `attempts > 0`이면 **항상** 그린다 - 재진입은
+    # 했는데 무엇을 했는지 리포트에 없으면 이 저장소가 already 치른 값이
+    # 그대로 반복된다.
+    if attempts:
+        grown = reduction.get("grown") or []
+        promotions = {p["attempt"]: p for p in (reduction.get("promotion_reentries") or [])}
+        lines.append("")
+        lines.append("**Corner set growth:**")
+        for i in range(1, attempts + 1):
+            promo = promotions.get(i)
+            added = grown[i - 1] if i - 1 < len(grown) else None
+            if promo is not None:
+                pairs = ", ".join(
+                    f"{name} at {corner}"
+                    for name, corner in zip(
+                        promo.get("criteria", []), promo.get("corners", [])
+                    )
+                )
+                lines.append(
+                    f"- attempt {i}: no corner added - re-entered to judge {pairs}, "
+                    f"promoted by the probe after the judge last saw the set"
+                )
+            elif added:
+                lines.append(f"- attempt {i}: added {', '.join(added)}")
+            else:
+                # `grown`에 이 attempt의 항목이 없거나 빈 리스트인데 승격
+                # 재진입 기록도 없다 - 옛 result.json(이 필드가 생기기 전)이거나
+                # 두 리스트가 어긋난 자리다. 지어내지 않고 그 사실 자체를 적는다.
+                lines.append(f"- attempt {i}: no growth record available")
 
     # **씨앗을 무엇으로 골랐는지.** history.jsonl의 `corner_seed`에만 있던 사실을
     # 여기로 끌어온다 - result.json/report.md만 보는 사람은 argmax와 ε-coverage

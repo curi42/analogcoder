@@ -245,6 +245,10 @@ def _early_fail_result(
             "attempts": 0,
             "area_baselines": 0,
             "grown": [],
+            # 같은 계약이 M10(T19)에도 걸린다 - 이 갈래는 재진입 루프 자체를
+            # 시작하지 못했으므로 승격 재진입도 0건이고, 그 사실은 빈 리스트로
+            # 말해야 한다(키 부재가 아니라).
+            "promotion_reentries": [],
             "path_disagreement": None,
             "unattributed_failures": None,
             "reentry_skipped": None,
@@ -677,6 +681,15 @@ async def _run(args) -> dict:
     grown_labels: list[list[str]] = (
         [list(g) for g in checkpoint.grown_labels] if checkpoint is not None else []
     )
+    # M10(T19): 탐침 승격 재진입의 attempt별 기록. `grown_labels`와 나란히
+    # 쌓이지만 다른 사실이다 - 승격 재진입 attempt는 `grown_labels`에 빈
+    # 리스트를 밀어 `len(grown) == attempts` 불변식을 지키는데, 그 사실만으로는
+    # "성장 없이 그냥 안 재진입함"과 "성장은 없지만 새 코너를 판정하러
+    # 재진입함"을 구별할 수 없다. checkpoint.py의 grown_labels/corner_seed와
+    # 같은 규칙으로 재개 시 복원한다.
+    promotion_reentries: list[dict] = (
+        [dict(p) for p in checkpoint.promotion_reentries] if checkpoint is not None else []
+    )
     path_disagreement: dict | None = None
     unattributed_failures: dict | None = None
     reentry_skipped: dict | None = None
@@ -729,6 +742,7 @@ async def _run(args) -> dict:
                 all_topology_swaps=all_topology_swaps,
                 corner_set=corner_state.corner_set if corner_state is not None else None,
                 grown_labels=grown_labels,
+                promotion_reentries=promotion_reentries,
                 corner_seed=seed_record,
                 last_judged_corners=(
                     corner_state.last_judged_corners if corner_state is not None else None
@@ -1029,6 +1043,20 @@ async def _run(args) -> dict:
                         f"re-enters with the corner now judged"
                     )
                     attempt += 1
+                    # M10(T19): `grown_labels`와 나란히, 같은 길이로 쌓는다 -
+                    # `len(grown) == attempts` 불변식을 지켜야 `grown[i]`가
+                    # attempt `i+1`의 것이라고 읽을 수 있다. 이 attempt는 코너를
+                    # 하나도 더하지 않았으므로 빈 리스트를 민다 - "무엇을
+                    # 더했는가"와 "왜 재진입했는가"는 다른 질문이고, 후자는
+                    # promotion_reentries가 답한다.
+                    grown_labels.append([])
+                    promotion_reentries.append(
+                        {
+                            "attempt": attempt,
+                            "criteria": [name for name, _ in stale],
+                            "corners": [corner for _, corner in stale],
+                        }
+                    )
                     state.log_event(
                         "corner_set_grown",
                         {
@@ -1161,6 +1189,13 @@ async def _run(args) -> dict:
         # 결과에 싣는다.
         "area_baselines": attempt + 1,
         "grown": grown_labels,
+        # M10(T19): 탐침 승격 재진입의 attempt별 기록. **무조건** 실린다(승격
+        # 재진입이 없었으면 빈 리스트) - "없었다"와 "이 필드가 사라졌다"가 같은
+        # 부재이면 안 된다는 이 저장소의 규칙(topology_swaps/resumed_from과
+        # 같다). `grown`이 같은 attempt에서 빈 리스트를 신는 것만으로는 "성장
+        # 없이 안 재진입"과 "성장 없이 승격 판정을 위해 재진입"을 구별할 수
+        # 없어서 별도로 싣는다.
+        "promotion_reentries": promotion_reentries,
         "path_disagreement": path_disagreement,
         "unattributed_failures": unattributed_failures,
         # 재진입을 건너뛴 **이유**. path_disagreement/unattributed_failures와
