@@ -437,7 +437,11 @@ async def test_a_run_without_the_flag_writes_no_resume_only_event(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_run_without_the_flag_adds_exactly_one_result_key(tmp_path):
-    """결과에 더해지는 것은 `resumed_from` 하나뿐이고, 그것은 null 이다."""
+    """재개 기능이 결과에 더하는 것은 `resumed_from` 하나뿐이고, 그것은 null 이다.
+
+    (`pvt_sweep_error`는 재개가 더한 키가 **아니다** - 감사 §2.6의 스윕 가드가
+    더한 것이고, `resumed_from`과 같은 규칙으로 스윕이 멀쩡히 돈 실행에도 null로
+    실린다. 집합을 정확히 유지하는 것이 이 단언의 요점이므로 함께 적는다.)"""
     args, run_dir = make_args(tmp_path)
 
     with patch("analogcoder.cli.run_orchestration", new=orchestration(pass_result(run_dir))):
@@ -453,4 +457,5 @@ async def test_a_run_without_the_flag_adds_exactly_one_result_key(tmp_path):
         "optimization",
         "corner_reduction",
         "resumed_from",
+        "pvt_sweep_error",
     }

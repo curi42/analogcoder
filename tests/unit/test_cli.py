@@ -1,6 +1,7 @@
 import inspect
 import json
 import os
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from analogcoder.agents.backends.claude_sdk import ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
 from analogcoder.cli import (
     AGENT_NAMES,
+    _argmax_drift,
     _build_agent_backend,
     _build_agent_backends,
     _run,
@@ -1711,7 +1713,15 @@ def test_the_empty_argmax_record_is_a_fresh_object_every_time():
     # 전역을 오염시킨다.
     first = cli._no_drift()
     first["criteria"].append({"name": "x"})
-    assert cli._no_drift() == {"criteria": [], "moved_count": 0, "total": 0}
+    assert cli._no_drift() == {
+        "criteria": [],
+        "moved_count": 0,
+        "total": 0,
+        "compared_count": 0,
+        "unmeasured_count": 0,
+        "measurability_changed_count": 0,
+        "unpaired_count": 0,
+    }
 
 
 def test_a_coordinate_less_entry_is_labelled_as_the_deck():
@@ -2003,3 +2013,342 @@ async def test_the_corner_seed_failure_early_return_still_carries_topology_swaps
         "resumed_from",
         "corner_reduction",
     } <= set(result)
+
+
+# --- 감사 §2.2: argmax 이동은 argmax끼리만 비교한다 --------------------------
+
+
+# `runs/pvt_sonnet_1` (2026-07-26, two_stage_opamp, 45 코너)의 진입/판정 스윕에서
+# `worst_case_corners`를 **그대로 옮겨 온** 값이다. `runs/`는 .gitignore에 있어
+# 그 실행이 사라져도 이 테스트가 서 있어야 하므로 여기 박아 둔다. 이 쌍의 성질:
+# 일곱 기준의 **측정값이 양쪽에서 전부 동일**하고(3.13783 / None / None /
+# 26.2352 / 9.53353 / None / None), 코너 이름이 다른 두 건은 **양쪽 다 값이
+# None**이다 - 즉 argmax가 아니라 `worst_case_measurements`가 적은
+# `missing_corners[0]`, "그 측정이 처음으로 안 나온 코너"다(`pvt.py:326`).
+PVT_SONNET_1_ENTRY_WC = {
+    "dc_gain": {"process": "fs", "voltage": 1.98, "temperature": 125.0, "value": 3.13783},
+    "unity_gain_bandwidth": {"process": "fs", "voltage": 1.98, "temperature": -40.0, "value": None},
+    "phase_margin": {"process": "fs", "voltage": 1.98, "temperature": -40.0, "value": None},
+    "psr_plus": {"process": "sf", "voltage": 1.62, "temperature": -40.0, "value": 26.2352},
+    "psr_minus": {"process": "sf", "voltage": 1.8, "temperature": -40.0, "value": 9.53353},
+    "settling_time_hi": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+    "settling_time_lo": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+}
+
+PVT_SONNET_1_FINAL_WC = {
+    "dc_gain": {"process": "fs", "voltage": 1.98, "temperature": 125.0, "value": 3.13783},
+    "unity_gain_bandwidth": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": None},
+    "phase_margin": {"process": "ss", "voltage": 1.62, "temperature": 125.0, "value": None},
+    "psr_plus": {"process": "sf", "voltage": 1.62, "temperature": -40.0, "value": 26.2352},
+    "psr_minus": {"process": "sf", "voltage": 1.8, "temperature": -40.0, "value": 9.53353},
+    "settling_time_hi": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+    "settling_time_lo": {"process": "tt", "voltage": 1.98, "temperature": 125.0, "value": None},
+}
+
+
+def _wc_sweep(worst_corners: dict) -> dict:
+    """`_argmax_drift`가 읽는 것은 `worst_case_corners` 하나뿐이다."""
+    return {"worst_case_corners": worst_corners}
+
+
+def test_a_corner_named_only_because_a_measurement_was_missing_is_not_a_moved_argmax():
+    """측정값이 하나도 안 변한 스윕 쌍에서 "2/7이 움직였다"가 나오면 안 된다.
+
+    이 숫자의 유일한 용도는 **코너 지속성**이다 - 설계가 움직일 때 최악 코너가
+    얼마나 따라 움직이는가. `value is None` 항목은 argmax가 아니라 "그 측정이
+    처음으로 안 나온 코너"이고, 그 "처음"은 코너 **선언 순서**가 정한다. 그것을
+    이동으로 세면 이 지표는 회로가 아니라 스펙의 리스트 순서를 재게 된다.
+
+    "이 지표가 다른 답을 낼 조건이 내가 잰 런에 있었는가" - D1을 무효로 만든
+    질문이 여기서는 지표 **정의** 안에서 깨져 있었다.
+
+    **수정 전 실측**: `moved_count = 2`, 두 건 전부 양쪽 값 None.
+    """
+    drift = _argmax_drift(_wc_sweep(PVT_SONNET_1_ENTRY_WC), _wc_sweep(PVT_SONNET_1_FINAL_WC))
+
+    assert drift["moved_count"] == 0
+    assert drift["total"] == 7
+    # moved_count의 분모는 total이 아니라 compared_count다. 둘을 함께 실어야
+    # "0/7"이 "일곱 개를 비교했더니 안 움직였다"로 잘못 읽히지 않는다.
+    assert drift["compared_count"] == 3
+    assert drift["unmeasured_count"] == 4
+    assert drift["measurability_changed_count"] == 0
+    assert drift["unpaired_count"] == 0
+
+    status = {c["name"]: c["status"] for c in drift["criteria"]}
+    assert status["dc_gain"] == "compared"
+    assert status["unity_gain_bandwidth"] == "unmeasured"
+    assert status["phase_margin"] == "unmeasured"
+    # 라벨 자체는 그대로 남긴다 - 그 코너가 "처음으로 값이 안 나온 코너"라는 것도
+    # 사실이다. 지우는 것이 아니라 **다른 칸에 세는** 것이 이 수정이다.
+    unmeasured = [c for c in drift["criteria"] if c["status"] == "unmeasured"]
+    assert {c["entry"] for c in unmeasured} == {"fs/1.98/-40.0", "tt/1.98/125.0"}
+
+
+def test_reordering_the_process_axis_cannot_change_the_argmax_verdict():
+    """측정값을 하나도 바꾸지 않는 스펙 편집이 판정을 뒤집으면 안 된다.
+
+    `pvt.py`의 `missing_corners[0]`는 `all_corners(spec.pvt_corners)`의 순서를
+    그대로 따르므로, `process: [tt, ss, ff]`를 `[ff, ss, tt]`로 적기만 해도
+    값 없는 항목이 가리키는 코너가 바뀐다. 아래 두 쌍은 **측정된 값이 전부
+    동일**하고 값 없는 항목이 가리키는 코너만 다르다.
+
+    **수정 전 실측**: 첫 쌍 moved_count=2, 둘째 쌍 moved_count=0 - 같은 회로,
+    같은 측정, 다른 답.
+    """
+    # 재정렬된 스펙: 값 없는 네 항목이 양쪽 스윕에서 같은 "첫 코너"를 가리키게 된다.
+    reordered_entry = {
+        name: (
+            raw if raw["value"] is not None
+            else {**raw, "process": "tt", "voltage": 1.62, "temperature": -40.0}
+        )
+        for name, raw in PVT_SONNET_1_ENTRY_WC.items()
+    }
+    reordered_final = {
+        name: (
+            raw if raw["value"] is not None
+            else {**raw, "process": "tt", "voltage": 1.62, "temperature": -40.0}
+        )
+        for name, raw in PVT_SONNET_1_FINAL_WC.items()
+    }
+
+    as_shipped = _argmax_drift(
+        _wc_sweep(PVT_SONNET_1_ENTRY_WC), _wc_sweep(PVT_SONNET_1_FINAL_WC)
+    )
+    reordered = _argmax_drift(_wc_sweep(reordered_entry), _wc_sweep(reordered_final))
+
+    for key in ("moved_count", "total", "compared_count", "unmeasured_count"):
+        assert as_shipped[key] == reordered[key], key
+    assert as_shipped["moved_count"] == 0
+
+
+def test_a_criterion_that_gained_a_measurement_is_not_counted_as_a_moved_argmax():
+    """한쪽만 값이 있는 것은 **이동이 아니라 측정 가능성의 변화**다.
+
+    진입 스윕에서 어느 코너에도 값이 안 나오던 기준이 판정 스윕에서는 나왔다면,
+    두 코너 이름은 애초에 같은 종류의 것이 아니다(하나는 "처음으로 빠진 코너",
+    다른 하나는 진짜 argmax). 그것을 이동으로 세면 지표가 회로의 코너 지속성이
+    아니라 **수렴 여부**를 재게 되고, 그 둘은 다른 사실이다.
+
+    **수정 전 실측**: moved_count=1.
+    """
+    entry = _wc_sweep({"gain": {"process": "fs", "voltage": 1.98, "temperature": -40.0, "value": None}})
+    final = _wc_sweep({"gain": _wc("ss", 41.0)})
+
+    drift = _argmax_drift(entry, final)
+
+    assert drift["moved_count"] == 0
+    assert drift["measurability_changed_count"] == 1
+    assert drift["compared_count"] == 0
+    assert [c["status"] for c in drift["criteria"]] == ["measurability_changed"]
+    # 반대 방향(값이 있다가 사라짐)도 같은 칸이다.
+    back = _argmax_drift(final, entry)
+    assert back["moved_count"] == 0
+    assert back["measurability_changed_count"] == 1
+
+
+def test_a_criterion_present_in_only_one_sweep_is_recorded_as_unpaired():
+    """짝이 없으면 "움직였다"고 말할 근거가 없다 - 이미 moved=False였고, 이제
+    그 사실이 **이름을 갖는다**. 값 없는 항목(unmeasured)과 뭉뚱그리면 "이 스윕에
+    그 기준이 아예 없었다"와 "있었는데 어느 코너에서도 값이 안 나왔다"가 같은
+    숫자가 된다."""
+    entry = _wc_sweep({"gain": _wc("fs", 41.0)})
+    final = _wc_sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
+
+    drift = _argmax_drift(entry, final)
+
+    assert drift["total"] == 2
+    assert drift["unpaired_count"] == 1
+    assert drift["compared_count"] == 1
+    assert drift["moved_count"] == 0
+    status = {c["name"]: c["status"] for c in drift["criteria"]}
+    assert status["pm"] == "unpaired"
+
+
+def test_the_empty_argmax_record_has_the_same_shape_as_a_measured_one():
+    """빈 기록과 측정된 기록의 **키가 같아야** 한다. 코너를 못 재는 스펙의
+    결과에서만 `unmeasured_count`가 사라지면, 그 키를 읽는 소비자가 하필
+    "아무것도 안 잰 실행"에서 KeyError로 죽는다."""
+    measured = _argmax_drift(_wc_sweep(PVT_SONNET_1_ENTRY_WC), _wc_sweep(PVT_SONNET_1_FINAL_WC))
+    assert set(cli._no_drift()) == set(measured)
+
+
+# --- 감사 §2.6: 진입·판정 PVT 스윕이 가드 밖에 있었다 ------------------------
+
+
+def _main_with(argv: list[str]):
+    """`main()`을 실제로 돌린다. 산출물이 써지는지가 이 절의 요점이므로
+    `_run`만 부르는 것으로는 부족하다 - `write_result_json`/`write_report_md`는
+    `main()`에 있고, 가드 밖에서 터진 예외는 정확히 그 두 줄을 건너뛴다."""
+    with patch.object(sys, "argv", ["analogcoder", *argv]):
+        with pytest.raises(SystemExit) as exit_info:
+            cli.main()
+    return exit_info.value.code
+
+
+def _artifacts(run_dir: str) -> tuple[dict, str]:
+    with open(os.path.join(run_dir, "result.json")) as f:
+        result = json.load(f)
+    with open(os.path.join(run_dir, "report.md")) as f:
+        report = f.read()
+    return result, report
+
+
+BAD_OPERATOR_SPEC_YAML = CORNER_REDUCTION_SPEC_YAML.replace('operator: ">="', 'operator: "=~"', 1)
+
+
+def test_an_unknown_operator_in_a_spec_reaches_evaluate_criteria_as_a_key_error(tmp_path):
+    """§2.6 시나리오 2의 트리거가 **환경 장애 없이** 존재한다는 사실.
+
+    `spec.py`의 `_load_criteria`는 operator를 검증 없이 싣고,
+    `judge_tools._OPERATORS[c.operator]`가 그것을 그대로 색인한다. 오타 하나가
+    45코너 스윕 한가운데서 `KeyError`가 되며, 진입 스윕이 그 첫 소비자다.
+
+    (operator 검증 자체는 `spec.py` 소유가 아니므로 여기서 고치지 않는다 -
+    이 테스트는 트리거가 실재한다는 것만 못박는다.)"""
+    from analogcoder.judge_tools import evaluate_criteria
+    from analogcoder.spec import load_spec
+
+    (tmp_path / "netlist.cir").write_text(ORIGINAL_TEXT)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(BAD_OPERATOR_SPEC_YAML)
+    spec = load_spec(str(spec_path))
+
+    with pytest.raises(KeyError):
+        evaluate_criteria({"gain_db": 41.0}, spec.all_criteria)
+
+
+def test_an_entry_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_path):
+    """진입 스윕이 터져도 `result.json`과 `report.md`가 써져야 한다.
+
+    여기서 쓰는 대역은 예외를 손으로 던지지 않는다 - 프로덕션
+    `run_full_pvt_sweep`이 마지막에 하는 일(`spec.all_criteria`를 하나씩
+    `evaluate_criteria`에 넣는 것)을 그대로 하고, 스펙의 operator 오타가
+    `KeyError`를 만든다. 즉 이 테스트가 재현하는 것은 "예외가 나면"이 아니라
+    **"스펙에 오타 하나가 있으면"**이다.
+
+    **수정 전 실측**: `KeyError: '=~'`가 `_run` -> `asyncio.run` -> `main()`을
+    그대로 뚫고, run-dir에 `history.jsonl`만 남는다.
+    """
+    from analogcoder.judge_tools import evaluate_criteria
+
+    run_dir = str(tmp_path / "runs" / "entryboom")
+    args = _corner_args(tmp_path, BAD_OPERATOR_SPEC_YAML, run_dir)
+
+    def production_shaped_sweep(netlist_texts, spec, sim_backend):
+        for criterion in spec.all_criteria:
+            evaluate_criteria({criterion.measurement: 41.0}, [criterion])
+        raise AssertionError("unreachable: the bad operator must raise first")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=production_shaped_sweep),
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock()) as mock_orch,
+    ):
+        code = _main_with(["--spec", args.spec, "--run-dir", run_dir])
+
+    assert code == 1
+    mock_orch.assert_not_awaited()   # 튜닝 루프는 시작조차 하지 않았다
+
+    result, report = _artifacts(run_dir)
+    assert result["status"] == "FAIL"
+    assert "entry PVT sweep could not run" in result["failure_reason"]
+    assert "KeyError" in result["failure_reason"]
+    # '스윕이 돌지 못했다'와 '스윕이 돌았고 실패했다'는 다른 사실이다.
+    assert result["pvt_sweep"] is None
+    assert result["pvt_sweep_error"]["phase"] == "entry"
+    assert "## PVT sweep" not in report
+    assert "entry PVT sweep could not run" in report
+    assert _one_history_event(run_dir, "pvt_sweep_failed")["phase"] == "entry"
+
+
+def test_a_verdict_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_path):
+    """튜닝 루프가 PASS한 뒤 판정 스윕이 터져도 산출물이 남아야 한다.
+
+    이것이 비싼 쪽이다 - two_stage_opamp 기준 103분짜리 루프가 끝난 뒤,
+    45코너 스윕의 워커 하나가 `OSError`(ENOSPC/EAGAIN)를 만나면 run-dir에
+    `history.jsonl`과 `netlist_v*.cir`만 남았다.
+
+    상태는 **FAIL**이다. 판정을 내리는 것이 이 스윕이므로, 돌지 못한 스윕을
+    통과로 읽는 것은 아무도 확인하지 않은 넷리스트를 PASS로 출하하는 것이다.
+    """
+    run_dir = str(tmp_path / "runs" / "verdictboom")
+    args = _corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir)
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
+    calls: list = []
+
+    def entry_then_boom(netlist_texts, spec, sim_backend):
+        calls.append(dict(netlist_texts))
+        if len(calls) == 1:
+            return entry
+        raise OSError(28, "No space left on device")
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=entry_then_boom),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        code = _main_with(["--spec", args.spec, "--run-dir", run_dir])
+
+    assert code == 1
+    assert len(calls) == 2
+
+    result, report = _artifacts(run_dir)
+    assert result["status"] == "FAIL"
+    assert "final PVT sweep could not run" in result["failure_reason"]
+    assert "OSError" in result["failure_reason"]
+    assert result["pvt_sweep"] is None
+    assert result["pvt_sweep_error"]["phase"] == "verdict"
+    assert "## PVT sweep" not in report
+    # 재진입도 하지 않는다: 같은 정보로 다시 도는 것이 아니라 스윕 자체가 돌지
+    # 못했으므로, 코너 집합에 더할 것이 없다.
+    assert result["corner_reduction"]["attempts"] == 0
+    # 판정 스윕이 없으므로 argmax 기록도 비어 있어야 한다 - 없는 비교를
+    # 0/0이 아닌 다른 무엇으로 적으면 그것이 곧 지어낸 값이다.
+    assert result["corner_reduction"]["argmax_drift"] == cli._no_drift()
+    assert _one_history_event(run_dir, "pvt_sweep_failed")["phase"] == "verdict"
+
+
+def test_a_sweep_that_ran_and_failed_is_not_reported_as_one_that_could_not_run(tmp_path):
+    """대조군. 같은 FAIL이지만 **다른 사실**이고, 산출물에서 구별되어야 한다.
+
+    돌아서 실패한 스윕은 `pvt_sweep`을 싣고 리포트에 PVT 섹션을 그린다(어느
+    코너가 깨졌는지가 그 스윕이 만든 유일한 추가 정보다). 돌지 못한 스윕은
+    실을 것이 없고, 그 사실이 `pvt_sweep_error`와 사유 문구로 남는다."""
+    run_dir = str(tmp_path / "runs" / "verdictfail")
+    args = _corner_args(tmp_path, CORNERS_BUT_REDUCTION_DISABLED_SPEC_YAML, run_dir)
+    entry = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
+    verdict = _sweep({"gain": _wc("ff", 4.0), "pm": _wc("ss", 55.0)}, failing=["gain"])
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=_sweep_sequence([entry, verdict], [])),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        code = _main_with(["--spec", args.spec, "--run-dir", run_dir])
+
+    assert code == 1
+    result, report = _artifacts(run_dir)
+    assert result["status"] == "FAIL"
+    assert "final PVT sweep failed:" in result["failure_reason"]
+    assert "could not run" not in result["failure_reason"]
+    assert result["pvt_sweep"] is not None
+    assert result["pvt_sweep_error"] is None
+    assert "## PVT sweep" in report
+
+
+def test_a_run_whose_sweeps_both_ran_says_so_with_a_null_error(tmp_path):
+    """"확인했고 멀쩡했다"와 "그 기록이 사라졌다"가 같은 부재면 안 된다 -
+    `optimize_guard_infeasible`이 이미 치른 값이다. 그래서 `pvt_sweep_error`는
+    스윕이 멀쩡히 돈 실행에도 **null로 항상** 실린다."""
+    run_dir = str(tmp_path / "runs" / "sweepok")
+    args = _corner_args(tmp_path, CORNERS_BUT_REDUCTION_DISABLED_SPEC_YAML, run_dir)
+    passing = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=_sweep_sequence([passing], [])),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(run_dir))),
+    ):
+        code = _main_with(["--spec", args.spec, "--run-dir", run_dir])
+
+    assert code == 0
+    result, _ = _artifacts(run_dir)
+    assert result["status"] == "PASS"
+    assert "pvt_sweep_error" in result and result["pvt_sweep_error"] is None

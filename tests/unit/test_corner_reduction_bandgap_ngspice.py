@@ -299,31 +299,49 @@ def test_the_argmax_moves_when_the_design_moves(entry_sweep, verdict_sweep):
     시뮬레이터 빌드에 딸린 사실이라, 빌드가 바뀌면 실패가 아니라 재측정
     신호로 읽어야 한다(위 씨앗 테스트의 코너 이름들도 같다).
 
-    **실측: 22개 기준 중 5개가 움직였다.** 다섯 개 전부 씨앗 **안**에서
+    **실측: 비교 가능한 21개 중 4개가 움직였다.** 네 개 전부 씨앗 **안**에서
     안으로 움직였다 - 그래서 위 테스트의 재진입이 발화하지 않는다. 그리고
-    다섯 중 셋은 process를 유지한 채 **voltage 축만** 옮겨갔다(ff/1.98 ->
+    넷 중 셋은 process를 유지한 채 **voltage 축만** 옮겨갔다(ff/1.98 ->
     ff/1.62 등). 이 회로의 argmax 이동은 대체로 축 하나 안에서 일어난다.
 
-    **어떤 변형을 잡는가.** `_argmax_drift`가 코너를 좌표 일부로만 비교하는
+    **이 수치는 5/22에서 정정된 것이다(감사 §2.2).** `buf1_phase_margin`은
+    argmax가 움직인 것이 **아니라** 판정 스윕에서 그 측정이 아예 사라진 것이다
+    (진입 99.391 -> 판정 **None**: 꼬리 전류원을 8 -> 4로 좁힌 것이 buf1 루프를
+    무너뜨려 위상여유가 어느 코너에서도 안 나온다). 값이 없는 항목에
+    `worst_case_measurements`가 적는 코너는 argmax가 아니라 **그 측정이 처음으로
+    빠진 코너**이고(`pvt.py`의 `missing_corners[0]`), 그 "처음"을 정하는 것은
+    회로가 아니라 스펙의 코너 선언 순서다. 그것을 이동으로 세면 이 숫자는 코너
+    지속성이 아니라 리스트 순서와 수렴 여부를 재게 된다. 그래서 지금은
+    `measurability_changed`라는 **다른 칸**에 센다.
+
+    **어떤 변형을 잡는가.** (1) `_argmax_drift`가 코너를 좌표 일부로만 비교하는
     변형 - 예를 들어 `_corner_label`이 voltage를 빼고 이름을 만들면. 위 실측대로
-    이동의 3/5가 process 안에서 일어나므로 moved_count가 5에서 2로 줄고, 이
-    단언이 잡는다. (한쪽 스윕에만 있는 기준을 moved로 세는 변형은 **여기서
-    잡히지 않는다** - 두 스윕이 같은 스펙이라 22개가 정확히 겹쳐 짝 없는
-    기준이 아예 없다. 그쪽은 tests/unit/test_cli.py가 대역으로 덮는다.)
+    이동의 3/4가 process 안에서 일어나므로 moved_count가 4에서 1로 줄고, 이
+    단언이 잡는다. (2) 값 없는 항목을 다시 argmax처럼 세는 변형 - moved_count가
+    5로 돌아가고 `measurability_changed_count`가 0이 된다. (한쪽 스윕에만 있는
+    기준을 moved로 세는 변형은 **여기서 잡히지 않는다** - 두 스윕이 같은 스펙이라
+    22개가 정확히 겹쳐 짝 없는 기준이 아예 없다. 그쪽은 tests/unit/test_cli.py가
+    대역으로 덮는다.)
     """
     spec, cs = _seeded(entry_sweep)
     drift = _argmax_drift(entry_sweep, verdict_sweep)
 
     assert drift["total"] == 22
-    assert drift["moved_count"] == 5
+    assert drift["compared_count"] == 21
+    assert drift["moved_count"] == 4
     moved = {c["name"]: (c["entry"], c["final"]) for c in drift["criteria"] if c["moved"]}
     assert moved == {
         "vbg1_min": ("ff/1.98/27.0", "ff/1.62/27.0"),
         "vbg1_max": ("ss/1.62/27.0", "ss/1.98/27.0"),
         "buf1_loop_gain": ("ff/1.62/27.0", "ff/1.98/27.0"),
-        "buf1_phase_margin": ("ss/1.8/27.0", "ff/1.98/27.0"),
         "buf0_loop_gain": ("ss/1.62/27.0", "ff/1.62/27.0"),
     }
+
+    # 사라진 측정은 이동이 아니라 **측정 가능성의 변화**다. 이 한 건이 5/22를
+    # 4/21로 만든 실측 근거이므로, 이름까지 못박는다.
+    changed = [c for c in drift["criteria"] if c["status"] == "measurability_changed"]
+    assert [c["name"] for c in changed] == ["buf1_phase_margin"]
+    assert verdict_sweep["worst_case_corners"]["buf1_phase_margin"]["value"] is None
 
     # 움직인 곳이 전부 씨앗 안이라는 사실이 재진입 미발화의 직접 원인이다.
     in_set = {label(c) for c in cs.corners}

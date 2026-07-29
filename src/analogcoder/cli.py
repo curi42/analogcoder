@@ -69,8 +69,20 @@ AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
 def _no_drift() -> dict:
     """빈 argmax 기록. **매번 새로 만든다** - 모듈 수준 상수를 얕게 복사해
     돌려주면 result에 실리는 "criteria" 리스트가 그 상수와 **같은 객체**가 되어,
-    거기에 append하는 소비자 하나가 프로세스 전역을 오염시킨다."""
-    return {"criteria": [], "moved_count": 0, "total": 0}
+    거기에 append하는 소비자 하나가 프로세스 전역을 오염시킨다.
+
+    키는 `_argmax_drift`가 내는 것과 **같아야** 한다. 코너를 못 재는 스펙의
+    결과에서만 칸 하나가 사라지면, 그 칸을 읽는 소비자가 하필 "아무것도 안 잰
+    실행"에서 KeyError로 죽는다."""
+    return {
+        "criteria": [],
+        "moved_count": 0,
+        "total": 0,
+        "compared_count": 0,
+        "unmeasured_count": 0,
+        "measurability_changed_count": 0,
+        "unpaired_count": 0,
+    }
 
 
 def _corner_label(raw: dict | None) -> str | None:
@@ -105,30 +117,76 @@ def _argmax_drift(entry_sweep: dict, verdict_sweep: dict) -> dict:
     **판정에는 아무 영향을 주지 않는다 - 순수한 기록이다.**
 
     한쪽 스윕에만 있는 기준은 moved=False다. 짝이 없으면 "움직였다"고 말할
-    근거가 없고, 없는 것을 이동으로 세면 이 숫자의 유일한 용도가 망가진다."""
+    근거가 없고, 없는 것을 이동으로 세면 이 숫자의 유일한 용도가 망가진다.
+
+    **`value is None`인 항목은 argmax가 아니다.** `worst_case_measurements`는
+    어느 코너에서 측정이 빠지면 그 중 **첫 번째** 코너를 값 없이 적는다
+    (`pvt.py`의 `missing_corners[0]`). 그 "첫 번째"를 정하는 것은 회로가 아니라
+    `all_corners`의 순서, 즉 스펙의 **코너 선언 순서**다. 그것을 이동으로 세면
+    이 지표는 코너 지속성이 아니라 리스트 순서를 재게 된다 - 실측
+    (`runs/pvt_sonnet_1`): 일곱 기준의 **측정값이 양쪽 스윕에서 전부 동일**한데
+    `moved_count`가 2로 나왔고, 두 건 다 양쪽 값이 None이었다. 스펙의 process
+    목록 순서만 바꾸면(측정값 불변) 판정이 뒤집힌다.
+
+    그래서 네 상태를 **다른 칸에** 센다. 뭉뚱그리면 서로 다른 사실이 한 숫자가
+    된다:
+
+    - `compared` - 양쪽 다 값이 있다. **`moved`를 말할 수 있는 유일한 상태**이고
+      `moved_count`의 분모는 `total`이 아니라 `compared_count`다.
+    - `unmeasured` - 양쪽 다 값이 없다. 코너 이름은 남기지만(그 코너가 "처음으로
+      값이 안 나온 코너"라는 것도 사실이다) 이동으로 세지 않는다.
+    - `measurability_changed` - 한쪽만 값이 있다. 두 이름이 애초에 같은 종류가
+      아니다(하나는 argmax, 다른 하나는 빠진 코너). 이것을 이동으로 세면 지표가
+      코너 지속성이 아니라 **수렴 여부**를 재게 된다.
+    - `unpaired` - 한쪽 스윕에만 있는 기준.
+
+    D1을 무효로 만든 질문("이 지표가 다른 답을 낼 조건이 내가 잰 런에 있었는가")이
+    여기서는 지표 **정의** 안에서 깨져 있었다. 판정에 필요한 정보는 이미 같은
+    dict 안에 있었고 읽지 않았을 뿐이다."""
     entry_wc = entry_sweep.get("worst_case_corners", {})
     final_wc = verdict_sweep.get("worst_case_corners", {})
     names = list(entry_wc) + [name for name in final_wc if name not in entry_wc]
 
     criteria = []
     for name in names:
-        entry_label = _corner_label(entry_wc.get(name))
-        final_label = _corner_label(final_wc.get(name))
+        entry_raw = entry_wc.get(name)
+        final_raw = final_wc.get(name)
+        entry_label = _corner_label(entry_raw)
+        final_label = _corner_label(final_raw)
+
+        if entry_raw is None or final_raw is None:
+            status = "unpaired"
+        else:
+            measured = (entry_raw.get("value") is not None, final_raw.get("value") is not None)
+            status = {
+                (True, True): "compared",
+                (False, False): "unmeasured",
+            }.get(measured, "measurability_changed")
+
         criteria.append({
             "name": name,
             "entry": entry_label,
             "final": final_label,
+            "status": status,
             "moved": (
-                entry_label is not None
+                status == "compared"
+                and entry_label is not None
                 and final_label is not None
                 and entry_label != final_label
             ),
         })
 
+    def _count(status: str) -> int:
+        return sum(1 for c in criteria if c["status"] == status)
+
     return {
         "criteria": criteria,
         "moved_count": sum(1 for c in criteria if c["moved"]),
         "total": len(criteria),
+        "compared_count": _count("compared"),
+        "unmeasured_count": _count("unmeasured"),
+        "measurability_changed_count": _count("measurability_changed"),
+        "unpaired_count": _count("unpaired"),
     }
 
 
@@ -147,6 +205,71 @@ def _reduction_off_reason(corner_capable: bool, reduction) -> str:
             "today's behaviour (the deck as written, one point)"
         )
     return "corner_reduction.enabled is false in the spec"
+
+
+def _sweep_error(phase: str, exc: BaseException) -> dict:
+    """**돌지 못한** 스윕의 기록. '스윕이 실패했다'와 '스윕이 돌지 못했다'는
+    다른 사실이고, 산출물에서 구별되어야 한다 - 전자는 코너별 값이 있고
+    (report.md가 PVT 섹션을 그린다) 후자는 실을 값 자체가 없다.
+
+    `phase`는 `entry`(진입 스윕) 또는 `verdict`(판정 스윕)다. 둘은 잃는 것이
+    다르다: 진입 스윕이 못 돌면 실행이 시작조차 못 하고, 판정 스윕이 못 돌면
+    이미 끝난 튜닝 루프(two_stage_opamp 기준 103분)의 결과가 확정되지 못한다."""
+    return {"phase": phase, "type": type(exc).__name__, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _early_fail_result(
+    *,
+    run_dir: str,
+    netlist_paths: dict,
+    resumed_from: dict | None,
+    topology_swaps: list,
+    failure_reason: str,
+    reduction_reason: str,
+    sweep_error: dict | None = None,
+) -> dict:
+    """루프를 시작하지 못하고 끝난 실행의 결과. **모양은 여기 한 곳에서만
+    정의한다.**
+
+    이 저장소는 결과 모양이 두 곳에서 따로 만들어졌을 때 한쪽만 키를 빠뜨리는
+    사고를 이미 겪었다(코너 시드 실패의 이른 반환에 `topology_swaps`가 없었다 -
+    "스왑 0건"과 "이 실행은 스왑 기록을 아예 안 쓴다"가 같은 부재가 됐다).
+    이른 반환이 둘로 늘어나므로 생성기를 하나로 묶는다.
+
+    `pvt_sweep`은 **스윕을 시도했을 때만** 실린다(그때 값은 `None`이다). 키의
+    부재는 "이 스펙에는 판정 스윕이라는 것이 없다"이고, `None`은 "돌려 했는데
+    값이 없다"이며, dict는 "돌았다"다 - 셋은 다른 사실이다."""
+    result = {
+        "status": "FAIL",
+        "final_netlist_paths": netlist_paths,
+        "run_dir": run_dir,
+        "iterations_used": 0,
+        "final_criteria": [],
+        "failure_reason": failure_reason,
+        # 어느 갈래로 끝나든 결과는 자기가 재개된 것인지 말해야 한다.
+        "resumed_from": resumed_from,
+        # 같은 이유로 topology_swaps도 실린다(I-3, 키 존재 계약). 하드코딩된
+        # []가 아니라 누적값인 이유는, 이 갈래에 체크포인트가 실어 온 스왑이
+        # 있을 수 있고 그때 []는 없어진 기록을 없었던 것처럼 만들기 때문이다.
+        "topology_swaps": list(topology_swaps),
+        # "확인했고 멀쩡했다"와 "그 기록이 사라졌다"가 같은 부재면 안 된다.
+        "pvt_sweep_error": sweep_error,
+        "corner_reduction": {
+            "active": False,
+            "reason": reduction_reason,
+            "final_set": [],
+            "attempts": 0,
+            "area_baselines": 0,
+            "grown": [],
+            "path_disagreement": None,
+            "unattributed_failures": None,
+            "reentry_skipped": None,
+            "argmax_drift": _no_drift(),
+        },
+    }
+    if sweep_error is not None:
+        result["pvt_sweep"] = None
+    return result
 
 
 def _reused_baseline_sweep(history_path) -> dict | None:
@@ -350,6 +473,13 @@ async def _run(args) -> dict:
         None if reduction_active else _reduction_off_reason(corner_capable, reduction)
     )
 
+    # 시도를 가로질러 누적하는 유일한 result 키(I-2). 아래 **두** 이른 반환
+    # (진입 스윕 실패, 코너 시드 실패)이 이 값을 실어야 하므로 그 앞에서
+    # 만든다 - 상세한 근거는 아래 재진입 루프 직전의 주석에 있다.
+    all_topology_swaps: list[dict] = (
+        [dict(s) for s in checkpoint.all_topology_swaps] if checkpoint is not None else []
+    )
+
     baseline_sweep = None
     if corner_capable:
         # 재개할 때는 이력에 남은 진입 스윕을 다시 쓴다. 이 스윕의 입력은
@@ -364,15 +494,40 @@ async def _run(args) -> dict:
                 {"corners": len(reused.get("per_corner", [])), "overall_pass": reused.get("overall_pass")},
             )
         else:
-            baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+            try:
+                baseline_sweep = run_full_pvt_sweep(initial_netlist_texts, spec, sim_backend)
+            except Exception as exc:   # noqa: BLE001 - 근거는 아래 주석
+                # **가드가 없으면 여기서 터진 예외가 main()의
+                # write_result_json/write_report_md 두 줄을 그대로 건너뛴다.**
+                # run_optimization이 이미 같은 이유로 감싸여 있는데(그 자리의
+                # 독스트링이 근거를 적는다) 스윕 두 호출부는 빠져 있었다.
+                #
+                # **왜 Exception인가.** 좁게 잡는 것으로는 부족하다:
+                # `OSError`(워커의 ENOSPC/EAGAIN)와 `ValueError`(pvt.py의
+                # CornerRenderError)만이 아니라, 스펙의 `operator: "=~"` 오타
+                # 하나가 `judge_tools._OPERATORS[c.operator]`에서 `KeyError`를
+                # 낸다 - 환경 장애 없이, 결정론적으로. 예외 종류를 열거하는
+                # 것은 "다음에 어떤 종류가 이 자리에 도달하는가"를 추측하는
+                # 것이고, 이 저장소는 그런 추측을 사실로 쓰지 않는다.
+                #
+                # 조용해지지 않는다: 예외의 **종류와 메시지가 그대로**
+                # failure_reason과 history 이벤트에 실리고 종료 코드는 1이다.
+                # 삼키는 것이 아니라 **산출물을 남기고 시끄럽게 실패**하는 것이다.
+                error = _sweep_error("entry", exc)
+                state.log_event("pvt_sweep_failed", error)
+                return _early_fail_result(
+                    run_dir=run_dir,
+                    netlist_paths=state.current_netlist_paths(),
+                    resumed_from=resumed_from,
+                    topology_swaps=all_topology_swaps,
+                    failure_reason=f"the entry PVT sweep could not run: {error['error']}",
+                    reduction_reason=(
+                        f"the entry PVT sweep could not run, so no corner set could be "
+                        f"seeded: {error['error']}"
+                    ),
+                    sweep_error=error,
+                )
             state.log_event("pvt_baseline_sweep", baseline_sweep)
-
-    # 시도를 가로질러 누적하는 유일한 result 키(I-2). 아래 코너 시드 실패의
-    # 이른 반환도 이 값을 실어야 하므로 그 앞에서 만든다 - 상세한 근거는 아래
-    # 재진입 루프 직전의 주석에 있다.
-    all_topology_swaps: list[dict] = (
-        [dict(s) for s in checkpoint.all_topology_swaps] if checkpoint is not None else []
-    )
 
     corner_state = None
     # 축소가 꺼졌으면 오늘의 simulate_fn 그대로 - nominal 한 점이다.
@@ -406,39 +561,18 @@ async def _run(args) -> dict:
             # 만든다 - 그것이 이 자리로 흘러드는 날의 벽이다.)
             reason = f"{type(exc).__name__}: {exc}"
             state.log_event("corner_set_seed_failed", {"reason": reason})
-            return {
-                "status": "FAIL",
-                "final_netlist_paths": state.current_netlist_paths(),
-                "run_dir": run_dir,
-                "iterations_used": 0,
-                "final_criteria": [],
-                "failure_reason": f"could not seed the mid-loop corner set: {reason}",
-                # 이 이른 반환에도 실린다 - 어느 갈래로 끝나든 결과는 자기가
-                # 재개된 것인지 말해야 한다.
-                "resumed_from": resumed_from,
-                # 같은 이유로 topology_swaps도 실린다(I-3, 키 존재 계약).
-                # _final_result의 독스트링이 그 계약을 적어 두었다: "키를
-                # 조건부로 넣지 않는 이유도 같다 - '스왑이 없었다'와 '기록이
-                # 사라졌다'가 같은 부재로 보이면 안 된다." 여기만 빠져 있었고,
-                # report.py는 빈 목록이면 섹션을 안 그리므로 report.md로는
-                # 보이지 않았다 - result.json을 기계로 읽는 소비자에게만
-                # 어긋난다. 하드코딩된 []가 아니라 누적값을 싣는 이유는, 이
-                # 갈래에 체크포인트가 실어 온 스왑이 있을 수 있고 그때 []는
-                # 없어진 기록을 없었던 것처럼 만들기 때문이다.
-                "topology_swaps": list(all_topology_swaps),
-                "corner_reduction": {
-                    "active": False,
-                    "reason": f"seeding the corner set from the entry sweep failed: {reason}",
-                    "final_set": [],
-                    "attempts": 0,
-                    "area_baselines": 0,
-                    "grown": [],
-                    "path_disagreement": None,
-                    "unattributed_failures": None,
-                    "reentry_skipped": None,
-                    "argmax_drift": _no_drift(),
-                },
-            }
+            # 결과 모양은 _early_fail_result 한 곳에서만 만든다(그 독스트링이
+            # 근거를 적는다 - 이 자리의 topology_swaps 누락이 그 사고였다).
+            # sweep_error는 None이다: 스윕은 멀쩡히 돌았고 못 한 것은 씨앗
+            # 뽑기이므로, 여기에 스윕 실패를 적으면 없는 사실을 적는 것이 된다.
+            return _early_fail_result(
+                run_dir=run_dir,
+                netlist_paths=state.current_netlist_paths(),
+                resumed_from=resumed_from,
+                topology_swaps=all_topology_swaps,
+                failure_reason=f"could not seed the mid-loop corner set: {reason}",
+                reduction_reason=f"seeding the corner set from the entry sweep failed: {reason}",
+            )
         state.log_event(
             "corner_set_seeded",
             {
@@ -501,6 +635,10 @@ async def _run(args) -> dict:
     unattributed_failures: dict | None = None
     reentry_skipped: dict | None = None
     final_sweep: dict | None = None
+    # **돌지 못한** 판정 스윕의 기록. 루프 밖에서 미리 만드는 것은 결과에
+    # **무조건** 실리기 때문이다 - "스윕이 멀쩡히 돌았다"와 "그 기록이
+    # 사라졌다"가 같은 부재면 안 된다(optimize_guard_infeasible이 치른 값).
+    sweep_error: dict | None = None
     # **스왑 레코드만은 시도를 가로질러 누적한다.** 아래 루프는 시도마다
     # run_orchestration을 새로 부르고 그 결과로 result를 통째로 덮는데,
     # 재진입은 **수렴된 덱에서 시작하므로**(아래 state.current_netlist_texts())
@@ -693,7 +831,30 @@ async def _run(args) -> dict:
             # 스윕이 아님을 말한다.
             state.log_event("pvt_final_sweep", {"reused_from_optimization": True, **final_sweep})
         else:
-            final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
+            try:
+                final_sweep = run_full_pvt_sweep(state.current_netlist_texts(), spec, sim_backend)
+            except Exception as exc:   # noqa: BLE001 - 근거는 진입 스윕 쪽 주석
+                # **가장 비싼 자리다.** 여기까지 오면 튜닝 루프가 이미 끝났고
+                # (two_stage_opamp 기준 103분) 최적화까지 돌았는데, 가드가
+                # 없으면 run-dir에 history.jsonl과 netlist_v*.cir만 남는다.
+                #
+                # 상태는 **FAIL**이다. 판정을 내리는 것이 이 스윕이므로, 돌지
+                # 못한 스윕을 통과로 읽는 것은 아무도 확인하지 않은 넷리스트를
+                # PASS로 출하하는 것이다. 그리고 재진입하지 않는다 - 성장시킬
+                # 실패 코너가 없다(스윕이 아무 값도 내지 않았다). 이것은
+                # corner_path_disagreement와 같은 판단이다: 같은 정보로 다시
+                # 도는 것은 진단이 아니라 낭비다.
+                sweep_error = _sweep_error("verdict", exc)
+                state.log_event("pvt_sweep_failed", sweep_error)
+                result["status"] = "FAIL"
+                # '스윕이 실패했다'와 '스윕이 돌지 못했다'는 다른 사실이다.
+                # None을 싣는 것은 "돌려 했는데 실을 값이 없다"이고, 키의
+                # 부재("이 스펙에는 판정 스윕이 없다")와도 구별된다.
+                result["pvt_sweep"] = None
+                sweep_reason = f"final PVT sweep could not run: {sweep_error['error']}"
+                prior = result.get("failure_reason")
+                result["failure_reason"] = f"{prior}; {sweep_reason}" if prior else sweep_reason
+                break
             sweep_label = "final PVT sweep"
             state.log_event("pvt_final_sweep", {"reused_from_optimization": False, **final_sweep})
         result["pvt_sweep"] = final_sweep
@@ -837,6 +998,12 @@ async def _run(args) -> dict:
     # 무효로 만든 원인의 절반이었다. 재개 여부가 결과에서 안 보이면 이 기능은
     # 측정 장치를 고치는 게 아니라 망가뜨린다.
     result["resumed_from"] = resumed_from
+
+    # **스윕이 멀쩡히 돈 실행에도 null로 실린다.** 실패할 때만 적으면 "돌았고
+    # 멀쩡했다"와 "이 실행은 그 기록을 아예 안 쓴다"가 같은 부재가 된다 -
+    # 이 저장소가 게이트에 대해 아홉 번 치른 값이고, optimize_guard_infeasible이
+    # 무조건 로깅되는 것과 같은 규칙이다.
+    result["pvt_sweep_error"] = sweep_error
 
     result["corner_reduction"] = {
         "active": reduction_active,
