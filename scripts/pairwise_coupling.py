@@ -152,13 +152,13 @@ SCALES_STAGE2 = (0.3, 0.5, 0.7, 1.0, 1.4, 2.0, 3.0)
 INTEGER_PARAMS = {"m", "nf", "mf"}
 
 # 바이어스 생성기 그 자체인 소자들(netlist.cir): Xp3/Xp4/Xn1/Xn2가 nbias/pbias를
-# 만드는 베타-멀티플라이어이고 Rdeg/Rstart가 그 축퇴/시동 소자다. 이 소자들의
-# 크기를 **직접** 바꾸면 degn이 상태 A(~0.0119V)에서 크게 벗어나는 것이 정상
-# 물리다 - 회로 자체가 달라졌으니 새로운(그리고 유일한) 동작점을 갖는 것이지,
-# T16이 발견한 "같은 회로가 무관한 다른 소자 크기 때문에 두 해 중 하나로
-# 혼돈적으로 튄다"는 문제가 아니다. 그래서 degn 이탈 카운트를 이 소자들을
-# 건드린 쌍과 아닌 쌍으로 나눠 보고한다 - 후자가 0이 아니면 그것이 진짜
-# T16류 오염이고, 전자의 이탈은 기대된 것이다.
+# 만드는 베타-멀티플라이어이고 Rdeg/Rstart가 그 축퇴/시동 소자다. 이 소자들을
+# 직접 건드린 격자점의 degn 이탈은 **기대된 물리일 수 있다는 가설**이지 확인된
+# 사실이 아니다 - `DEGN_STATE_A_THRESHOLD`가 상태 A/B의 중간값이라, "소자를
+# 바꿔 동작점이 옮겨갔다"와 "솔버가 상태 B에 착지했다"를 지금 데이터로는 가를
+# 수 없다. 그래서 이 집합은 **진단(바이어스 관련/무관 분해)에만** 쓰고, 유효성
+# 판정(`bistability_validity`)에는 쓰지 않는다 - 판정은 사전 등록 문장 그대로
+# "이탈 점을 가진 쌍은 무효"를 예외 없이 적용한다.
 BIAS_GENERATOR_REFDES = {
     "OPAMP2STAGE.Xp3", "OPAMP2STAGE.Xp4", "OPAMP2STAGE.Xn1",
     "OPAMP2STAGE.Xn2", "OPAMP2STAGE.Rdeg", "OPAMP2STAGE.Rstart",
@@ -430,6 +430,10 @@ def _degn_deviations(grid: PairGrid) -> int:
     )
 
 
+def _touches_bias_generator(knob_a: Knob, knob_b: Knob) -> bool:
+    return knob_a.refdes in BIAS_GENERATOR_REFDES or knob_b.refdes in BIAS_GENERATOR_REFDES
+
+
 def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
     n = len(knobs)
     pairs = list(itertools.combinations(range(n), 2))
@@ -452,6 +456,11 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
     if time.monotonic() - _START > MAX_WALL_SECONDS:
         log(f"!! 벽시계 상한 {MAX_WALL_SECONDS}s 초과 - 1단계 이후 중단")
 
+    # 이탈 카운트는 바이어스 생성기 관련/무관으로 **분해해서 보고만** 한다 -
+    # 그 분해를 "무관이면 무효, 관련이면 정상 물리"로 읽어 유효성 판정에 쓰지
+    # 않는다(그것이 이번 수정 라운드가 되돌린 사후 규칙 완화다). 사전 등록의
+    # 문자 그대로의 규칙은 "이탈 점을 가진 쌍은 무효, 0인 쌍은 유효"이고,
+    # `void`가 그 규칙을 그대로 구현한다.
     pair_results = {}
     degn_dev_total = 0
     degn_dev_bias = 0
@@ -460,9 +469,7 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
         grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text)
         dev = _degn_deviations(grid)
         degn_dev_total += dev
-        touches_bias = (
-            knobs[i].refdes in BIAS_GENERATOR_REFDES or knobs[j].refdes in BIAS_GENERATOR_REFDES
-        )
+        touches_bias = _touches_bias_generator(knobs[i], knobs[j])
         if touches_bias:
             degn_dev_bias += dev
         else:
@@ -481,7 +488,12 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
                 "I_rel": I_rel,
                 "coupled": coupled,
             }
-        pair_results[(knobs[i].label, knobs[j].label)] = per_measurement
+        pair_results[(knobs[i].label, knobs[j].label)] = {
+            "measurements": per_measurement,
+            "degn_deviations": dev,
+            "touches_bias_generator": touches_bias,
+            "void": dev > 0,
+        }
 
     log(f"1단계: degn 이탈 총 {degn_dev_total}개 (바이어스 생성기 노브 관련 "
         f"{degn_dev_bias}개 / 무관 {degn_dev_non_bias}개)")
@@ -529,9 +541,13 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
             "reason": f"신규 시뮬레이션 {len(new_texts)}개 필요, 남은 예산 {sims_budget_remaining}개",
             "n_candidate_pairs": len(pair_indices),
             "confirmations": {},
+            "pair_degn": {},
             "unique_sims": 0,
             "wall_seconds": 0.0,
             "cache_stats": backend.stats(),
+            "degn_deviations": 0,
+            "degn_deviations_bias_generator": 0,
+            "degn_deviations_non_bias": 0,
         }
 
     t0 = time.monotonic()
@@ -540,9 +556,30 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
     stats = backend.stats()
     log(f"2단계: 시뮬레이션 배치 완료, {elapsed:.1f}s (누적 캐시: {stats})")
 
+    # Critical 1 수정: 2단계는 판정 단계이고 격자도 1단계보다 넓다(x0.3..x3 대
+    # x0.5..x2) - 극단적인 크기라 상태가 뒤집힐 확률이 1단계보다 낮지 않고
+    # 오히려 높은 쪽이다. 1단계와 같은 방식(쌍마다 degn 이탈 카운트 + 바이어스
+    # 생성기 관련/무관 분해)으로 여기서도 반드시 확인한다 - 재시뮬레이션이
+    # 아니라 이미 돌린 결과(results_by_text)를 다시 읽을 뿐이라 사실상 무료다.
     confirmations = {}
+    pair_degn: dict[tuple[str, str], dict] = {}
+    degn_dev_total = 0
+    degn_dev_bias = 0
+    degn_dev_non_bias = 0
     for i, j in pair_indices:
         grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text)
+        dev = _degn_deviations(grid)
+        touches_bias = _touches_bias_generator(knobs[i], knobs[j])
+        degn_dev_total += dev
+        if touches_bias:
+            degn_dev_bias += dev
+        else:
+            degn_dev_non_bias += dev
+        pair_degn[(knobs[i].label, knobs[j].label)] = {
+            "degn_deviations": dev,
+            "touches_bias_generator": touches_bias,
+            "void": dev > 0,
+        }
         na, nb = len(grid.levels_a), len(grid.levels_b)
         for name in MEASUREMENTS:
             rels = []
@@ -564,14 +601,21 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
                 "confirmed": median > COMPARISON_REL_TOLERANCE,
             }
 
+    log(f"2단계: degn 이탈 총 {degn_dev_total}개 (바이어스 생성기 노브 관련 "
+        f"{degn_dev_bias}개 / 무관 {degn_dev_non_bias}개)")
+
     return {
         "skipped": False,
         "confirmations": confirmations,
+        "pair_degn": pair_degn,
         "n_candidate_pairs": len(pair_indices),
         "unique_sims": len(unique_texts),
         "new_sims": len(new_texts),
         "wall_seconds": elapsed,
         "cache_stats": stats,
+        "degn_deviations": degn_dev_total,
+        "degn_deviations_bias_generator": degn_dev_bias,
+        "degn_deviations_non_bias": degn_dev_non_bias,
     }
 
 
@@ -608,8 +652,8 @@ def main() -> int:
         return 1
 
     candidate_pairs = [
-        (a, b) for (a, b), meas in s1["pairs"].items()
-        if any(v["coupled"] for v in meas.values())
+        (a, b) for (a, b), rec in s1["pairs"].items()
+        if any(v["coupled"] for v in rec["measurements"].values())
     ]
     _log(f"1단계 결합 후보 쌍: {len(candidate_pairs)}개")
 
@@ -619,7 +663,7 @@ def main() -> int:
         # 쌍을 가리는 것이 이 저장소가 이미 --max-knobs 8에서 치른 실수다.
         def _max_i_rel(pair):
             a, b = pair
-            return max(v["I_rel"] or 0.0 for v in s1["pairs"][(a, b)].values())
+            return max(v["I_rel"] or 0.0 for v in s1["pairs"][(a, b)]["measurements"].values())
 
         ranked = sorted(candidate_pairs, key=_max_i_rel, reverse=True)
         selected = ranked[: args.stage2_max_pairs]
@@ -656,6 +700,36 @@ def main() -> int:
             if any(v["confirmed"] for v in meas.values()):
                 confirmed_pairs.append([a, b])
 
+    # Critical 2 수정: 사전 등록 규칙을 문자 그대로 적용한다 - 이탈 점을 가진
+    # 쌍은 무효, 0인 쌍은 유효. "바이어스 생성기를 직접 건드렸으니 예상된
+    # 물리"라는 예외는 결과를 본 뒤 만든 하위 규칙이라 여기서 쓰지 않는다
+    # (limits에 가설로만 남긴다). 유효성은 1단계 자신의 격자 **그리고**(테스트된
+    # 경우) 2단계 자신의 격자를 모두 본다 - 2단계 격자가 더 넓어(x0.3..x3)
+    # 1단계에서 안 보이던 이탈이 거기서 새로 나올 수 있다.
+    s2_pair_degn = s2["pair_degn"] if s2 else {}
+
+    def _pair_void(a: str, b: str) -> bool:
+        void1 = s1["pairs"][(a, b)]["void"]
+        void2 = s2_pair_degn.get((a, b), {}).get("void", False)
+        return bool(void1 or void2)
+
+    valid_confirmed_pairs = [[a, b] for a, b in confirmed_pairs if not _pair_void(a, b)]
+    void_confirmed_pairs = [[a, b] for a, b in confirmed_pairs if _pair_void(a, b)]
+
+    HEADLINE_PAIR = ("OPAMP2STAGE.X5.L", "OPAMP2STAGE.X7.L")
+    HEADLINE_MEASUREMENT = "ugbw_hz"
+    headline_in_s1 = HEADLINE_PAIR in s1["pairs"]
+    headline_void = _pair_void(*HEADLINE_PAIR) if headline_in_s1 else None
+    headline_confirmed = list(HEADLINE_PAIR) in confirmed_pairs
+    headline_check = {
+        "pair": list(HEADLINE_PAIR),
+        "measurement": HEADLINE_MEASUREMENT,
+        "confirmed": headline_confirmed,
+        "void": headline_void,
+        "valid_and_confirmed": bool(headline_confirmed and headline_void is False),
+    }
+    _log(f"헤드라인 사례 {HEADLINE_PAIR} 확인={headline_confirmed} 무효={headline_void}")
+
     out = {
         "spec": os.path.relpath(SPEC_PATH, REPO),
         "testbench": TESTBENCH_NAME,
@@ -678,9 +752,8 @@ def main() -> int:
             "degn_deviation_points": s1["degn_deviations"],
             "degn_deviation_points_bias_generator_pairs": s1["degn_deviations_bias_generator"],
             "degn_deviation_points_non_bias_pairs": s1["degn_deviations_non_bias"],
-            "valid_by_bistability_check": s1["degn_deviations_non_bias"] == 0,
             "pairs": {
-                f"{a}|{b}": meas for (a, b), meas in s1["pairs"].items()
+                f"{a}|{b}": rec for (a, b), rec in s1["pairs"].items()
             },
             "coupled_candidates": [[a, b] for a, b in candidate_pairs],
         },
@@ -693,6 +766,12 @@ def main() -> int:
             "new_sims": s2.get("new_sims", s2["unique_sims"]),
             "wall_seconds": s2["wall_seconds"],
             "cache_stats": s2["cache_stats"],
+            "degn_deviation_points": s2.get("degn_deviations", 0),
+            "degn_deviation_points_bias_generator_pairs": s2.get("degn_deviations_bias_generator", 0),
+            "degn_deviation_points_non_bias_pairs": s2.get("degn_deviations_non_bias", 0),
+            "pair_degn": {
+                f"{a}|{b}": rec for (a, b), rec in s2_pair_degn.items()
+            },
             "confirmations": {
                 f"{a}|{b}|{name}": rec for (a, b, name), rec in s2["confirmations"].items()
             },
@@ -704,6 +783,20 @@ def main() -> int:
                 f"나머지 {len(untested_candidates)}쌍은 2단계를 거치지 않았으므로 결합 여부가 "
                 f"미정이다(결합 없음으로 읽으면 안 된다)."
             ),
+        },
+        # Critical 2 수정: 사전 등록의 문자 그대로의 규칙("이탈 점을 가진 쌍은
+        # 무효, 0인 쌍은 유효")으로 판정한 결과. 바이어스 생성기 관련/무관
+        # 분해는 stage1/stage2의 degn_deviation_points_* 필드에 **진단으로만**
+        # 남아 있고, 여기서는 쓰지 않는다.
+        "bistability_validity": {
+            "rule": "이탈 점(v(xdut.degn) > degn_state_a_threshold)을 하나라도 가진 "
+                    "쌍은 무효, 0인 쌍은 유효 - 사전 등록 문장을 그대로 적용한다.",
+            "confirmed_pairs_total": len(confirmed_pairs),
+            "confirmed_pairs_valid": valid_confirmed_pairs,
+            "confirmed_pairs_valid_count": len(valid_confirmed_pairs),
+            "confirmed_pairs_void": void_confirmed_pairs,
+            "confirmed_pairs_void_count": len(void_confirmed_pairs),
+            "headline_check": headline_check,
         },
         "totals": {
             "total_sims": total_sims,
@@ -727,11 +820,19 @@ def main() -> int:
             "정수 노브(mf)는 반올림 후 1 미만인 scale이 버려지므로 그 축의 '낮은 끝'이 "
             "출하값 자체가 되는 경우가 있다 - knobs.dropped_scales_stage1로 남는다.",
             ".nodeset 완화책이 모든 격자점에서 상태 A를 유지한다는 보장은 없다 - 그래서 "
-            "매 점에서 degn을 확인하고 이탈 수를 싣는다. "
-            "바이어스 생성기 노브(Xp3/Xp4/Xn1/Xn2/Rdeg/Rstart) 자신을 건드린 격자점의 "
-            "이탈은 회로가 실제로 달라졌기 때문에 나는 정상 물리이지 T16류 오염이 "
-            "아니다 - degn_deviation_points_non_bias_pairs가 0이 아닌 경우에만 이 "
-            "산출물이 무효다.",
+            "매 점에서(1단계·2단계 모두) degn을 확인한다. 사전 등록의 문자 그대로의 "
+            "규칙은 '이탈 점을 가진 쌍은 무효, 0인 쌍은 유효'이고(`bistability_validity`), "
+            "바이어스 생성기 노브를 직접 건드린 이탈만 예외로 두지 않는다 - 그런 예외는 "
+            "결과를 본 뒤 만든 하위 규칙이라 여기서 쓰지 않는다.",
+            "가설로만 남긴다(확인 안 됨): 바이어스 생성기 소자(Xp3/Xp4/Xn1/Xn2/Rdeg/"
+            "Rstart) 자신을 건드린 격자점의 degn 이탈은 '회로 자체가 달라져 새 동작점에 "
+            "선 것'일 수 있고, 그렇다면 T16이 발견한 '무관한 소자 크기 때문에 두 해 중 "
+            "하나로 혼돈적으로 튄다'는 오염과는 다른 현상이다. 그러나 "
+            "`degn_state_a_threshold`(0.03V)는 상태 A(0.0119V)와 B(0.0626V)의 "
+            "중간값이라, 지금 갖고 있는 데이터로는 '소자를 바꿔 바이어스점이 이동했다'와 "
+            "'솔버가 상태 B에 착지했다'를 구별할 수 없다 - 이 가설을 확인하려면 그 쌍의 "
+            "동작점이 상태 B와 일치하는지(모든 바이어스 노드 비교) 또는 매끄러운 추세를 "
+            "따르는지 별도로 확인해야 한다.",
             "1단계는 스크리닝이지 판정이 아니다 - 528쌍 중 다수가 결합으로 나오는 것은 "
             "L/W가 분리된 tunable 노브인 이 덱에서는 놀랍지 않다(같은 트랜지스터의 L과 "
             "W는 W/L 비를 통해 물리적으로 결합돼 있다). 사전 등록이 이 경우를 "
@@ -752,9 +853,14 @@ def main() -> int:
         json.dump(out, f, indent=2, sort_keys=True)
     _log(f"결과를 {args.out}에 썼다")
     _log(f"결합 후보(1단계) {len(candidate_pairs)}개, 확정(2단계) {len(confirmed_pairs)}개, "
-         f"상태 이탈 점 {s1['degn_deviations']}개(바이어스 생성기 관련 "
-         f"{s1['degn_deviations_bias_generator']} / 무관 {s1['degn_deviations_non_bias']}), "
-         f"총 시뮬 {total_sims}개, 총 벽시계 {total_wall:.1f}s")
+         f"그중 유효(무이탈) {len(valid_confirmed_pairs)}개 / 무효(이탈 있음) "
+         f"{len(void_confirmed_pairs)}개")
+    _log(f"1단계 상태 이탈 점 {s1['degn_deviations']}개(바이어스 생성기 관련 "
+         f"{s1['degn_deviations_bias_generator']} / 무관 {s1['degn_deviations_non_bias']})")
+    _log(f"2단계 상태 이탈 점 {s2.get('degn_deviations', 0) if s2 else 0}개(바이어스 생성기 관련 "
+         f"{s2.get('degn_deviations_bias_generator', 0) if s2 else 0} / 무관 "
+         f"{s2.get('degn_deviations_non_bias', 0) if s2 else 0})")
+    _log(f"총 시뮬 {total_sims}개, 총 벽시계 {total_wall:.1f}s")
     return 0
 
 
