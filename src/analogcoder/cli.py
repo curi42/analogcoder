@@ -206,6 +206,9 @@ def _early_fail_result(
     failure_reason: str,
     reduction_reason: str,
     sweep_error: dict | None = None,
+    attempts: int = 0,
+    grown: list[list[str]] | None = None,
+    promotion_reentries: list[dict] | None = None,
 ) -> dict:
     """루프를 시작하지 못하고 끝난 실행의 결과. **모양은 여기 한 곳에서만
     정의한다.**
@@ -217,7 +220,16 @@ def _early_fail_result(
 
     `pvt_sweep`은 **스윕을 시도했을 때만** 실린다(그때 값은 `None`이다). 키의
     부재는 "이 스펙에는 판정 스윕이라는 것이 없다"이고, `None`은 "돌려 했는데
-    값이 없다"이며, dict는 "돌았다"다 - 셋은 다른 사실이다."""
+    값이 없다"이며, dict는 "돌았다"다 - 셋은 다른 사실이다.
+
+    **`attempts`/`grown`/`promotion_reentries`는 인자다. 하드코딩된 0/[]가
+    아니다.** 이 셋도 `topology_swaps`와 정확히 같은 이유로 누적값이어야
+    한다: **재개된** 실행이 이 갈래로 끝날 수 있고(체크포인트를 읽은 뒤 진입
+    스윕 재실행이 실패하는 경우), 그때 체크포인트는 이전 attempt 들의
+    `grown_labels`와 `promotion_reentries`를 이미 싣고 있다. 0/[]로 내보내면
+    "재진입이 0건이었다"와 "재진입 기록을 잃었다"가 같은 값이 되고, 그것이
+    이 함수가 존재하는 이유인 그 사고와 같은 모양이다. 도달 불가 논증으로는
+    닫히지 않는다 - 최종 리뷰가 도달 경로를 찾았다."""
     result = {
         "status": "FAIL",
         "final_netlist_paths": netlist_paths,
@@ -242,13 +254,13 @@ def _early_fail_result(
             "active": False,
             "reason": reduction_reason,
             "final_set": [],
-            "attempts": 0,
+            "attempts": attempts,
             "area_baselines": 0,
-            "grown": [],
+            "grown": [list(g) for g in (grown or [])],
             # 같은 계약이 M10(T19)에도 걸린다 - 이 갈래는 재진입 루프 자체를
             # 시작하지 못했으므로 승격 재진입도 0건이고, 그 사실은 빈 리스트로
             # 말해야 한다(키 부재가 아니라).
-            "promotion_reentries": [],
+            "promotion_reentries": [dict(r) for r in (promotion_reentries or [])],
             "path_disagreement": None,
             "unattributed_failures": None,
             "reentry_skipped": None,
@@ -541,6 +553,11 @@ async def _run(args) -> dict:
                     netlist_paths=state.current_netlist_paths(),
                     resumed_from=resumed_from,
                     topology_swaps=all_topology_swaps,
+                    attempts=checkpoint.attempt if checkpoint is not None else 0,
+                    grown=checkpoint.grown_labels if checkpoint is not None else None,
+                    promotion_reentries=(
+                        checkpoint.promotion_reentries if checkpoint is not None else None
+                    ),
                     failure_reason=f"the entry PVT sweep could not run: {error['error']}",
                     reduction_reason=(
                         f"the entry PVT sweep could not run, so no corner set could be "
@@ -613,6 +630,11 @@ async def _run(args) -> dict:
                 netlist_paths=state.current_netlist_paths(),
                 resumed_from=resumed_from,
                 topology_swaps=all_topology_swaps,
+                attempts=checkpoint.attempt if checkpoint is not None else 0,
+                grown=checkpoint.grown_labels if checkpoint is not None else None,
+                promotion_reentries=(
+                    checkpoint.promotion_reentries if checkpoint is not None else None
+                ),
                 failure_reason=f"could not seed the mid-loop corner set: {reason}",
                 reduction_reason=f"seeding the corner set from the entry sweep failed: {reason}",
             )

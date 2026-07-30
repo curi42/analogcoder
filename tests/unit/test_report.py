@@ -145,7 +145,16 @@ CORNER_REDUCTION_RESULT = {
         "final_set": ["(deck)", "ss/1.62/27.0", "ff/1.98/27.0"],
         "attempts": 2,
         "area_baselines": 3,
-        "grown": [["ff/1.98/27.0"]],
+        # **`len(grown) == attempts` 는 T19 이후 실행이 지키는 불변식이므로
+        # 정본 픽스처도 그것을 지켜야 한다.** 예전 이 픽스처는 `attempts: 2`
+        # 인데 `grown` 이 한 항목이고 `promotion_reentries` 키가 아예 없었다 -
+        # 즉 **지금 실행이 낼 수 없는 모양**이었다. 아래 세 테스트가 이것을
+        # `**CORNER_REDUCTION_RESULT[...]` 로 상속하므로, 다음 사람이 이것을
+        # 정본 result 모양으로 읽을 확률이 오히려 올라간 상태였다.
+        "grown": [["ff/1.98/27.0"], []],
+        "promotion_reentries": [
+            {"attempt": 2, "criteria": ["gain_db"], "corners": ["ss/1.62/27.0"]}
+        ],
         "path_disagreement": None,
         "unattributed_failures": None,
         "reentry_skipped": None,
@@ -317,6 +326,45 @@ def test_write_report_md_names_epsilon_tau_and_dropped_count_in_coverage_mode(tm
     assert "epsilon=0.05" in content
     assert "tau=1.0" in content
     assert "dropped 2 argmax corner(s)" in content
+
+
+def test_an_old_result_json_without_promotion_reentries_says_so_per_attempt(tmp_path):
+    """옛 `result.json`(승격 재진입 필드가 생기기 전)을 재렌더할 때의 경로.
+
+    **이 테스트가 왜 따로 필요한가.** `"no growth record available"` 분기는
+    `attempts` 가 `grown` 항목보다 많고 그 attempt 의 승격 기록도 없을 때만
+    돈다. T19 이후의 실행은 `len(grown) == attempts` 를 지키고 승격 attempt 에
+    `promotion_reentries` 항목을 넣으므로 **그 상태를 낼 수 없다.** 그래서 이
+    분기의 유일한 실행 경로는 옛 result.json 이고, 그것을 정본 픽스처로
+    흉내내면 픽스처가 "지금 실행이 낼 수 없는 모양"이 된다 - 최종 리뷰가 잡은
+    M5 가 정확히 그 상태였다.
+
+    분기를 지우거나 문구를 바꾸면 이 테스트가 실패한다. 그리고 이 자리에서
+    숫자를 **지어내지 않는다**는 것이 요점이다: 기록이 없으면 없다고 적는다.
+    """
+    result = {
+        **SAMPLE_RESULT,
+        "corner_reduction": {
+            "active": True,
+            "reason": None,
+            "final_set": ["(deck)", "ss/1.62/27.0"],
+            "attempts": 2,
+            "area_baselines": 2,
+            # 옛 실행의 모양: attempt 2개인데 성장 기록은 하나뿐이고
+            # `promotion_reentries` 키가 아예 없다.
+            "grown": [["ff/1.98/27.0"]],
+            "path_disagreement": None,
+            "unattributed_failures": None,
+            "reentry_skipped": None,
+            "argmax_drift": {"criteria": [], "moved_count": 0, "total": 0},
+        },
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+
+    assert "- attempt 1: added ff/1.98/27.0" in content
+    assert "- attempt 2: no growth record available" in content
 
 
 def test_write_report_md_says_nothing_about_the_seed_when_the_key_is_absent(tmp_path):

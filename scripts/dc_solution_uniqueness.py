@@ -57,7 +57,14 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(_HERE)
 sys.path.insert(0, os.path.join(REPO, "src"))
 
-from analogcoder.netlist import apply_changes, parse_netlist, resolve_includes  # noqa: E402
+from analogcoder.netlist import (  # noqa: E402
+    _INCLUDE_RE,
+    _LIB_CALL_RE,
+    _quoted_path,
+    apply_changes,
+    parse_netlist,
+    resolve_includes,
+)
 
 _BG = os.path.join(REPO, "benchmarks", "bandgap")
 
@@ -200,12 +207,47 @@ def _refuse_reason(text: str) -> str | None:
 
 
 def _one_deck(deck_path: str) -> tuple[list, list, list]:
+    # **경로를 절대화하고, 해소하기로 한 include 를 센다.** 상대 경로로 이 스크립트를
+    # 부르면(독스트링의 사용법이 그 모양이다) `resolve_includes` 는 include 를 상대로
+    # 남기고, `_run` 은 덱을 tempdir 에 쓰고 그 안에서 ngspice 를 돌리므로 include 가
+    # 해소되지 않는다. 그러면 프로브가 하나도 안 나오고 결과는 **무효**로 적히는데,
+    # 그 문구가 진짜 대조군(`su_b_small` - "줄이면 DC 해가 아예 안 나온다")과 글자
+    # 그대로 같다. 즉 "PDK include 를 못 찾았다" 와 "이 회로에 해가 없다" 가 구별되지
+    # 않는다. 이 파일의 독스트링이 열거한 함정 넷과 같은 부류이고 넷 다 종료 코드가
+    # 0 이었다는 것이 그 목록의 요점이므로, 다섯 번째를 여기서 닫는다.
+    # `re.sub` 가 조용한 것과 같은 일반화: **해소하기로 한 것은 세야 한다.**
+    deck_path = os.path.abspath(deck_path)
     base = resolve_includes(open(deck_path).read(), os.path.dirname(deck_path))
     print(f"###### 덱: {os.path.relpath(deck_path, REPO)}\n")
+
+    # 정규식과 경로 추출은 `netlist.py` 에서 **import** 한다. 손으로 다시 쓰면
+    # `compose.py` 가 include 규칙을 베껴 두 방향으로 갈라진 것과 같은 모양이 된다.
+    #
+    # **검사는 "상대 경로가 남았나" 가 아니라 "그 파일이 있나" 다.** 위의 `abspath`
+    # 가 상대 경로를 없애므로 전자는 발화할 수 없는 검사이고, 그것을 넣는 것이
+    # 이 저장소가 열두 번 지불한 "통과하지만 실패할 수 없는 게이트" 다. 후자는
+    # 발화한다(PDK 파일이 없거나 경로가 틀린 덱), 그리고 그것이 I1 이 지적한
+    # 진짜 실패 모양 - "include 를 못 찾았다" 가 "이 회로에 DC 해가 없다" 와
+    # 같은 문구로 나오는 것 - 을 정확히 가른다.
+    missing = []
+    for regex, first in ((_INCLUDE_RE, 2), (_LIB_CALL_RE, 1)):
+        for m in regex.finditer(base):
+            path = _quoted_path(m, first)[0]
+            if not os.path.exists(path):
+                missing.append(path)
+    if missing:
+        # 무효가 아니라 **거부**다 - 이 저장소가 `refused` 칸을 따로 만든 것과 같은
+        # 이유로, "재려 했으나 값이 안 나왔다" 와 "잴 수 있는 상태가 아니었다" 는
+        # 다른 사실이다.
+        print(f"  거부: include {len(missing)}개가 존재하지 않는다 "
+              f"(첫 항목: {missing[0]}) - 이 덱은 잴 수 있는 상태가 아니다. "
+              f"프로브가 안 나오는 것을 '해가 없다'로 읽으면 안 된다\n")
+        return ("REFUSED", f"include {len(missing)}개가 존재하지 않는다")
+
     reason = _refuse_reason(base)
     if reason is not None:
         print(f"  거부: {reason}\n")
-        return None
+        return ("REFUSED", reason)
 
     split_rows, void_rows, agree_rows = [], [], []
     for size_name, changes in SIZES.items():
@@ -272,8 +314,12 @@ def main() -> int:
     # **거부는 무효와 다른 사실이다.** "이 측정이 여기서 뜻을 갖지 않는다"와
     # "재 봤는데 값이 안 나왔다"를 같은 칸에 적으면, 앞의 것이 뒤의 것처럼
     # 읽히면서 덱에 문제가 있다는 인상을 남긴다.
-    refused = [d for d, r in totals.items() if r is None]
-    scored = {d: r for d, r in totals.items() if r is not None}
+    # **거부 이유를 하드코딩하지 않는다.** 거부 원인이 둘 이상이 되는 순간
+    # 한 문구는 나머지에 대해 거짓이 된다 - `topology_unavailable` 에 이유 코드를
+    # 붙인 것과 같은 자리다.
+    refused = {d: r[1] for d, r in totals.items() if r and r[0] == "REFUSED"}
+    scored = {d: r for d, r in totals.items()
+              if r is not None and r[0] != "REFUSED"}
     any_split = [d for d, (s, _, _) in scored.items() if s]
     all_void = [d for d, (s, v, a) in scored.items() if not a and not s]
     agreed = [d for d, (s, _, a) in scored.items() if a and not s]
@@ -281,8 +327,8 @@ def main() -> int:
     print(f"  측정한 것 중: 다중 해 {len(any_split)} / 일치 {len(agreed)} / "
           f"전부무효 {len(all_void)}")
     for deck, r in totals.items():
-        if r is None:
-            print(f"  {deck:<32} 거부   (op 가 뜻을 갖지 않는 덱)")
+        if r is None or r[0] == "REFUSED":
+            print(f"  {deck:<32} 거부   ({refused.get(deck, '이유 미기록')})")
             continue
         s, v, a = r
         mark = "다중해" if s else ("무효" if not a else "일치")
