@@ -34,6 +34,25 @@ from analogcoder.spec import load_spec
 
 REPO = os.path.dirname(_HERE)
 
+
+def budget_coverage(grid: int, seed: int, retry_budget: int) -> dict:
+    """탐침 회전이 예산 안에서 도달하는 범위의 상한. 셈의 규약은 이 함수 하나가
+    갖는다 - 다른 스크립트(예: T18a의 `argmax_reduction_45.py`)는 이 함수를
+    불러 써야지 같은 산수를 새로 베끼면 안 된다. 베끼면 두 스크립트가 갈라질
+    수 있고, 갈라진 쪽이 `DEFAULT_RETRY_BUDGET`/`(retry_budget + 1)` 같은
+    디테일 하나를 놓치는 것이 정확히 T12가 리뷰에서 잡힌 모양이다(예산을 0으로
+    잡아 피복률이 3배 낮게 나온 것).
+
+    실제 도달 수는 이 상한보다 작을 수 있다 - 승격이 회전 인덱스를 0으로
+    되돌리므로 이미 본 코너를 다시 볼 수 있다."""
+    outside = grid - seed
+    # 한 실행이 쓸 수 있는 이터레이션의 상한. 재진입 시도마다 바깥 루프가
+    # 다시 돌므로 (retry_budget + 1) 회분이다.
+    iters = MAX_OUTER_ITERATIONS * (retry_budget + 1)
+    reached = min(outside, iters)
+    pct = 100.0 * reached / outside if outside else 100.0
+    return {"outside": outside, "iters": iters, "reached": reached, "pct": pct}
+
 # 실측된 씨앗 크기. 스윕을 다시 돌지 않기 위해 이 저장소가 이미 문서화한 값을
 # 쓴다 - 전부 CLAUDE.md 와 결과 문서에 실측으로 적혀 있다.
 #
@@ -77,17 +96,12 @@ def main() -> None:
         if coverage_seed is not None:
             seeds = [("coverage", coverage_seed)]
         for mode, seed in seeds:
-            outside = grid - seed
-            # 한 실행이 쓸 수 있는 이터레이션의 상한. 재진입 시도마다 바깥
-            # 루프가 다시 돌므로 (retry_budget + 1) 회분이다.
-            iters = MAX_OUTER_ITERATIONS * (budget + 1)
-            reached = min(outside, iters)
-            pct = 100.0 * reached / outside if outside else 100.0
+            cov = budget_coverage(grid, seed, budget)
             # basename 만 쓰면 두 벤치마크의 spec_pvt.yaml 이 같은 줄로 보인다.
             name = f"{rel.split('/')[1]}/{os.path.basename(rel)} [{mode}]"
             mark = "O" if declared_reduction else "-"
-            print(f"  {name:<52} {mark:>4} {grid:>4} {seed:>4} {outside:>4} "
-                  f"{outside:>6} {reached:>6} {pct:>6.0f}%")
+            print(f"  {name:<52} {mark:>4} {grid:>4} {seed:>4} {cov['outside']:>4} "
+                  f"{cov['outside']:>6} {cov['reached']:>6} {cov['pct']:>6.0f}%")
 
     print("""
   읽는 법:

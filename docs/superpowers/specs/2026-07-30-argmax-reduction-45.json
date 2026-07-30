@@ -1,0 +1,105 @@
+{
+  "task": "T18a",
+  "spec": "benchmarks/bandgap/spec_corner_reduction_45.yaml",
+  "grid_size": 45,
+  "testbenches": 5,
+  "criteria": 22,
+  "total_simulations": 225,
+  "wall_clock_s": 39.65037933306303,
+  "cache_stats": {
+    "hits": 0,
+    "misses": 225,
+    "entries": 225
+  },
+  "seed": {
+    "mode": "argmax",
+    "seed_size": 9,
+    "seed_corners": [
+      "ff/1.98/-40.0",
+      "ss/1.62/-40.0",
+      "fs/1.98/-40.0",
+      "sf/1.62/-40.0",
+      "sf/1.98/125.0",
+      "ss/1.62/125.0",
+      "ff/1.8/125.0",
+      "sf/1.62/125.0",
+      "sf/1.98/27.0"
+    ],
+    "record": {
+      "mode": "argmax",
+      "epsilon": null,
+      "tau": null,
+      "dropped": [],
+      "total": 22,
+      "covered": 22,
+      "seed_size": 9,
+      "points_per_tb": 11,
+      "testbenches": 5
+    }
+  },
+  "points_per_tb": 11,
+  "outside": {
+    "count": 36,
+    "probe_order": [
+      "ss/1.62/27.0",
+      "ss/1.8/-40.0",
+      "ss/1.8/27.0",
+      "ss/1.8/125.0",
+      "ff/1.98/27.0",
+      "ff/1.98/125.0",
+      "ss/1.98/-40.0",
+      "ss/1.98/27.0",
+      "ss/1.98/125.0",
+      "ff/1.8/-40.0",
+      "ff/1.8/27.0",
+      "sf/1.62/27.0",
+      "ff/1.62/-40.0",
+      "ff/1.62/27.0",
+      "ff/1.62/125.0",
+      "fs/1.62/-40.0",
+      "fs/1.62/27.0",
+      "fs/1.62/125.0",
+      "sf/1.98/-40.0",
+      "fs/1.8/-40.0",
+      "fs/1.8/27.0",
+      "fs/1.8/125.0",
+      "tt/1.62/-40.0",
+      "tt/1.62/27.0",
+      "tt/1.62/125.0",
+      "tt/1.98/-40.0",
+      "tt/1.98/27.0",
+      "tt/1.98/125.0",
+      "sf/1.8/-40.0",
+      "sf/1.8/27.0",
+      "sf/1.8/125.0",
+      "fs/1.98/27.0",
+      "fs/1.98/125.0",
+      "tt/1.8/-40.0",
+      "tt/1.8/27.0",
+      "tt/1.8/125.0"
+    ]
+  },
+  "missing_criteria": [],
+  "overall_pass": true,
+  "failing_criteria": [],
+  "probe_budget_coverage": {
+    "retry_budget": 2,
+    "max_outer_iterations": 10,
+    "outside": 36,
+    "iters": 30,
+    "reached": 30,
+    "pct": 83.33333333333333,
+    "reaches_full_rotation": false
+  },
+  "projected": {
+    "points_per_tb": 11,
+    "seed_size": 9,
+    "outside": 36,
+    "probe_coverage_pct": 83
+  },
+  "deviations": {},
+  "events_sample": {
+    "corner_render_count": 5,
+    "sim_cache_count": 225
+  }
+}
