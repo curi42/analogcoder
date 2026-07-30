@@ -1924,10 +1924,14 @@ assuming a weak-model failure is a code bug.
   `test_corner_reduction_bandgap_ngspice.py` at **129 s measured**, dominated by
   two 9-corner × 5-testbench sweeps (~57 s each) shared through module-scoped
   fixtures.
-- **`pytest -m "not slow"` is the normal TDD cycle (~100 s, 1441 tests as of
-  2026-07-29, after the composed-deck, MADS and ε-coverage merges).** Note the
-  count grew 1273 → 1441 while the wall clock stayed ~100 s — these are unit
-  tests, so read the *time* as the budget and the count as drift.
+- **`pytest -m "not slow"` is the normal TDD cycle (measured 2026-07-30:
+  **1467 passed, 2 skipped, 98–121 s** — two runs on the same commit came out
+  98.5 s and 120.6 s, so read the budget as ~2 min, not 100 s).** It was 1441
+  as of 2026-07-29 (composed-deck, MADS, ε-coverage) and 1273 before that.
+  Note the count grew 1273 → 1467 while the wall clock stayed the same order —
+  these are unit tests, so read the *time* as the budget and the count as
+  drift. **The spread between two identical runs is wider than a year of count
+  growth**, so do not treat a single timing as a regression signal.
   It was ~69 s / 923 tests before the Stage-0 measurement work
   (cache, parallel sweep, checkpoint/resume, history, json_io, the
   control-block gate) and the audit fixes, and before that

@@ -252,18 +252,22 @@ def test_an_identical_control_block_is_accepted():
 
 
 def test_every_shipped_benchmark_control_block_is_accepted():
-    """게이트가 정상 동작을 막으면 불채택이다. 스펙 13개 · 컨트롤 블록 47개
+    """게이트가 정상 동작을 막으면 불채택이다. 스펙 14개 · 컨트롤 블록 52개
     전부를 자기 자신에 대해(에이전트가 원문을 그대로 되돌려준 경우) 먹인다.
 
-    **42 -> 47 은 드리프트 가드가 제 역할을 한 기록이다.** 2026-07-29 의
-    ε-근접 피복 작업이 `benchmarks/bandgap/spec_corner_coverage.yaml` 을
-    더했고 그 스펙이 테스트벤치 5개를 들고 온다. 게이트가 거부한 것은
-    **0건**이므로(확인함) 이것은 회귀가 아니라 숫자 갱신이다. 스펙 수는 10 이라고
-    적혀 있었지만 `benchmarks/*/spec*.yaml`을 세면 실제로는 13 이다 - 같이
-    고친다."""
+    **42 -> 47 -> 52 는 드리프트 가드가 제 역할을 한 기록이다.** 42 -> 47 은
+    2026-07-29 의 ε-근접 피복 작업이 `benchmarks/bandgap/spec_corner_coverage.yaml`
+    을 더한 것이고, 47 -> 52 는 2026-07-30 의 T18a 가
+    `benchmarks/bandgap/spec_corner_reduction_45.yaml` 을 더한 것이다. 둘 다
+    밴드갭의 테스트벤치 5개를 들고 온다. 게이트가 거부한 것은 두 번 다
+    **0건**이므로(확인함) 회귀가 아니라 숫자 갱신이다.
+
+    **갱신 절차는 이 순서를 지켜라:** 먼저 거부가 0건인지 확인하고, 그 다음에
+    숫자를 올린다. 순서를 뒤집으면 이 가드는 "새 컨트롤 블록이 감사 없이
+    들어오는 것을 막는다" 는 일을 못 하고 그저 숫자를 따라다니는 주석이 된다."""
     blocks = _benchmark_control_blocks()
 
-    assert len(blocks) == 47, f"컨트롤 블록 수가 47에서 {len(blocks)}로 바뀌었다"
+    assert len(blocks) == 52, f"컨트롤 블록 수가 52에서 {len(blocks)}로 바뀌었다"
 
     rejected = [
         (spec, name, check_control_block(block, block).detail)
