@@ -27,6 +27,30 @@ MAX_OPTIMIZE_STEPS = 20
 STEP_RATIO = 0.9
 
 
+class _AreaObjective:
+    """목적이 **파생 면적**이라는 표식.
+
+    문자열이 아닌 이유가 이 클래스의 전부다: 목적 이름은 측정값 딕셔너리의
+    키이므로 문자열 표식은 언젠가 같은 이름의 진짜 measure와 부딪힌다."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "AREA_OBJECTIVE"
+
+
+AREA_OBJECTIVE = _AreaObjective()
+
+
+def _objective_value(
+    objective: "str | _AreaObjective", measurements: dict, derived_area: float | None
+) -> float | None:
+    """목적값 하나를 고른다. 면적 표식이면 파생값, 이름이면 측정값이다."""
+    if objective is AREA_OBJECTIVE:
+        return derived_area
+    return measurements.get(objective)
+
+
 @dataclass
 class OptimizerAgents:
     propose: Callable
@@ -643,7 +667,9 @@ class SearchOracle:
         evaluation.violations = guard_band_violations(
             evaluation.measurements, self._spec.all_criteria, self._allowances
         )
-        evaluation.objective = evaluation.measurements.get(self._spec.optimize.objective)
+        evaluation.objective = _objective_value(
+            self._spec.optimize.objective, evaluation.measurements, evaluation.area
+        )
         return evaluation
 
 
