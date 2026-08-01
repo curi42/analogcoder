@@ -742,6 +742,28 @@ on one bandgap netlist it produced 93, 26 and 1 component roles. See
   event is written **every retry, including when empty**. `deltas_between` drops any
   criterion missing from either side rather than reading an absent measurement as
   0.0.
+- **The retry budget's headroom is instrumented because the branch that spends it
+  has never fired.** Exhausting all three retries hard-FAILs the run when any one of
+  them was a `verify_pre` rejection, and escalates to a topology swap otherwise —
+  an **intended asymmetry** the topology path mirrors, and it is unchanged. What was
+  missing is that a gate you cannot observe short of firing is unobservable at all:
+  **0 of 15 recorded runs** ended `tuning proposal repeatedly rejected`, the worst
+  iteration burned **2** of `MAX_TUNING_RETRIES = 3` (headroom **1**), and of the 8
+  iterations that failed at all, **6 reached the last retry and 5 of those already
+  carried a `verify_pre` rejection** — an r3 failure there would have been the hard
+  FAIL, not the escalation. **Exhaustion is mixed**: gate rejections and `verify_pre`
+  rejections consume the same three slots (`r1:area r2:verify_pre r3:OK` is real), so
+  counting only `verify_pre` rejections understates how close the branch came — that
+  error was made and corrected here. The `tuning_retries` event is therefore written
+  **unconditionally, including when the first retry is approved**, so "spent no
+  budget" and "the instrumentation is gone" differ, and headroom shrinking across
+  runs is visible before the branch fires. `outcome` is
+  `approved`/`exhausted_hard_fail`/`exhausted_escalate`, one per code branch.
+  `failures` is `retry - 1` (each retry either breaks approved or continues failed),
+  so the five rejection sites are untouched; `by_reason` counts distinct
+  `(retry, reason)` pairs from `tuning_history` **filtered to this `outer_iter`**,
+  because `_record_rejected` writes one `Attempt` per *change* and a plain count
+  over-reports a multi-change proposal.
 - **A rejection's reason code is recorded where it is decided, not re-parsed out of
   `history.jsonl`.** The five codes are `area`, `refdes`, `param`, `stimulus`,
   `verify_pre`. They cannot be recovered from the event stream: `area_check` and
@@ -1316,11 +1338,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   9-corner × 5-testbench sweeps shared through module-scoped fixtures.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-01: 1469
-  passed, 2 skipped, 7 deselected, 97.7 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1473
+  passed, 2 skipped, 7 deselected, 98.0 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1469), so do not treat a single timing as a regression signal. A plain `pytest -q` is ~3 min and ~33 min with
+  (1273 → 1473), so do not treat a single timing as a regression signal. A plain `pytest -q` is ~3 min and ~33 min with
   everything. Both slow files carry the `slow` marker, registered in
   `pyproject.toml`. **Re-measure this line when you add a real-simulator test** —
   it has drifted three times.

@@ -2095,3 +2095,191 @@ async def test_a_kept_change_and_a_rollback_land_in_different_boxes(tmp_path):
     summary = result["attempt_summary"]
     assert sum(summary["rejected_by_reason"].values()) == summary["by_outcome"]["rejected"]
     assert sum(summary["by_outcome"].values()) == summary["changes"]
+
+
+# --- 재시도 예산 계측 (`tuning_retries`) -------------------------------------
+#
+# 이 세 테스트가 붙어 있는 이유: `if approved_proposal is None:` 아래의
+# 하드 FAIL 분기는 **의도된 비대칭**이고 바뀌지 않는다. 바뀐 것은 그 분기가
+# 얼마나 근접했는지가 로그에 전혀 안 남았다는 것뿐이다(기록된 15개 런 중
+# 발화 0건). 그래서 계측이 **동작을 안 바꿨다**는 것도 같은 테스트가 단언한다.
+
+# M6/M7 두 소자 - 제안 하나에 변경이 **여럿**인 경우를 만들 수 있어야
+# `by_reason`의 과다 계수 결함(_record_rejected가 변경 개수만큼 Attempt를
+# 넣는다)이 드러난다.
+TWO_DEVICE_AREA_NETLIST = (
+    "* test\n"
+    "M6 vout outA vss vss NMOSG W=40u L=1u\n"
+    "M7 vout outB vdd vdd PMOSG W=20u L=1u\n"
+    ".end\n"
+)
+
+ALL_REASONS_ZERO = {"area": 0, "refdes": 0, "param": 0, "stimulus": 0, "verify_pre": 0}
+
+
+def _retry_events(state):
+    events = [json.loads(line) for line in open(state.history_path)]
+    return [e for e in events if e["step"] == "tuning_retries"]
+
+
+@pytest.mark.asyncio
+async def test_tuning_retries_is_logged_even_when_the_first_retry_is_approved(tmp_path):
+    """**게이트가 아무것도 안 할 때의 로그가 이것이다.** 승인만 있고 실패가
+    0건인 이터레이션에도 이벤트가 나와야 "예산을 안 썼다"와 "계측이
+    사라졌다"가 구별된다. 다섯 사유 키는 0이어도 **전부** 실린다."""
+    judge_calls = {"count": 0}
+
+    async def judge_fails_then_passes(measurements, spec):
+        judge_calls["count"] += 1
+        return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
+
+    agents = make_agents(judge=judge_fails_then_passes)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    events = _retry_events(state)
+    assert len(events) == 1
+    event = events[0]
+    assert event["outer_iter"] == 1
+    assert event["outcome"] == "approved"
+    assert event["approved_retry"] == 1
+    assert event["failures"] == 0
+    assert event["max_retries"] == 3
+    assert event["headroom"] == 3
+    assert event["verify_pre_rejected"] is False
+    assert event["by_reason"] == ALL_REASONS_ZERO
+
+
+@pytest.mark.asyncio
+async def test_a_gate_rejection_and_a_verify_pre_rejection_are_both_counted_once(tmp_path):
+    """실측된 `r1:area r2:verify_pre r3:OK` 모양 그대로. 소진은 게이트 거부와
+    verify_pre 거부가 **섞여서** 일어나므로, verify_pre 거부만 세면 근접도를
+    과소평가한다.
+
+    r2의 제안은 변경이 **둘**이다 - `_record_rejected`는 변경 개수만큼
+    `Attempt`를 넣으므로 그냥 세면 `verify_pre`가 2로 나온다. 사유별 개수는
+    서로 다른 `(retry, reason)` 쌍의 개수여야 한다."""
+    tune_calls = {"n": 0}
+
+    async def mixed_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        tune_calls["n"] += 1
+        if tune_calls["n"] == 1:
+            changes = [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
+            ]
+        elif tune_calls["n"] == 2:
+            changes = [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "50u", "reasoning": "x"},
+                {"refdes": "M7", "param": "W", "old_value": "20u", "new_value": "22u", "reasoning": "x"},
+            ]
+        else:
+            changes = [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "45u", "reasoning": "x"}
+            ]
+        return {"proposed_changes": changes, "overall_reasoning": "x", "confidence": 90}
+
+    async def reject_second_retry_only(structure_view, judge_result, proposal, netlist_view):
+        approved = len(proposal["proposed_changes"]) == 1
+        return {"approved": approved, "concerns": [], "feedback": "try again"}
+
+    judge_calls = {"count": 0}
+
+    async def judge_fails_then_passes(measurements, spec):
+        judge_calls["count"] += 1
+        return FAIL_JUDGE if judge_calls["count"] == 1 else PASS_JUDGE
+
+    agents = make_agents(
+        judge=judge_fails_then_passes, tune=mixed_tune, verify_pre=reject_second_retry_only
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": TWO_DEVICE_AREA_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "PASS"
+    events = _retry_events(state)
+    assert len(events) == 1
+    event = events[0]
+    assert event["outcome"] == "approved"
+    assert event["approved_retry"] == 3
+    assert event["failures"] == 2
+    assert event["headroom"] == 1
+    # 소진되지 않았어도 싣는다 - 이 불리언이 소진 시 하드FAIL이냐
+    # 에스컬레이션이냐를 가르므로, 여유가 줄고 있는 이터레이션을 읽는 사람이
+    # 어느 쪽으로 떨어질지 알아야 한다.
+    assert event["verify_pre_rejected"] is True
+    assert event["by_reason"] == {**ALL_REASONS_ZERO, "area": 1, "verify_pre": 1}
+    assert sum(event["by_reason"].values()) == event["failures"]
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_by_verify_pre_is_labelled_hard_fail_and_still_hard_fails(tmp_path):
+    """소진 두 갈래 중 verify_pre를 안고 있는 쪽. **동작은 그대로다** -
+    계측이 하드 FAIL을 안 바꿨다는 증거가 아래 두 줄이다."""
+    async def right_sized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return {
+            "proposed_changes": [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "45u", "reasoning": "x"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    async def always_reject(structure_view, judge_result, proposal, netlist_view):
+        return {"approved": False, "concerns": ["no"], "feedback": "try again"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE), tune=right_sized_tune, verify_pre=always_reject
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": TWO_DEVICE_AREA_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "tuning proposal repeatedly rejected"
+
+    events = _retry_events(state)
+    assert len(events) == 1
+    event = events[0]
+    assert event["outcome"] == "exhausted_hard_fail"
+    assert event["approved_retry"] is None
+    assert event["failures"] == 3
+    assert event["headroom"] == 0
+    assert event["verify_pre_rejected"] is True
+    assert event["by_reason"] == {**ALL_REASONS_ZERO, "verify_pre": 3}
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_by_gate_rejections_alone_is_labelled_escalate_and_the_run_continues(tmp_path):
+    """같은 소진, 다른 갈래. 게이트 거부만으로 소진되면 하드 FAIL이 아니라
+    `consecutive_rollbacks` 증가 - 즉 토폴로지 에스컬레이션 쪽이다. 실행이
+    "tuning proposal repeatedly rejected"로 끝나지 **않는** 것이 그 증거다."""
+    async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return {
+            "proposed_changes": [
+                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"},
+                {"refdes": "M7", "param": "W", "old_value": "20u", "new_value": "80u", "reasoning": "x"},
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=oversized_tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": TWO_DEVICE_AREA_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+
+    events = _retry_events(state)
+    assert len(events) == 10  # 하드 FAIL로 끊기지 않고 예산 전부를 돌았다
+    for event in events:
+        assert event["outcome"] == "exhausted_escalate"
+        assert event["approved_retry"] is None
+        assert event["failures"] == 3
+        assert event["headroom"] == 0
+        assert event["verify_pre_rejected"] is False
+        # 제안 하나에 변경이 둘인데도 사유별 개수는 재시도 수와 같다.
+        assert event["by_reason"] == {**ALL_REASONS_ZERO, "area": 3}

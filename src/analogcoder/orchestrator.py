@@ -75,6 +75,30 @@ def _attempt_summary(attempts: list[Attempt]) -> dict:
     return {"changes": len(attempts), "by_outcome": by_outcome, "rejected_by_reason": by_reason}
 
 
+def _retry_reason_counts(history: list[Attempt], outer_iter: int) -> dict[str, int]:
+    """이 outer iteration에서 재시도가 **사유별로 몇 번** 소진됐는지.
+
+    항목을 그냥 세면 안 된다 - `_record_rejected`는 제안 하나당 **변경
+    개수만큼** `Attempt`를 넣으므로, 변경 셋짜리 제안 하나가 거부되면 3으로
+    나온다. 세어야 하는 것은 소진된 재시도이므로 서로 다른 `(retry, reason)`
+    쌍을 센다. 각 재시도는 승인(break) 아니면 거부 하나(continue)이므로 이
+    합은 정확히 실패한 재시도 수와 같다.
+
+    `tuning_history`는 실행 전체에 걸쳐 쌓이므로 **이번 outer_iter로 반드시
+    필터**한다. 다섯 키는 0이어도 전부 실린다 - 키의 부재와 0이 같아지면
+    "이 사유는 없었다"와 "이 사유가 사라졌다"가 구별되지 않는다.
+    """
+    exhausted = {
+        (attempt.retry, attempt.reason)
+        for attempt in history
+        if attempt.outer_iter == outer_iter and attempt.outcome == "rejected" and attempt.reason
+    }
+    counts = {name: 0 for name in REJECTION_REASONS}
+    for _retry, reason in exhausted:
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
 def _final_result(
     status: str,
     state: RunState,
@@ -681,6 +705,50 @@ async def run_orchestration(
                 _record_rejected(
                     tuning_history, outer_iter, retry, proposal, "verify_pre", review["feedback"]
                 )
+
+            # **계측만이다 - 아래 분기의 동작은 한 줄도 바뀌지 않았다.**
+            #
+            # 그 하드 FAIL은 의도된 비대칭이고(토폴로지 경로가 이 규칙을 거울로
+            # 삼아 설계됐다) 그대로 둔다. 문제는 그 분기가 **한 번도 발화한 적이
+            # 없다는 것**이다 - 기록된 15개 런 중 0건. 발화해야만 존재를 알 수
+            # 있고, 얼마나 근접했는지는 로그에 전혀 안 남았다. 실측으로 한
+            # 이터레이션 최대 실패는 2회(임계값 3)이니 여유는 **1회**였고,
+            # 실패가 있었던 8개 이터레이션 중 6개가 마지막 재시도까지 갔으며
+            # 그중 5개는 이미 verify_pre 거부를 안고 있었다 - r3마저 실패했으면
+            # 에스컬레이션이 아니라 하드 FAIL이었다.
+            #
+            # **승인됐을 때도 무조건 남긴다.** 소진된 이터레이션만 남기면
+            # "예산을 안 썼다"와 "계측이 사라졌다"가 같은 부재가 되고, 여유가
+            # 실행들에 걸쳐 줄고 있는지를 볼 수 없다. `outcome`의 세 값은 아래
+            # 세 갈래와 1:1이라 분기를 로그에서 그대로 읽는다.
+            #
+            # `failures`는 `retry - 1`로 정확히 구한다 - 각 재시도는 승인(break)
+            # 아니면 실패(continue)이므로, 다섯 거부 자리를 건드릴 필요가 없다.
+            approved = approved_proposal is not None
+            failures = (approved_retry - 1) if approved else MAX_TUNING_RETRIES
+            if approved:
+                retry_outcome = "approved"
+            elif verify_pre_rejected_any:
+                retry_outcome = "exhausted_hard_fail"
+            else:
+                retry_outcome = "exhausted_escalate"
+            state.log_event(
+                "tuning_retries",
+                {
+                    "outer_iter": outer_iter,
+                    "outcome": retry_outcome,
+                    "approved_retry": approved_retry if approved else None,
+                    "failures": failures,
+                    "max_retries": MAX_TUNING_RETRIES,
+                    "headroom": MAX_TUNING_RETRIES - failures,
+                    # 소진되지 않았을 때도 싣는다 - 이 불리언 하나가 소진 시
+                    # 하드 FAIL이냐 에스컬레이션이냐를 가르므로, 여유가 줄고
+                    # 있는 이터레이션을 읽는 사람은 어느 쪽으로 떨어질지도
+                    # 알아야 한다.
+                    "verify_pre_rejected": verify_pre_rejected_any,
+                    "by_reason": _retry_reason_counts(tuning_history, outer_iter),
+                },
+            )
 
             if approved_proposal is None:
                 if verify_pre_rejected_any:
