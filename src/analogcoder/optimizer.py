@@ -51,6 +51,41 @@ def _objective_value(
     return measurements.get(objective)
 
 
+@dataclass(frozen=True)
+class PhaseConfig:
+    """최적화 단계 하나의 설정. **분기가 아니라 데이터다.**
+
+    단계가 둘이 되는 순간 `if 면적단계:`가 오라클·수락·이벤트 세 곳에
+    흩어지고, 셋 중 하나를 고치지 않으면 조용히 갈라진다. 이 저장소가
+    compose.py가 netlist.py의 규칙을 손으로 베껴 양방향으로 갈라진 것으로
+    이미 겪은 모양이다."""
+
+    # 문자열이면 측정값 이름, AREA_OBJECTIVE면 파생 면적.
+    objective: "str | _AreaObjective"
+    # None이면 예산 검사를 하지 않는다.
+    area_budget: float | None
+    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다.
+    guard_band: float | None
+    # 이벤트 이름 접두사. 기존 optimize_*를 읽는 쪽이 새 단계의 이벤트를
+    # 오늘의 것으로 오독하면 안 된다.
+    label: str
+
+
+def phase_from_spec(optimize) -> PhaseConfig:
+    """오늘의 전류 단계를 데이터로. 흐르는 값이 한 글자도 다르지 않다."""
+    return PhaseConfig(
+        objective=optimize.objective,
+        area_budget=optimize.area_budget,
+        guard_band=optimize.guard_band,
+        label="optimize",
+    )
+
+
+AREA_PHASE = PhaseConfig(
+    objective=AREA_OBJECTIVE, area_budget=None, guard_band=None, label="optimize_area"
+)
+
+
 @dataclass
 class OptimizerAgents:
     propose: Callable
@@ -354,7 +389,8 @@ def _rollback_to(state, canonical_name: str, index: int) -> None:
 
 
 def _bisect_last_passing(
-    state, agents: OptimizerAgents, canonical_name: str, anchor_index: int, anchor_sweep: dict
+    state, agents: OptimizerAgents, canonical_name: str, anchor_index: int, anchor_sweep: dict,
+    label: str,
 ) -> tuple[int, dict]:
     """앵커와 현재 사이에서 코너를 통과하는 **마지막** 버전을 찾아 거기 착지한다.
 
@@ -374,7 +410,7 @@ def _bisect_last_passing(
     while hi - lo > 1:
         mid = (lo + hi) // 2
         sweep, failure = _run_sweep(agents.verify_corners, _texts_at(state, mid))
-        state.log_event("optimize_bisect_probe", _sweep_event(sweep, failure, version=mid))
+        state.log_event(f"{label}_bisect_probe", _sweep_event(sweep, failure, version=mid))
         if sweep is not None and sweep.get("overall_pass"):
             lo = mid
             passing[lo] = sweep
@@ -551,6 +587,7 @@ class SearchOracle:
         baseline_components: dict,
         area_before: float,
         allowances: dict[str, float],
+        phase: PhaseConfig,
     ) -> None:
         self._spec = spec
         self._state = state
@@ -559,6 +596,7 @@ class SearchOracle:
         self._baseline_components = baseline_components
         self._area_before = area_before
         self._allowances = allowances
+        self._phase = phase
         self._simulations = 0
 
     @property
@@ -642,13 +680,14 @@ class SearchOracle:
         # 루프를 감당 가능하게 만드는 전부다 - 예산 초과는 시뮬레이션 앞에서
         # 걸러진다.
         evaluation.area = total_area(new_texts[self._canonical_name]).area
-        within, budget_reason = area_within_budget(
-            evaluation.area, self._area_before, self._spec.optimize.area_budget
-        )
-        if not within:
-            evaluation.blocked = budget_reason
-            evaluation.blocked_by = "area_budget"
-            return evaluation
+        if self._phase.area_budget is not None:
+            within, budget_reason = area_within_budget(
+                evaluation.area, self._area_before, self._phase.area_budget
+            )
+            if not within:
+                evaluation.blocked = budget_reason
+                evaluation.blocked_by = "area_budget"
+                return evaluation
 
         self._simulations += 1
         step_sim, sim_failure = await _run_simulation(self._agents.simulate, new_texts, self._spec)
@@ -668,7 +707,7 @@ class SearchOracle:
             evaluation.measurements, self._spec.all_criteria, self._allowances
         )
         evaluation.objective = _objective_value(
-            self._spec.optimize.objective, evaluation.measurements, evaluation.area
+            self._phase.objective, evaluation.measurements, evaluation.area
         )
         return evaluation
 
@@ -705,6 +744,7 @@ class SearchRun:
         objective_before: float,
         records: dict,
         max_steps: int,
+        phase: PhaseConfig,
     ) -> None:
         self.knobs = list(knobs)
         self._records = records
@@ -720,6 +760,7 @@ class SearchRun:
         self._oracle = oracle
         self._canonical_name = canonical_name
         self._max_steps = max_steps
+        self._phase = phase
         self._steps = 0
 
     # 아래 넷은 **읽기 전용**이다. 전략이 대입할 수 있으면 "제안만 한다"는
@@ -780,15 +821,12 @@ class SearchRun:
         둘 다 그냥 optimize_step이 멈추는 모양이라 구별되지 않았다 - 그래서
         자기 이벤트를 가진다."""
         if self._steps >= self._max_steps:
-            self._state.log_event(
-                "optimize_budget_exhausted",
-                {
-                    "steps": self._steps,
-                    "limit": self._max_steps,
-                    "refdes": knob.refdes,
-                    "param": knob.param,
-                },
-            )
+            self._state.log_event(f"{self._phase.label}_budget_exhausted", {
+                "steps": self._steps,
+                "limit": self._max_steps,
+                "refdes": knob.refdes,
+                "param": knob.param,
+            })
             return False
         self._steps += 1
         return True
@@ -844,7 +882,7 @@ class SearchRun:
         수락을 뒤집는 권한과 같고, 그것을 주면 이 분리가 무의미해진다."""
         evaluation = await self._oracle.evaluate(steps)
         accepted, reason = accept_step(
-            evaluation, self._best_objective, self._spec.optimize.objective
+            evaluation, self._best_objective, str(self._phase.objective)
         )
 
         head = steps[0]
@@ -866,7 +904,7 @@ class SearchRun:
             # 탐색기가 붙었을 때, 이벤트의 스칼라 필드만 보면 나머지 변경이
             # 통째로 안 보이므로 목록을 함께 남긴다.
             event["changes"] = evaluation.changes
-        self._state.log_event("optimize_step", event)
+        self._state.log_event(f"{self._phase.label}_step", event)
 
         if accepted:
             self._accepted += 1
@@ -926,7 +964,7 @@ class SearchRun:
         self._rejected += 1
 
     def _reject(self, event: dict, code: str) -> None:
-        self._state.log_event("optimize_step", event)
+        self._state.log_event(f"{self._phase.label}_step", event)
         self._count_rejection(code)
 
 
@@ -985,6 +1023,7 @@ async def _knob_ranking(
     baseline_verdict: dict,
     allowances: dict[str, float],
     objective_name: str,
+    label: str,
 ) -> list[dict]:
     """노브 순위. 주입된 것이 있으면 그것, 없으면 에이전트를 부른다.
 
@@ -995,15 +1034,12 @@ async def _knob_ranking(
     남긴다 - 남기지 않으면 "고정 순위로 돈 실행"과 "에이전트가 마침 같은
     순위를 낸 실행"이 history.jsonl에서 같은 모양이 된다."""
     if agents.knob_ranking is not None:
-        state.log_event(
-            "optimize_proposal",
-            {
-                "objective": objective_name,
-                "source": "fixed",
-                "candidates": list(agents.knob_ranking),
-                "overall_reasoning": "fixed knob ranking supplied by the caller (no agent call)",
-            },
-        )
+        state.log_event(f"{label}_proposal", {
+            "objective": objective_name,
+            "source": "fixed",
+            "candidates": list(agents.knob_ranking),
+            "overall_reasoning": "fixed knob ranking supplied by the caller (no agent call)",
+        })
         return list(agents.knob_ranking)
 
     structure = derive_structure(start_text, spec.circuit_name)
@@ -1018,9 +1054,7 @@ async def _knob_ranking(
         for entry in baseline_verdict["criteria"]
     ]
     proposal = await agents.propose(structure_view, margins, objective_name, netlist_view)
-    state.log_event(
-        "optimize_proposal", {"objective": objective_name, "source": "agent", **proposal}
-    )
+    state.log_event(f"{label}_proposal", {"objective": objective_name, "source": "agent", **proposal})
     return list(proposal.get("candidates", []))
 
 
@@ -1034,6 +1068,7 @@ async def _search(
     objective_before: float,
     area_before: float,
     allowances: dict[str, float],
+    phase: PhaseConfig,
 ) -> dict:
     """탐색을 **조립**한다. 어떤 후보를 시도할지는 여기서 정하지 않는다.
 
@@ -1055,7 +1090,7 @@ async def _search(
     이분 탐색이 중간 버전에 착지했을 때, 마지막 버전이 아니라 착지한 버전의
     수치를 보고해야 하기 때문이다. 기준 판정(criteria)도 같은 이유로 여기
     들어간다 - 리포트가 설명해야 하는 것은 돌려주는 덱이다."""
-    objective_name = spec.optimize.objective
+    objective_name = str(phase.objective)
     anchor_index = _version_index(state, canonical_name)
     baseline_verdict = evaluate_criteria(baseline_measurements, spec.all_criteria)
     records = {
@@ -1071,10 +1106,10 @@ async def _search(
     baseline_components = index_baseline_components(start_text)
 
     ranking = await _knob_ranking(
-        spec, state, agents, start_text, baseline_verdict, allowances, objective_name
+        spec, state, agents, start_text, baseline_verdict, allowances, objective_name, phase.label
     )
     oracle = SearchOracle(
-        spec, state, agents, canonical_name, baseline_components, area_before, allowances
+        spec, state, agents, canonical_name, baseline_components, area_before, allowances, phase
     )
     run = SearchRun(
         spec,
@@ -1087,6 +1122,7 @@ async def _search(
         # 모듈 전역을 **여기서** 읽는다 - 테스트가 monkeypatch로 낮춰 예산
         # 소진 경로를 고정한다. 클래스 기본값으로 굳히면 그 경로가 사라진다.
         MAX_OPTIMIZE_STEPS,
+        phase,
     )
     strategy = agents.search_strategy or coordinate_descent
     await strategy(run)
@@ -1099,7 +1135,13 @@ async def _search(
     }
 
 
-async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
+async def run_optimization(
+    netlist_texts: dict[str, str],
+    spec,
+    state,
+    agents: OptimizerAgents,
+    phase: "PhaseConfig | None" = None,
+) -> dict:
     """최적화 단계의 공개 진입점. 어떤 실패도 결과를 크래시로 바꾸지 않는다.
 
     _run_simulation과 _run_sweep은 각자 예외를 삼키지만, 이 모듈의 **유일한
@@ -1125,10 +1167,18 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     뒤에야 결과를 돌려준다 - "최적화는 시작보다 나쁜 결과를 내지 않는다"."""
     progress: dict = {}
     try:
-        return await _optimize(netlist_texts, spec, state, agents, progress)
+        return await _optimize(netlist_texts, spec, state, agents, progress, phase)
     except (AgentExecutionError, ValueError, OSError) as exc:
         reason = f"{type(exc).__name__}: {exc}"
-        state.log_event("optimize_failed", {"reason": reason})
+        # _optimize가 phase를 내부에서 resolve했을 수도 있는 지점(spec.optimize
+        # 로부터)에서 터졌을 수 있으므로, 여기서도 같은 규칙으로 label을 다시
+        # 구한다 - 그러지 않으면 면적 단계의 실패가 "optimize_failed"라는 전류
+        # 단계 이름으로 잘못 남는다.
+        label = (
+            phase.label if phase is not None
+            else (phase_from_spec(spec.optimize).label if spec.optimize is not None else "optimize")
+        )
+        state.log_event(f"{label}_failed", {"reason": reason})
         if progress.get("safe_index") is not None:
             _rollback_to(state, spec.canonical.name, progress["safe_index"])
         area_before = progress.get("area_before", 0.0)
@@ -1139,7 +1189,8 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
 
 
 async def _optimize(
-    netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict
+    netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict,
+    phase: "PhaseConfig | None",
 ) -> dict:
     """이미 모든 기준을 통과한 회로의 남은 마진을 목적값에 쓰는 결정론적 탐색.
 
@@ -1189,14 +1240,19 @@ async def _optimize(
     progress["area_before"] = area_before
     progress["area_coverage"] = area_coverage
 
-    if spec.optimize is None:
-        state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
-        return _result(
-            "SKIPPED", state, None, None, area_before, area_before,
-            area_coverage=area_coverage,
-        )
+    if phase is None:
+        # 명시적 phase가 없으면 spec.optimize에서 오늘의 전류 단계를 만든다 -
+        # spec.optimize도 없으면 정말 할 일이 없다는 뜻이라 그때만 SKIPPED다.
+        # 면적 단계는 언제나 phase를 명시적으로 들고 오므로 여기를 타지 않는다.
+        if spec.optimize is None:
+            state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
+            return _result(
+                "SKIPPED", state, None, None, area_before, area_before,
+                area_coverage=area_coverage,
+            )
+        phase = phase_from_spec(spec.optimize)
 
-    objective_name = spec.optimize.objective
+    objective_name = str(phase.objective)
 
     # state가 인자와 같은 덱을 들고 있는지 맞춘다. 루프는 매 단계 state에서
     # 현재 텍스트를 다시 읽고 거절 시 state.rollback()으로 되돌리므로, 둘이
@@ -1209,34 +1265,28 @@ async def _optimize(
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
-    state.log_event(
-        "optimize_baseline",
-        {
-            "objective": objective_name,
-            "area_before": area_before,
-            "area_counted": area_coverage["counted"],
-            "area_skipped": area_coverage["skipped"],
-            "area_budget_enforced": area_coverage["budget_enforced"],
-            "area_reason": area_coverage["reason"],
-            **(sim_result or {"failure": sim_failure}),
-        },
-    )
+    state.log_event(f"{phase.label}_baseline", {
+        "objective": objective_name,
+        "area_before": area_before,
+        "area_counted": area_coverage["counted"],
+        "area_skipped": area_coverage["skipped"],
+        "area_budget_enforced": area_coverage["budget_enforced"],
+        "area_reason": area_coverage["reason"],
+        **(sim_result or {"failure": sim_failure}),
+    })
     baseline_measurements = sim_result["measurements"] if sim_result else {}
-    objective_before = baseline_measurements.get(objective_name)
+    objective_before = _objective_value(phase.objective, baseline_measurements, area_before)
 
     if objective_before is None:
         # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
         # 판정할 수 없다. 통과한 설계를 그대로 둔다.
-        state.log_event(
-            "optimize_step",
-            {
-                "refdes": None, "param": None, "before": None, "after": None,
-                "objective": None, "area": area_before, "accepted": False,
-                "gate": None,
-                "reason": sim_failure
-                or f"objective {objective_name!r} is not among the measurements",
-            },
-        )
+        state.log_event(f"{phase.label}_step", {
+            "refdes": None, "param": None, "before": None, "after": None,
+            "objective": None, "area": area_before, "accepted": False,
+            "gate": None,
+            "reason": sim_failure
+            or f"objective {objective_name!r} is not among the measurements",
+        })
         return _result(
             "UNCHANGED", state, None, None, area_before, area_before,
             area_coverage=area_coverage,
@@ -1249,6 +1299,14 @@ async def _optimize(
     corner_capable = spec.pvt_corners is not None and agents.verify_corners is not None
     anchor_index = _version_index(state, canonical_name)
     entry_sweep = None
+    # None이면 비율 폴백이 없다 - 면적 단계처럼 선언 없이 도는 phase는 없는
+    # 숫자를 지어내지 않는다. 전류 단계는 언제나 guard_band를 들고 있으므로
+    # 이 삼항이 흐르는 값을 바꾸지 않는다.
+    ratio = (
+        ratio_allowances(spec.all_criteria, phase.guard_band)
+        if phase.guard_band is not None
+        else {}
+    )
 
     if corner_capable:
         # 진입 스윕. 추가 비용이 아니라 **앵커**다: "실패하면 시작점으로
@@ -1256,9 +1314,8 @@ async def _optimize(
         entry_sweep, entry_failure = _run_sweep(
             agents.verify_corners, state.current_netlist_texts()
         )
-        state.log_event(
-            "optimize_entry_sweep", _sweep_event(entry_sweep, entry_failure, version=anchor_index)
-        )
+        state.log_event(f"{phase.label}_entry_sweep",
+                         _sweep_event(entry_sweep, entry_failure, version=anchor_index))
         if entry_sweep is None or not entry_sweep.get("overall_pass"):
             # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다. 되돌아갈
             # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다.
@@ -1296,11 +1353,11 @@ async def _optimize(
         # 추측이 구멍을 막는다. 고칠 자리는 여기(이음매)이지 Task 3의 생략
         # 규칙이 아니다.
         allowances = {
-            **ratio_allowances(spec.all_criteria, spec.optimize.guard_band),
+            **ratio,
             **corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria),
         }
     else:
-        allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
+        allowances = ratio
 
     # **기준선이 자기 가드밴드를 지키는가.** 지키지 못하면 어떤 후보도 수락될
     # 수 없다: 수락 규칙이 매 단계 이 같은 검사를 돌리기 때문이다.
@@ -1324,19 +1381,16 @@ async def _optimize(
     )
     # 조건 없이 남긴다. 위반이 있을 때만 남기면 "검사했고 문제없었다"와
     # "검사 자체가 사라졌다"가 history.jsonl에서 같은 모양이 된다.
-    state.log_event(
-        "optimize_guard_infeasible",
-        {
-            "infeasible": bool(guard_infeasible),
-            "violations": guard_infeasible,
-            "allowances": allowances,
-            "measured_allowances": corner_capable,
-        },
-    )
+    state.log_event(f"{phase.label}_guard_infeasible", {
+        "infeasible": bool(guard_infeasible),
+        "violations": guard_infeasible,
+        "allowances": allowances,
+        "measured_allowances": corner_capable,
+    })
 
     outcome = await _search(
         spec, state, agents, canonical_name, start_text, baseline_measurements,
-        objective_before, area_before, allowances,
+        objective_before, area_before, allowances, phase,
     )
     accepted = outcome["accepted"]
     rejected = outcome["rejected"]
@@ -1376,9 +1430,8 @@ async def _optimize(
     confirm_sweep, confirm_failure = _run_sweep(
         agents.verify_corners, state.current_netlist_texts()
     )
-    state.log_event(
-        "optimize_confirm_sweep", _sweep_event(confirm_sweep, confirm_failure, version=end_index)
-    )
+    state.log_event(f"{phase.label}_confirm_sweep",
+                     _sweep_event(confirm_sweep, confirm_failure, version=end_index))
     if confirm_sweep is not None and confirm_sweep.get("overall_pass"):
         return _final("OPTIMIZED", end_index, accepted, rejected, confirm_sweep)
 
@@ -1386,14 +1439,12 @@ async def _optimize(
     # 이미 구간 안에 있고, 통과하는 마지막 지점을 이분 탐색으로 찾는 편이
     # 상한이 있다. 최악이어도 앵커에 착지하므로 시작보다 나빠질 수 없다.
     landed, landed_sweep = _bisect_last_passing(
-        state, agents, canonical_name, anchor_index, entry_sweep
+        state, agents, canonical_name, anchor_index, entry_sweep, phase.label
     )
     survived = landed - anchor_index
-    state.log_event(
-        "optimize_bisect_result",
-        {"version": landed, "anchor": anchor_index, "end": end_index,
-         "steps_kept": survived, "steps_walked_back": accepted - survived},
-    )
+    state.log_event(f"{phase.label}_bisect_result",
+                     {"version": landed, "anchor": anchor_index, "end": end_index,
+                      "steps_kept": survived, "steps_walked_back": accepted - survived})
     # 착지가 앵커면 남은 것이 없다 - 시작 설계를 그대로 돌려준다. 보고하는
     # 수락 수는 **살아남은** 단계 수다: 코너에서 되돌린 단계를 수락으로 세면
     # 결과가 돌려주는 넷리스트를 설명하지 못한다.
