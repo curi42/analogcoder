@@ -760,14 +760,21 @@ def test_a_passing_pvt_sweep_is_drawn_too(tmp_path):
 # 설명하고 있다는 사실이 보이지 않는다.
 
 
-def test_final_criteria_says_it_is_the_mid_loop_judge_at_the_deck_as_it_is(tmp_path):
+def test_final_criteria_says_it_is_the_deck_the_tuning_loop_returned(tmp_path):
+    """LLM judge가 제거된 뒤 "누가 판정했는가" 축은 세 후보 모두
+    `evaluate_criteria` 하나로 접힌다. 그러므로 이 줄이 구별해야 하는 것은
+    **어느 덱을** 판정했는가이고, 그것을 단언한다 - `evaluate_criteria`만
+    확인하면 세 후보 중 어느 것에서도 통과하는 단언이 된다."""
     path = write_report_md(str(tmp_path), SAMPLE_RESULT)
     with open(path) as f:
         content = f.read()
     assert "## Final criteria" in content
-    assert "`judge`" in content
+    assert "the deck the tuning loop returned" in content
+    assert "evaluate_criteria" in content
     # 코너를 렌더링하지 않은 덱 한 점.
     assert "no corner rendering" in content
+    # 그리고 최적화가 착지한 버전이 **아니다**.
+    assert "optimization phase landed" not in content
 
 
 def test_final_criteria_says_when_it_is_the_reduced_corner_sets_worst_case(tmp_path):

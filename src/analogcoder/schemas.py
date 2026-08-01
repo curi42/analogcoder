@@ -25,28 +25,10 @@ SIMULATION_SCHEMA = {
     "required": ["measurements", "status", "warnings"],
 }
 
-JUDGE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "overall_pass": {"type": "boolean"},
-        "criteria": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "target": {"type": "string"},
-                    "actual": {"type": "number"},
-                    "pass": {"type": "boolean"},
-                    "margin": {"type": "number"},
-                },
-                "required": ["name", "target", "actual", "pass", "margin"],
-            },
-        },
-        "summary": {"type": "string"},
-    },
-    "required": ["overall_pass", "criteria", "summary"],
-}
+# JUDGE_SCHEMA는 없다. 판정은 LLM이 아니라 `judge_tools.evaluate_criteria`이고,
+# 그 반환 모양(`{overall_pass, criteria: [{name, target, actual, pass, margin}],
+# summary}`)은 스키마로 검증할 LLM 출력이 아니라 함수의 계약이다. 검증할 것이
+# 없는 스키마를 남겨 두면 "judge 출력은 검증된다"는 인상만 남는다.
 
 TUNER_SCHEMA = {
     "type": "object",

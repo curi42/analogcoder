@@ -3,10 +3,10 @@ import os
 import pytest
 
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
-from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_tuning
 from analogcoder.agents.verifier import verify_post, verify_pre
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
@@ -43,8 +43,9 @@ async def test_inverting_amp_benchmark_with_local_llm_backend(tmp_path):
             merged_measurements.update(result["measurements"])
         return {"measurements": merged_measurements}
 
+    # Judging is deterministic - the local model never sees it.
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.all_criteria, agent_backend)
+        return evaluate_criteria(measurements, spec_arg.all_criteria)
 
     async def tune_fn(structure_view, judge_result, history, rejection_feedback, netlist_text_arg):
         return await propose_tuning(

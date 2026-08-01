@@ -1,5 +1,6 @@
 import inspect
 import json
+import math
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -541,7 +542,9 @@ def test_claude_backend_defaults_to_sonnet():
 
     backends = _build_agent_backends(args)
 
-    assert set(backends) == {"simulator", "judge", "tuner", "verifier", "optimizer"}
+    # judge는 여기 없다. 판정은 `judge_tools.evaluate_criteria` 직접 호출로
+    # 대체됐으므로 LLM 백엔드를 만들 자리 자체가 없다.
+    assert set(backends) == {"simulator", "tuner", "verifier", "optimizer"}
     assert all(b.model == "sonnet" for b in backends.values())
 
 
@@ -556,8 +559,8 @@ def test_claude_model_flag_sets_every_agent_model():
 
 def test_agent_model_flag_overrides_a_single_agent():
     # Lets a run drop one agent to a weaker model to see whether the pipeline
-    # still holds - the tool-calling agents (simulator, judge) are the ones a
-    # lower-capability model has historically struggled with.
+    # still holds - the simulator is the one tool-calling agent left, and a
+    # lower-capability model has historically struggled with it.
     parser = build_arg_parser()
     args = parser.parse_args(
         ["--spec", "s.yaml", "--claude-model", "sonnet", "--agent-model", "simulator=haiku"]
@@ -574,6 +577,19 @@ def test_agent_model_flag_rejects_an_unknown_agent_name():
     args = parser.parse_args(["--spec", "s.yaml", "--agent-model", "nosuchagent=haiku"])
 
     with pytest.raises(ValueError, match="nosuchagent"):
+        _build_agent_backends(args)
+
+
+def test_agent_model_flag_rejects_judge_because_judging_is_no_longer_an_llm():
+    # judge는 에이전트가 아니게 됐으므로 `--agent-model judge=...`는 이제
+    # 에러다. 조용히 무시하면 사용자가 "판정 모델을 바꿨다"고 믿은 채
+    # 아무것도 바뀌지 않은 실행을 얻는다.
+    assert "judge" not in AGENT_NAMES
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", "s.yaml", "--agent-model", "judge=haiku"])
+
+    with pytest.raises(ValueError, match="judge"):
         _build_agent_backends(args)
 
 
@@ -693,6 +709,82 @@ async def test_simulate_fn_reports_success_only_when_every_testbench_succeeded(t
 
 async def _as_coroutine(value):
     return value
+
+
+# --- 판정은 LLM이 아니다 -------------------------------------------------------
+
+
+JUDGED_SPEC_YAML = (
+    "circuit_name: test\n"
+    "testbenches:\n"
+    "  - name: ac_loop_gain\n"
+    "    netlist: netlist.cir\n"
+    '    analyses: ["ac"]\n'
+    '    control_block: ".control\\n.endc\\n"\n'
+    "    criteria:\n"
+    "      - name: gain\n"
+    "        measurement: gain_db\n"
+    '        operator: ">="\n'
+    "        threshold: 60.0\n"
+    "        unit: dB\n"
+)
+
+
+async def _capture_judge_fn(tmp_path, run_dir: str):
+    """_run을 한 번 돌려 orchestrator에 넘어가는 judge 콜러블을 꺼낸다."""
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(JUDGED_SPEC_YAML)
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir])
+
+    captured: dict = {}
+    with patch(
+        "analogcoder.cli.run_orchestration",
+        new=_orchestration(_pass_result(run_dir), captured),
+    ):
+        await _run(args)
+
+    return captured["agents"].judge, captured["spec"]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_measurement_is_judged_NaN_and_never_zero(tmp_path):
+    """이 변경이 고치는 결함. 시뮬레이션이 실패해 measurements가 비면 LLM
+    judge는 `actual=0, margin=0`을 **지어냈다**(재생한 58개 judge 이벤트 중
+    25건). 결정론 경로는 `NaN`을 쓴다 - "재지 못했다"와 "재보니 0이었다"는
+    다른 사실이고, 0은 임계값과 비교되는 순간 거짓 마진이 된다."""
+    judge_fn, spec = await _capture_judge_fn(tmp_path, str(tmp_path / "runs" / "j1"))
+
+    result = await judge_fn({}, spec)
+
+    assert result["overall_pass"] is False
+    (criterion,) = result["criteria"]
+    assert criterion["name"] == "gain"
+    assert math.isnan(criterion["actual"]), criterion
+    assert math.isnan(criterion["margin"]), criterion
+    assert criterion["pass"] is False
+
+
+@pytest.mark.asyncio
+async def test_judge_fn_stays_a_coroutine_and_measures_a_present_value(tmp_path):
+    # 반대 방향: NaN만 고정하면 "항상 NaN"인 구현도 통과한다.
+    # 그리고 orchestrator는 `await agents.judge(...)`로 부르므로 코루틴이어야 한다.
+    judge_fn, spec = await _capture_judge_fn(tmp_path, str(tmp_path / "runs" / "j2"))
+
+    assert inspect.iscoroutinefunction(judge_fn)
+
+    result = await judge_fn({"gain_db": 72.5}, spec)
+
+    assert result["overall_pass"] is True
+    (criterion,) = result["criteria"]
+    assert criterion["actual"] == 72.5
+    assert criterion["margin"] == pytest.approx(12.5)
+    # `target`에 단위가 없는 것은 의도된 결과다 - 중간 루프와 최종 스윕이
+    # 이제 `evaluate_criteria`의 **같은 문자열**을 낸다. LLM judge는 여기에
+    # ">=60.0 dB"를 썼다.
+    assert criterion["target"] == ">=60.0"
 
 
 # --- 최적화 배선 --------------------------------------------------------------

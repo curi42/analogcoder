@@ -360,9 +360,11 @@ def _final_criteria_provenance(result: dict) -> str:
     - **무엇을 쟀는가**: `corner_reduction.active`면 중간 루프가 본 값은 명목
       한 점이 아니라 **선택 집합의 최악값**이다(`corner_sim.build_corner_simulate`).
       아니면 코너를 통과시키지 않은 덱 한 점이다.
-    - **누가 판정했는가**: `cli.py`는 최적화가 기준을 재고 왔으면 이 표를
-      **덮는다**(`optimization["final_criteria"]`). 그때 이것은 LLM judge의
-      것이 아니라 bisection이 착지한 버전에 대한 `evaluate_criteria`의 판정이다.
+    - **누가 판정했는가**: 판정자는 두 경우 모두 `evaluate_criteria`다(LLM
+      judge는 제거됐다). 다른 것은 **어느 덱을** 판정했는가다 - `cli.py`는
+      최적화가 기준을 재고 왔으면 이 표를 **덮으므로**
+      (`optimization["final_criteria"]`) 그때는 bisection이 착지한 버전이고,
+      아니면 튜닝 루프가 돌려준 덱이다.
     """
     reduction = result.get("corner_reduction") or {}
     if reduction.get("active"):
@@ -382,7 +384,10 @@ def _final_criteria_provenance(result: dict) -> str:
             "`evaluate_criteria`, on the netlist version the optimization phase landed on"
         )
     else:
-        judged_by = "the `judge` agent, on the deck the tuning loop returned"
+        # 판정자는 이제 두 자리 모두 `evaluate_criteria`다(LLM judge 제거).
+        # 그래도 두 문장을 합치지 않는다 - **어느 덱을** 판정했는지가 다르고,
+        # 그것이 이 줄이 존재하는 이유다.
+        judged_by = "`evaluate_criteria`, on the deck the tuning loop returned"
 
     return f"Measured on {condition}; judged by {judged_by}."
 

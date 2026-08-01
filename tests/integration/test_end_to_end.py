@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.orchestrator import OrchestratorAgents, run_orchestration
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
@@ -35,8 +35,10 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
             merged_measurements.update(result["measurements"])
         return {"measurements": merged_measurements}
 
+    # Judging is deterministic - no LLM, no backend. Kept `async` because
+    # the orchestrator awaits this slot.
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.all_criteria)
+        return evaluate_criteria(measurements, spec_arg.all_criteria)
 
     # This benchmark is designed to pass on the first simulation, so tune/verify
     # should never be invoked; make that an explicit assertion by failing loudly
@@ -53,9 +55,9 @@ async def test_inverting_amp_benchmark_passes_immediately(tmp_path, monkeypatch)
         propose_topology=fail_if_called,
     )
 
-    # These two calls hit the real Claude Agent SDK (simulate_fn -> agent_simulate,
-    # judge_fn -> judge_measurements). If ANTHROPIC_API_KEY / SDK auth is not
-    # configured in this environment, skip rather than fail the suite.
+    # simulate_fn -> agent_simulate is the one call that hits the real Claude
+    # Agent SDK here (judging is deterministic). If ANTHROPIC_API_KEY / SDK
+    # auth is not configured in this environment, skip rather than fail.
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("requires a configured Claude Agent SDK credential to run live agents")
 

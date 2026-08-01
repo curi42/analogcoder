@@ -7,7 +7,6 @@ import uuid
 from analogcoder.agents.backend import AgentBackend
 from analogcoder.agents.backends.claude_sdk import DEFAULT_CLAUDE_MODEL, ClaudeSDKBackend
 from analogcoder.agents.backends.openai_compatible import OpenAICompatibleBackend
-from analogcoder.agents.judge import judge_measurements
 from analogcoder.agents.optimizer import propose_candidates
 from analogcoder.agents.simulator_agent import simulate as agent_simulate
 from analogcoder.agents.tuner import propose_topology_swap, propose_tuning
@@ -26,6 +25,7 @@ from analogcoder.checkpoint import (
 from analogcoder.corner_selection import grown_with, label, raw_label, seed_from_sweep
 from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.history import count_events, discarded_ranges, line_count, read_events
+from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, _attempt_summary, run_orchestration
@@ -64,7 +64,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-AGENT_NAMES = ("simulator", "judge", "tuner", "verifier", "optimizer")
+# judge는 여기 없다. 판정은 LLM이 아니라 `judge_tools.evaluate_criteria`이므로
+# 얹을 모델이 없고, `--agent-model judge=...`는 이제 에러다 - 조용히 받아주면
+# 사용자가 아무것도 바꾸지 못한 채 바꿨다고 믿는다.
+AGENT_NAMES = ("simulator", "tuner", "verifier", "optimizer")
 
 def _no_drift() -> dict:
     """빈 argmax 기록. **매번 새로 만든다** - 모듈 수준 상수를 얕게 복사해
@@ -445,7 +448,23 @@ async def _run(args) -> dict:
         return {"status": status, "measurements": merged_measurements, "by_testbench": by_testbench}
 
     async def judge_fn(measurements, spec_arg):
-        return await judge_measurements(measurements, spec_arg.all_criteria, agent_backends["judge"])
+        """판정은 LLM이 아니다 - `evaluate_criteria`를 그대로 부른다.
+
+        기록된 실행의 judge 이벤트 58건(기준 인스턴스 742건)을 재생해
+        대조한 결과, 기준별 `pass`도 `overall_pass`도 **차이가 0건**이었다.
+        LLM이 더한 것은 판정이 아니라 해악뿐이다: 시뮬레이션이 실패해
+        measurements가 비었을 때 **25건에서 `actual=0, margin=0`을 지어냈다**.
+        `evaluate_criteria`는 그 자리에 `NaN`을 쓴다 - "재지 못했다"는
+        "재보니 0이었다"와 다른 사실이다.
+
+        **`async`는 유지한다.** `orchestrator.py`가 `await agents.judge(...)`로
+        부르므로, 동기 함수로 바꾸면 코루틴 계약이 깨진다.
+
+        `evaluate_criteria`는 손대지 않는다 - `pvt.py`/`optimizer.py`/
+        `curation.py`가 이미 같은 함수를 직접 부르고 그 출력이 산출물에
+        실린다. 결과로 `target` 문자열에서 단위가 빠지는데, 이는 의도된
+        것이다: 중간 루프와 최종 스윕이 이제 같은 문자열을 낸다."""
+        return evaluate_criteria(measurements, spec_arg.all_criteria)
 
     async def tune_fn(structure_view, judge_result, attempts_view, rejection_feedback, netlist_text_arg):
         return await propose_tuning(

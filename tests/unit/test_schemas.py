@@ -4,7 +4,6 @@ import jsonschema
 import pytest
 
 from analogcoder.schemas import (
-    JUDGE_SCHEMA,
     SIMULATION_SCHEMA,
     TOPOLOGY_SCHEMA,
     TUNER_SCHEMA,
@@ -27,13 +26,12 @@ def test_simulation_schema_accepts_valid_payload():
     jsonschema.validate(payload, SIMULATION_SCHEMA)
 
 
-def test_judge_schema_accepts_valid_payload():
-    payload = {
-        "overall_pass": True,
-        "criteria": [{"name": "gain", "target": ">=19.5", "actual": 20.0, "pass": True, "margin": 0.5}],
-        "summary": "all criteria passed",
-    }
-    jsonschema.validate(payload, JUDGE_SCHEMA)
+def test_there_is_no_judge_schema_because_judging_is_not_an_llm_call():
+    # 판정은 `judge_tools.evaluate_criteria`가 낸다. 검증할 LLM 출력이 없으니
+    # 스키마도 없다 - 남겨 두면 "judge 출력은 검증된다"는 인상만 남는다.
+    import analogcoder.schemas as schemas
+
+    assert not hasattr(schemas, "JUDGE_SCHEMA")
 
 
 def test_tuner_schema_accepts_valid_payload():

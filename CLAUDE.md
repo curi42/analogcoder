@@ -82,10 +82,13 @@ are not folded in — that would make the number mean two things.
 
 ## Architecture
 
-Four independent LLM agents (simulator, judge, tuner, verifier) coordinated by a
+Three independent LLM agents (simulator, tuner, verifier) coordinated by a
 deterministic (non-LLM) Python orchestrator in `orchestrator.py`. The
 orchestrator never parses free text — every agent call returns JSON validated
-against a fixed schema (`schemas.py`).
+against a fixed schema (`schemas.py`). **Judging is not one of them** — the
+`judge` slot on `OrchestratorAgents` is still awaited and still logged under the
+event name `judge`, but `cli.py` fills it with `judge_tools.evaluate_criteria`
+directly (see the deterministic-derivation section).
 
 ### Backends and agents
 
@@ -362,11 +365,14 @@ on the objective declared in `spec.yaml`'s `optimize:` block.
   silence-means-did-not-run rule applies to the **key's absence**, never to the
   value.
 - **"Final criteria" must say what it measured.** Three provenances are possible:
-  the mid-loop LLM `judge` on one unrendered deck point; the same judge on the
-  worst value across the reduced corner set; or `evaluate_criteria` on the version
-  bisection landed on (because `cli.py` overwrites the key). The heading carries
-  both axes, derived from `corner_reduction.active` and
-  `optimization.final_criteria`. A `worst_case_corners` entry whose `value` is
+  the mid loop on one unrendered deck point; the mid loop on the worst value across
+  the reduced corner set; or the version bisection landed on (because `cli.py`
+  overwrites the key). The heading carries both axes, derived from
+  `corner_reduction.active` and `optimization.final_criteria`. **Since the LLM
+  `judge` was removed all three are judged by `evaluate_criteria`, so the "who
+  judged" axis no longer discriminates and the *deck* axis is the whole signal** —
+  a test asserting only that the heading names `evaluate_criteria` passes on all
+  three and pins nothing. A `worst_case_corners` entry whose `value` is
   `None` is **not an argmax** — it is `missing_corners[0]` — so the report says "no
   measurement at corner X".
 - **`result.json` and `history.jsonl` were not RFC 8259 JSON, and the danger was
@@ -465,13 +471,14 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
   the box on one probe corner forever.
 - **A verdict failure that can add no new corner is a path disagreement, and it is
   not retried.** `cli.py` reports `corner_path_disagreement` instead of looping.
-  Three real channels: the mid loop uses the control block the simulator agent
-  converged on while the sweep uses the spec's text; the mid loop's judge is an LLM
-  while the sweep calls `evaluate_criteria`; and — **deterministic and always
-  present** — on any criterion sharing a measurement name with another, the mid loop
-  is structurally blind to one side. **Check that one first.** A failing criterion
-  with no worst corner at all is a *different* fact
-  (`corner_unattributed_failure`).
+  **Two real channels, down from three**: the mid loop uses the control block the
+  simulator agent converged on while the sweep uses the spec's text; and —
+  **deterministic and always present** — on any criterion sharing a measurement name
+  with another, the mid loop is structurally blind to one side. **Check that one
+  first.** The third channel ("the mid loop's judge is an LLM while the sweep calls
+  `evaluate_criteria`") **is gone**: both sides now call `evaluate_criteria`, so a
+  disagreement can no longer be an LLM's reading. A failing criterion with no worst
+  corner at all is a *different* fact (`corner_unattributed_failure`).
 - **A two-sided window shares one judge slot, so the slot is resolved rather than
   overwritten.** `worst_case_measurements` is keyed by *measurement* name, so
   `vbgout_min` (`>=`) and `vbgout_max` (`<=`) cannot both be represented. Writing
@@ -612,6 +619,25 @@ iterations on an analysis that was `{"circuit_type": "test", ...}`, and across r
 on one bandgap netlist it produced 93, 26 and 1 component roles. See
 `2026-07-27-netlist-structure-derivation-design.md`.
 
+- **The LLM `judge` agent went the same way, and the measurement is the whole
+  argument.** Replaying every `judge` event in `runs/*/history.jsonl` — **58 events,
+  742 criterion instances** — against `judge_tools.evaluate_criteria` gives **0
+  differing `pass` flags and 0 differing `overall_pass`**. The verdict was never the
+  LLM's contribution. What the LLM *did* add was **25 fabricated values**: when a
+  simulation failed and `measurements` came back `{}`, it wrote `actual=0,
+  margin=0`, while the deterministic path writes `NaN`. That is this repo's
+  `null`/`NaN` distinction being destroyed on the path that decides the verdict —
+  "not measured" rendered as a number that then gets compared to a threshold. So
+  `cli.py`'s `judge_fn` calls `evaluate_criteria` directly. Three things that stay
+  the same **on purpose**: the `judge` slot on `OrchestratorAgents` and the
+  `state.log_event("judge", …)` event name (measurement scripts and `report.py` read
+  that key); `judge_fn` stays `async` (the orchestrator awaits it); and
+  `evaluate_criteria` itself is **untouched** — `pvt.py`, `optimizer.py` and
+  `curation.py` already call it and ship its output, so "improving" `target` to
+  carry a unit would be a regression in three artifacts. The visible consequence is
+  that `target` loses its unit (`">=60.0"`, not `">=60.0 dB"`), which is the point:
+  **the mid loop and the final sweep now emit the same string.** Pinned by
+  `test_a_missing_measurement_is_judged_NaN_and_never_zero`.
 - `structure.py` derives flat per-scope facts (inventory, device classes, the
   tunable `(refdes, param)` index). `signal_path.py` maps ports to nets across
   hierarchy and labels each net's drivers and sensors by *definition* name, since a
@@ -1290,11 +1316,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   9-corner × 5-testbench sweeps shared through module-scoped fixtures.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-07-30: 1468
-  passed, 2 skipped, 98–121 s** — two runs on the same commit came out 98.5 s and
-  120.6 s, so read the budget as ~2 min. **The spread between two identical runs is
-  wider than a year of count growth** (1273 → 1468), so do not treat a single
-  timing as a regression signal. A plain `pytest -q` is ~3 min and ~33 min with
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-01: 1469
+  passed, 2 skipped, 7 deselected, 97.7 s** — and on 2026-07-30 at 1468 tests, two
+  runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
+  **The spread between two identical runs is wider than a year of count growth**
+  (1273 → 1469), so do not treat a single timing as a regression signal. A plain `pytest -q` is ~3 min and ~33 min with
   everything. Both slow files carry the `slow` marker, registered in
   `pyproject.toml`. **Re-measure this line when you add a real-simulator test** —
   it has drifted three times.
