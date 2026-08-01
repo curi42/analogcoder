@@ -153,7 +153,14 @@ async def test_the_area_phase_records_what_it_could_not_rank(tmp_path):
     """0 이득과 unknown이 이벤트에 서로 다른 칸으로 남는지.
 
     무조건 남긴다 - 순위가 비어도 이벤트가 있어야 "아무것도 못 줄였다"와
-    "이 단계가 없다"가 구별된다."""
+    "이 단계가 없다"가 구별된다.
+
+    unguarded_criteria는 더 이상 이 이벤트(ranking)에 없다 - 스펙만으로
+    정해지는 상수([c.name for c in spec.all_criteria])였다면 실행마다
+    똑같은 값을 내 "이 로그가 아무것도 안 할 때 어떻게 보이는가"에 답할 수
+    없었고, 코너 대응 실행에서는 진입 스윕이 대부분을 실측 여유분으로
+    덮으므로 그 상수는 과대 보고가 아니라 틀린 이름표였다. 진짜 사실은
+    allowances가 실제로 확정되는 `_optimize`의 baseline 이벤트에서 잰다."""
     from analogcoder.optimizer import run_area_optimization
     from analogcoder.state import RunState
     from tests.unit.test_optimizer import DECK, _agents, _spec
@@ -167,7 +174,15 @@ async def test_the_area_phase_records_what_it_could_not_rank(tmp_path):
     events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
     ranked = [e for e in events if e["step"] == "optimize_area_ranking"]
     assert len(ranked) == 1
-    assert set(ranked[0]) >= {"ranked", "zero_gain", "unknown", "unguarded_criteria"}
+    assert set(ranked[0]) >= {"ranked", "zero_gain", "unknown"}
+    assert "unguarded_criteria" not in ranked[0]
+
+    baseline = [e for e in events if e["step"] == "optimize_area_baseline"]
+    assert len(baseline) == 1
+    # 면적 단계는 guard_band도(AREA_PHASE) 코너 스윕도(_spec(optimize=None)의
+    # 기본 pvt_corners=None) 없으므로 allowances가 통째로 비고, 정직한 답은
+    # "전 기준이 무방비"다 - _spec()의 유일한 기준 "iq".
+    assert baseline[0]["unguarded_criteria"] == ["iq"]
 
 
 @pytest.mark.asyncio

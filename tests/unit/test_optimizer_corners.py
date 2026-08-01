@@ -207,6 +207,36 @@ async def test_a_criterion_the_sweep_omits_keeps_the_ratio_guard(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_unguarded_criteria_in_the_baseline_event_reflects_the_allowances_actually_used(tmp_path):
+    """unguarded_criteria가 스펙만으로 정해지는 상수([c.name for c in
+    spec.all_criteria])였다면 이 테스트가 무엇을 재든 늘 ["iq", "gain"]을
+    냈을 것이다 - "이 로그가 아무것도 안 할 때 어떻게 보이는가"에 답할 수
+    없다는 뜻이다. guard_band를 꺼서 비율 대체를 없애고, 진입 스윕은 iq만
+    잰다: 그러면 iq는 corner_allowances가 준 실측 여유분으로 무방비
+    목록에서 빠지고, gain은 아무 여유분도 못 받아 목록에 남아야 한다 -
+    "여유분이 실제로 있는 기준"과 "없는 기준"이 같은 이벤트 안에서
+    갈리는 것이 상수로는 낼 수 없는 답이다."""
+    spec = _corner_spec(
+        testbenches=[SimpleNamespace(name="tb", criteria=list(TWO_CRITERIA),
+                                      control_block="", fragments=None)],
+        optimize=OptimizeSpec(objective="iq_ua", area_budget=1.10, guard_band=None),
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _two_measurement_agents([
+        {"iq_ua": 235.0, "gain_db": 60.0},
+        {"iq_ua": 200.0, "gain_db": 42.0},
+    ])
+    agents.verify_corners = lambda texts: _sweep(True, 268.0)  # criteria 에 iq 뿐
+
+    await run_optimization({"tb": DECK}, spec, state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    baseline = [e for e in events if e["step"] == "optimize_baseline"][0]
+    assert baseline["unguarded_criteria"] == ["gain"]
+
+
+@pytest.mark.asyncio
 async def test_a_criterion_missing_from_the_nominal_baseline_keeps_the_ratio_guard(tmp_path):
     # 스윕에는 gain 이 있지만 **기준선 측정**에 gain_db 가 없다. 두 값의 차를
     # 낼 수 없으니 corner_allowances가 그 기준을 뺀다. 스윕 결함이 없어도

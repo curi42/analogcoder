@@ -1266,21 +1266,42 @@ async def _optimize(
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
-    state.log_event(f"{phase.label}_baseline", {
-        "objective": objective_name,
-        "area_before": area_before,
-        "area_counted": area_coverage["counted"],
-        "area_skipped": area_coverage["skipped"],
-        "area_budget_enforced": area_coverage["budget_enforced"],
-        "area_reason": area_coverage["reason"],
-        **(sim_result or {"failure": sim_failure}),
-    })
+
+    def _baseline_event(allowances: dict[str, float]) -> dict:
+        """`{label}_baseline` 페이로드. unguarded_criteria는 그 호출 시점까지
+        **실제로 확정된** allowances에서 계산한다 - 상수가 아니다.
+
+        이 함수를 세 지점(목적값 미확보/진입 스윕 실패/정상 경로)에서 각각
+        다른 allowances로 부른다: 각각 {}, ratio, ratio+corner_allowances다.
+        상수 하나(예: 스펙의 전체 기준 이름)를 박아 넣으면 실행마다 같은 값이
+        나와 "이 로그가 아무것도 안 할 때 어떻게 보이는가"에 답할 수 없고,
+        코너 대응 실행에서는 진입 스윕이 대부분의 기준을 실측 여유분으로
+        덮으므로 그 상수는 과대 보고가 아니라 **틀린** 이름표가 된다 -
+        "무방비"라고 말하면서 실은 방비돼 있다. 이름이 없으면
+        guard_band_violations가 그 이름을 여유분 0.0으로 읽는다 - 그것이
+        "무방비"의 정의다."""
+        return {
+            "objective": objective_name,
+            "area_before": area_before,
+            "area_counted": area_coverage["counted"],
+            "area_skipped": area_coverage["skipped"],
+            "area_budget_enforced": area_coverage["budget_enforced"],
+            "area_reason": area_coverage["reason"],
+            "unguarded_criteria": [
+                c.name for c in spec.all_criteria if c.name not in allowances
+            ],
+            **(sim_result or {"failure": sim_failure}),
+        }
+
     baseline_measurements = sim_result["measurements"] if sim_result else {}
     objective_before = _objective_value(phase.objective, baseline_measurements, area_before)
 
     if objective_before is None:
         # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
-        # 판정할 수 없다. 통과한 설계를 그대로 둔다.
+        # 판정할 수 없다. 통과한 설계를 그대로 둔다. allowances는 아직 하나도
+        # (비율도 코너도) 계산되지 않았으므로, 이 시점에 정직하게 말할 수 있는
+        # 것은 "전 기준이 무방비"뿐이다.
+        state.log_event(f"{phase.label}_baseline", _baseline_event({}))
         state.log_event(f"{phase.label}_step", {
             "refdes": None, "param": None, "before": None, "after": None,
             "objective": None, "area": area_before, "accepted": False,
@@ -1319,7 +1340,9 @@ async def _optimize(
                          _sweep_event(entry_sweep, entry_failure, version=anchor_index))
         if entry_sweep is None or not entry_sweep.get("overall_pass"):
             # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다. 되돌아갈
-            # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다.
+            # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다. corner_allowances는
+            # 돌지 않았으므로 이 시점에 정직하게 아는 여유분은 ratio뿐이다.
+            state.log_event(f"{phase.label}_baseline", _baseline_event(ratio))
             return _result(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,
@@ -1359,6 +1382,11 @@ async def _optimize(
         }
     else:
         allowances = ratio
+
+    # allowances가 이 실행이 실제로 쓸 최종값으로 확정되는 지점이 여기다 -
+    # 코너 대응이면 실측이 섞이고, 아니면 비율뿐이다. baseline 이벤트를 더
+    # 일찍 남기면 아직 모르는 것을 안다고 말하게 되므로 여기서 남긴다.
+    state.log_event(f"{phase.label}_baseline", _baseline_event(allowances))
 
     # **기준선이 자기 가드밴드를 지키는가.** 지키지 못하면 어떤 후보도 수락될
     # 수 없다: 수락 규칙이 매 단계 이 같은 검사를 돌리기 때문이다.
@@ -1585,11 +1613,13 @@ async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agen
                 "counted": base.counted,
                 "skipped": base.skipped,
                 "area_before": base.area,
-                # 이 단계에는 비율 가드가 없다. 실측 여유분이 붙지 않은 기준은
-                # 여유분 0으로 판정되므로 **어느 기준이 무방비인지** 드러나야
-                # 한다. 여기서는 실측 여유분을 아직 모르므로 전 기준을 싣는다 -
-                # 과대 보고는 읽는 사람을 놀라게 하고, 과소 보고는 속인다.
-                "unguarded_criteria": [c.name for c in spec.all_criteria],
+                # unguarded_criteria는 여기 없다 - 스펙만의 상수라 실행마다
+                # 똑같은 값을 냈고("이 로그가 아무것도 안 할 때 어떻게 보이는가"에
+                # 답할 수 없다), 코너 대응 실행에서는 진입 스윕이 실측 여유분으로
+                # 대부분의 기준을 덮으므로 "이 기준은 무방비"라는 주장 자체가
+                # 틀린 이름표였다. 진짜 사실은 allowances가 실제로 확정되는
+                # `_optimize`의 `{label}_baseline` 이벤트에만 있다 - 두 단계
+                # 모두에서 남는다.
             },
         )
 
