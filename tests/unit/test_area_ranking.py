@@ -76,6 +76,34 @@ def test_a_knob_that_cannot_be_applied_is_unknown_not_a_crash():
     assert ranking.unknown == ["NOPE.w"]
 
 
+def test_refdes_resolves_but_no_area_change_is_zero_gain_not_unknown():
+    """해석되는 노브이지만 면적 변화가 없으면 zero_gain이다.
+
+    적용된 형식의 new_value가 old_value와 같으면, 그것은 변경이 있었지만
+    면적 수치에 변화가 없다는 뜻이고, 그걸 unknown이 아니라 zero_gain으로
+    분류한다. 반대 케이스(refdes가 없어서 apply_changes가 텍스트를 안 바꾸는
+    것)는 check_refdes_resolution이 잡으므로 unknown이다."""
+
+    def _make_noop_change(refdes, param, current, integer):
+        """노브가 실제로 있지만 제안된 값이 현재와 같으면 no-op."""
+        if refdes == "AMP.Mbig" and param == "w":
+            # 존재하는 노브지만, new_value = old_value
+            return {
+                "refdes": refdes,
+                "param": param,
+                "old_value": _format_value(current, integer),
+                "new_value": _format_value(current, integer),  # 같은 값
+            }
+        # 다른 노브는 정상 스텝
+        return _make_change(refdes, param, current, integer)
+
+    ranking = rank_by_area_gain(DECK, [("AMP.Mbig", "w", 100.0, False)], _make_noop_change)
+    # 해석은 되지만 면적 변화는 없으므로 zero_gain
+    assert ranking.entries == []
+    assert ranking.zero_gain == ["AMP.Mbig.w"]
+    assert ranking.unknown == []
+
+
 def test_it_never_simulates_and_never_calls_an_llm():
     """이 모듈이 비싼 것을 부르지 않는다는 사실 자체를 핀한다.
 

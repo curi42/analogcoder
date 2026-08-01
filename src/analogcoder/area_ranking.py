@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.area import DEFAULT_AREA_MODEL, AreaModel
-from analogcoder.netlist import apply_changes
+from analogcoder.netlist import apply_changes, check_refdes_resolution
 
 
 @dataclass(frozen=True)
@@ -60,16 +60,17 @@ def rank_by_area_gain(
             # 더 줄일 수 없는 노브. 이득 0이 아니라 잴 수 없는 것이다.
             unknown.append(label)
             continue
-        try:
-            moved_text = apply_changes(netlist_text, [change])
-        except Exception:
-            # 적용이 안 되는 노브(모호하거나 없는 refdes 등). 주소 지정
-            # 게이트가 잡을 것이지만, 여기서 터지면 단계 전체가 죽는다.
+        # refdes 해석을 먼저 확인한다. 결정론적 함수로 해석 불가를 판단하고,
+        # 불가면 apply_changes를 부르지 않는다.
+        resolved, reason = check_refdes_resolution(netlist_text, [change])
+        if not resolved:
             unknown.append(label)
             continue
-        if moved_text == netlist_text:
-            # apply_changes가 아무것도 바꾸지 않았다. 있지만 적용 불가한 노브거나
-            # 사라진 참조다.
+        try:
+            moved_text = apply_changes(netlist_text, [change])
+        except ValueError:
+            # 모호한 refdes. apply_changes가 해석 오류를 일으켰다는 것은
+            # check_refdes_resolution이 놓친 경우인데, 두 번째 방어선이다.
             unknown.append(label)
             continue
         try:
