@@ -21,6 +21,26 @@ def write_result_json(run_dir: str, result: dict) -> str:
     return path
 
 
+def _area_optimization_lines(area: dict | None) -> list[str]:
+    """면적 최소화 절. **아무것도 못 줄인 실행에서도 그린다.**
+
+    안 그리면 "못 줄였다"와 "이 단계가 없다"가 보고서에서 같은 모양이 된다 -
+    코너 스윕에서 이미 겪은 실수다. 키 자체가 없을 때만 침묵한다."""
+    if area is None:
+        return []
+    lines = ["", "## 면적 최소화", "", f"**Status:** {area['status']}", ""]
+    if area["status"] == "REFUSED":
+        lines += [f"이 덱에서는 면적을 잴 수 없었다: {area.get('reason', '(사유 없음)')}", ""]
+        return lines
+    before, after = area.get("area_before"), area.get("area_after")
+    if before is not None and after is not None:
+        pct = (1.0 - after / before) * 100.0 if before else 0.0
+        lines.append(f"- 면적: {before:g} → {after:g} ({pct:.2f}% 감소)")
+    lines.append(f"- 수락 {area.get('accepted', 0)}건 / 거절 {area.get('rejected', 0)}건")
+    lines.append("")
+    return lines
+
+
 def _optimization_lines(optimization: dict | None) -> list[str]:
     """최적화 단계를 설명하는 섹션. 그 단계가 돌지 않았으면 빈 목록.
 
@@ -351,7 +371,7 @@ def _pvt_lines(sweep: dict | None) -> list[str]:
 def _final_criteria_provenance(result: dict) -> str:
     """"Final criteria" 표가 **어느 조건의, 누가 낸** 측정인지.
 
-    후보가 셋이고 라벨이 없으면 이 표와 바로 아래 판정 스윕이 서로 다른 회로를
+    후보가 넷이고 라벨이 없으면 이 표와 바로 아래 판정 스윕이 서로 다른 회로를
     설명하고 있다는 사실이 보이지 않는다. 실측 `runs/pvt_sonnet_1`에서 이 표는
     7개 전부 PASS(명목 한 점), 스윕은 7개 전부 FAIL이었다.
 
@@ -360,11 +380,14 @@ def _final_criteria_provenance(result: dict) -> str:
     - **무엇을 쟀는가**: `corner_reduction.active`면 중간 루프가 본 값은 명목
       한 점이 아니라 **선택 집합의 최악값**이다(`corner_sim.build_corner_simulate`).
       아니면 코너를 통과시키지 않은 덱 한 점이다.
-    - **누가 판정했는가**: 판정자는 두 경우 모두 `evaluate_criteria`다(LLM
+    - **누가 판정했는가**: 판정자는 네 경우 모두 `evaluate_criteria`다(LLM
       judge는 제거됐다). 다른 것은 **어느 덱을** 판정했는가다 - `cli.py`는
-      최적화가 기준을 재고 왔으면 이 표를 **덮으므로**
-      (`optimization["final_criteria"]`) 그때는 bisection이 착지한 버전이고,
-      아니면 튜닝 루프가 돌려준 덱이다.
+      면적 단계나 전류 단계가 기준을 재고 왔으면 이 표를 **덮는다**
+      (`area_optimization["final_criteria"]` / `optimization["final_criteria"]`).
+      전류 단계는 면적 단계 **뒤**에 돌면서 자기 판정으로 다시 덮으므로, 둘 다
+      기준을 재고 왔으면 전류 단계가 착지한 버전이 이긴다 - 나중에 착지한
+      덱이 결과가 돌려주는 덱이다. 어느 쪽도 기준을 재지 못했으면 튜닝
+      루프가 돌려준 덱이다.
     """
     reduction = result.get("corner_reduction") or {}
     if reduction.get("active"):
@@ -379,13 +402,20 @@ def _final_criteria_provenance(result: dict) -> str:
         condition = "the deck as it is - one simulation point, no corner rendering"
 
     optimization = result.get("optimization") or {}
+    area = result.get("area_optimization") or {}
     if optimization.get("final_criteria"):
         judged_by = (
             "`evaluate_criteria`, on the netlist version the optimization phase landed on"
         )
+    elif area.get("final_criteria"):
+        # 전류 단계(`optimization`)가 기준을 재지 못했거나 아예 돌지 않은
+        # 스펙(선언 없음)이라도, 면적 단계는 선언 없이 돌아 덱을 옮길 수 있다 -
+        # 그때 이 표를 면적 단계 **전** 덱을 설명하는 문장으로 두면 아래
+        # 표와 서로 다른 회로를 나란히 적는 것이 된다.
+        judged_by = "`evaluate_criteria`, on the netlist version the area phase landed on"
     else:
-        # 판정자는 이제 두 자리 모두 `evaluate_criteria`다(LLM judge 제거).
-        # 그래도 두 문장을 합치지 않는다 - **어느 덱을** 판정했는지가 다르고,
+        # 판정자는 이제 세 경우 모두 `evaluate_criteria`다(LLM judge 제거).
+        # 그래도 문장을 합치지 않는다 - **어느 덱을** 판정했는지가 다르고,
         # 그것이 이 줄이 존재하는 이유다.
         judged_by = "`evaluate_criteria`, on the deck the tuning loop returned"
 
@@ -463,6 +493,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
     lines += _resume_lines(result.get("resumed_from"))
     lines += _attempt_lines(result.get("attempt_summary"))
     lines += _topology_lines(result.get("topology_swaps"))
+    lines += _area_optimization_lines(result.get("area_optimization"))
     lines += _optimization_lines(result.get("optimization"))
     lines += _corner_reduction_lines(result.get("corner_reduction"))
     if result.get("failure_reason"):

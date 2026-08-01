@@ -27,7 +27,7 @@ from analogcoder.corner_sim import CornerState, build_corner_simulate
 from analogcoder.history import count_events, discarded_ranges, line_count, read_events
 from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import resolve_includes
-from analogcoder.optimizer import OptimizerAgents, run_optimization
+from analogcoder.optimizer import OptimizerAgents, run_area_optimization, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, _attempt_summary, run_orchestration
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
@@ -887,6 +887,29 @@ async def _run(args) -> dict:
             if corner_state is not None:
                 corner_state.probe_frozen = True
             try:
+                # 면적 단계가 **먼저** 돈다. 전류 단계는 선언이 있을 때만 도는데,
+                # 뒤에 두면 선언 없는 스펙에서 면적 단계가 영영 안 도는 배선이
+                # 되기 쉽다. probe_frozen 안에 있는 이유는 전류 단계와 같다 -
+                # 탐색 도중의 탐침 승격은 서로 다른 코너 집합에서 잰 목적값을
+                # 비교하게 만든다.
+                result["area_optimization"] = await run_area_optimization(
+                    state.current_netlist_texts(),
+                    spec,
+                    state,
+                    OptimizerAgents(
+                        propose=propose_candidates_fn,
+                        simulate=simulate_for_run,
+                        verify_corners=verify_corners_fn if corner_capable else None,
+                    ),
+                )
+                # 면적 단계도 덱을 옮기므로 그 판정이 최상위로 올라와야 한다.
+                # 전류 단계가 뒤에 돌면서 자기 판정으로 다시 덮는데, 그 순서가
+                # 맞다 - 나중에 착지한 덱이 결과가 돌려주는 덱이다.
+                # REFUSED와 준비 구간 실패 경로에서는 final_criteria가 None이므로
+                # 이 분기는 자동으로 침묵한다 - 없는 값으로 덮지 않는다.
+                if result["area_optimization"].get("final_criteria"):
+                    result["final_criteria"] = result["area_optimization"]["final_criteria"]
+
                 optimization = await run_optimization(
                     # **실행의 현재 덱**이다 - 파일에서 읽은 원본이 아니다. 메인
                     # 루프가 고쳐 놓은 것을 최적화의 출발점으로 삼지 않으면,

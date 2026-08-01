@@ -967,3 +967,76 @@ def test_a_result_without_the_key_draws_no_section(tmp_path):
     path = write_report_md(_dir(tmp_path, "d"), _result())
 
     assert "## Tuning attempts" not in open(path).read()
+
+
+# --- Task 5: 면적 최소화 단계가 리포트에도 그려져야 한다 ----------------------
+#
+# 브리프의 원래 테스트 본문은 `iterations_used`/`final_netlist_paths`가 없는
+# 맨 dict를 바로 `write_report_md`에 넘겼다 - 실제로 돌려 보면 의도한
+# `AssertionError: assert '면적 최소화' in ...`가 아니라 `KeyError:
+# 'iterations_used'`로 죽는다(write_report_md가 그 두 키를 무조건 읽는다).
+# 이 파일의 기존 관례(`_result`/`_dir` 헬퍼)를 따라 필수 키를 채워 넣는다 -
+# 아래는 그 관례대로 고친 버전이다.
+
+
+def test_the_report_draws_the_area_phase_including_when_it_changed_nothing(tmp_path):
+    """아무것도 못 줄인 실행에서도 절이 나와야 한다.
+
+    안 나오면 "면적 단계가 아무것도 못 했다"와 "면적 단계가 없다"가 보고서에서
+    같은 모양이 된다. 이 저장소가 코너 스윕에서 이미 겪은 실수다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "UNCHANGED", "accepted": 0, "rejected": 3,
+            "area_before": 41.0, "area_after": 41.0,
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_unchanged"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "면적 최소화" in md
+    assert "UNCHANGED" in md
+
+
+def test_the_report_says_when_the_area_phase_was_refused(tmp_path):
+    """REFUSED는 UNCHANGED와 다른 문장으로 나와야 한다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "REFUSED",
+            "reason": "area model resolved no device on this deck (counted=0, skipped=2)",
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_refused"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "REFUSED" in md and "counted=0" in md
+
+
+def test_a_run_without_an_area_phase_gets_no_area_section(tmp_path):
+    """키의 부재는 "이 실행에 면적 단계가 없었다"이고, 그것은 값이 아니다."""
+    path = write_report_md(_dir(tmp_path, "area_absent"), _result(status="PASS"))
+    assert "면적 최소화" not in open(path, encoding="utf-8").read()
+
+
+def test_the_provenance_names_the_area_phase_when_only_it_moved_the_deck(tmp_path):
+    """전류 단계가 없는 스펙에서도 표는 면적 단계의 덱을 설명해야 한다.
+
+    `evaluate_criteria`라는 낱말은 네 출처 전부에 들어 있으므로 그것을 검사하는
+    것은 아무것도 고정하지 못한다. 고정할 것은 **어느 단계를 지목하는가**다."""
+    base = _result(status="PASS")
+    only_area = write_report_md(
+        _dir(tmp_path, "provenance_area_only"),
+        {**base, "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]}},
+    )
+    both = write_report_md(
+        _dir(tmp_path, "provenance_both"),
+        {
+            **base,
+            "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
+            "optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
+        },
+    )
+    assert "area phase landed on" in open(only_area, encoding="utf-8").read()
+    # 전류 단계가 뒤에 돌므로 그쪽이 이긴다.
+    both_md = open(both, encoding="utf-8").read()
+    assert "optimization phase landed on" in both_md
+    assert "area phase landed on" not in both_md
