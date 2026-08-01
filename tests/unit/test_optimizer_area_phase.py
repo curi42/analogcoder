@@ -114,3 +114,81 @@ async def test_the_two_phases_do_not_share_event_names(tmp_path):
     assert "optimize_baseline" in names
     # 면적 단계는 자기 이름을 쓴다.
     assert "optimize_area_baseline" in names
+
+
+UNRESOLVABLE_DECK = (
+    "* t\n"
+    "Rload p 0 1k\n"       # w/l 이 없어 면적 모델이 아무것도 못 읽는다
+    "Vdd vdd 0 DC 1.8\n"
+    ".end\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_the_area_phase_calls_no_agent_at_all(tmp_path):
+    """이 단계에 LLM이 붙지 않는다는 사실을 핀한다.
+
+    propose를 즉시 실패하는 것으로 둔다 - 나중에 누군가 "면적에도 LLM
+    조언이 있으면 좋겠다"고 배선하면 이 테스트가 깨져야 한다. 안 깨지면
+    LLM 없음이라는 설계의 근거가 조용히 사라진다."""
+    from analogcoder.optimizer import OptimizerAgents, run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("면적 단계는 에이전트를 부르면 안 된다")
+
+    base, _ = _agents([200.0])
+    agents = OptimizerAgents(propose=boom, simulate=base.simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    result = await run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+
+    assert result["status"] in {"OPTIMIZED", "UNCHANGED"}
+
+
+@pytest.mark.asyncio
+async def test_the_area_phase_records_what_it_could_not_rank(tmp_path):
+    """0 이득과 unknown이 이벤트에 서로 다른 칸으로 남는지.
+
+    무조건 남긴다 - 순위가 비어도 이벤트가 있어야 "아무것도 못 줄였다"와
+    "이 단계가 없다"가 구별된다."""
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    await run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    ranked = [e for e in events if e["step"] == "optimize_area_ranking"]
+    assert len(ranked) == 1
+    assert set(ranked[0]) >= {"ranked", "zero_gain", "unknown", "unguarded_criteria"}
+
+
+@pytest.mark.asyncio
+async def test_a_deck_whose_devices_cannot_be_resolved_is_refused_not_unchanged(tmp_path):
+    """`counted == 0`은 "쟀는데 못 줄임"이 아니라 "잴 수 없음"이다.
+
+    UNCHANGED로 합치면 면적 모델이 이 덱에서 아무것도 못 읽고 있다는 사실을
+    아무도 알아채지 못한다."""
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import _agents, _spec
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": UNRESOLVABLE_DECK})
+
+    result = await run_area_optimization(
+        {"tb": UNRESOLVABLE_DECK}, _spec(optimize=None), state, agents
+    )
+
+    assert result["status"] == "REFUSED"
+    assert "counted" in result["reason"]
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    assert any(e["step"] == "optimize_area_refused" for e in events)

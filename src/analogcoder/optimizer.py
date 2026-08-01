@@ -2,8 +2,9 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from analogcoder.agents.backend import AgentExecutionError
-from analogcoder.area import total_area
+from analogcoder.area import DEFAULT_AREA_MODEL, total_area
 from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
+from analogcoder.area_ranking import rank_by_area_gain
 from analogcoder.judge_tools import (
     corner_allowances,
     evaluate_criteria,
@@ -36,7 +37,7 @@ class _AreaObjective:
     __slots__ = ()
 
     def __repr__(self) -> str:
-        return "AREA_OBJECTIVE"
+        return "area"
 
 
 AREA_OBJECTIVE = _AreaObjective()
@@ -1467,3 +1468,90 @@ async def _optimize(
 # 이 줄이 없으면 SEARCH_STRATEGIES에 `mads`가 없고, scripts/search_ab.py가
 # 이 표만 읽으므로 A/B에서 전략 이름이 조용히 사라진다.
 import analogcoder.mads  # noqa: E402,F401
+
+
+def _area_change(refdes: str, param: str, current: float, integer: bool) -> dict | None:
+    """한 스텝 줄인 변경 dict. 순위 계산에 주입되는 유일한 통로다.
+
+    `_next_value`/`_format_value`를 그대로 쓴다 - 순위가 가정하는 스텝과
+    탐색이 실제로 밟는 스텝이 같아야 한다."""
+    target = _next_value(current, integer, "decrease")
+    if target is None:
+        return None
+    return {
+        "refdes": refdes,
+        "param": param,
+        "old_value": _format_value(current, integer),
+        "new_value": _format_value(target, integer),
+    }
+
+
+async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agents) -> dict:
+    """면적 최소화 단계. **선언이 필요 없고 LLM을 부르지 않는다.**
+
+    `run_optimization`을 그대로 쓰되 둘을 바꾼다: 단계 설정을 `AREA_PHASE`로
+    주고, 계산한 노브 순위를 `OptimizerAgents.knob_ranking`에 **주입**한다.
+    주입된 순위가 있으면 `_knob_ranking`이 에이전트를 부르지 않으므로 LLM을
+    빼기 위한 새 배선이 필요 없다.
+
+    `counted == 0`에서 REFUSED를 내는 것은 그것이 UNCHANGED와 다른 사실이기
+    때문이다 - "쟀는데 못 줄였다"와 "잴 수 없었다"를 합치면 면적 모델이 이
+    덱에서 아무것도 못 읽는다는 것을 아무도 모른다."""
+    canonical_name = spec.canonical.name
+    start_text = netlist_texts[canonical_name]
+
+    base = DEFAULT_AREA_MODEL(start_text)
+    if base.counted == 0:
+        reason = (
+            f"area model resolved no device on this deck "
+            f"(counted={base.counted}, skipped={base.skipped})"
+        )
+        state.log_event(
+            "optimize_area_refused",
+            {"reason": reason, "counted": base.counted, "skipped": base.skipped},
+        )
+        return {"status": "REFUSED", "reason": reason, "accepted": 0, "rejected": 0}
+
+    structure = derive_structure(start_text, spec.circuit_name)
+    reader = SearchOracle(
+        spec, state, agents, canonical_name,
+        index_baseline_components(start_text), base.area, {}, AREA_PHASE,
+    )
+    candidates = []
+    for entry in structure.tunable:
+        knob_state, _, _ = reader.knob_state(entry.refdes, entry.param)
+        if knob_state is None:
+            continue
+        candidates.append((entry.refdes, entry.param, knob_state.value, knob_state.integer))
+
+    ranking = rank_by_area_gain(start_text, candidates, _area_change)
+    state.log_event(
+        "optimize_area_ranking",
+        {
+            "ranked": [
+                {"refdes": e.refdes, "param": e.param, "gain": e.gain} for e in ranking.entries
+            ],
+            "zero_gain": ranking.zero_gain,
+            "unknown": ranking.unknown,
+            "counted": base.counted,
+            "skipped": base.skipped,
+            "area_before": base.area,
+            # 이 단계에는 비율 가드가 없다. 실측 여유분이 붙지 않은 기준은
+            # 여유분 0으로 판정되므로 **어느 기준이 무방비인지** 드러나야
+            # 한다. 여기서는 실측 여유분을 아직 모르므로 전 기준을 싣는다 -
+            # 과대 보고는 읽는 사람을 놀라게 하고, 과소 보고는 속인다.
+            "unguarded_criteria": [c.name for c in spec.all_criteria],
+        },
+    )
+
+    area_agents = OptimizerAgents(
+        propose=agents.propose,
+        simulate=agents.simulate,
+        verify_corners=agents.verify_corners,
+        search_strategy=agents.search_strategy,
+        knob_ranking=[
+            {"refdes": e.refdes, "param": e.param, "direction": "decrease"}
+            for e in ranking.entries
+        ],
+    )
+    return await run_optimization(netlist_texts, spec, state, area_agents, phase=AREA_PHASE)
