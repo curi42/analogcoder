@@ -1486,6 +1486,34 @@ def _area_change(refdes: str, param: str, current: float, integer: bool) -> dict
     }
 
 
+def _area_knob_state(
+    netlist_text: str, baseline_components: dict, refdes: str, param: str
+) -> KnobState | None:
+    """면적 순위가 노브 하나를 읽는 법. `SearchOracle.knob_state`와 같은
+    게이트 순서를 쓰지만, `state.current_netlist_texts()`가 아니라 **이
+    함수가 받은 텍스트 하나만** 읽는다.
+
+    면적 단계가 순위를 매길 때 재는 덱과 값을 읽는 덱이 갈라지면 안 된다 -
+    `_optimize`가 탐색을 시작하기 전에 `state.current_netlist_texts() !=
+    netlist_texts`를 확인해 맞추는 이유가 정확히 이것이다. 면적 순위는 그
+    맞춤보다 먼저 도므로, 노브의 현재 값은 인자로 받은 텍스트에서 직접
+    읽어야 한다. state의 텍스트에서 읽으면 순위와 값이 서로 다른 덱을
+    설명하게 되고, 그 어긋남은 조용하다: rank_by_area_gain은
+    apply_changes/refdes 해석의 실패만 unknown으로 삼킬 뿐, 값이 그른 채로
+    성공한 계산은 걸러내지 않는다."""
+    gate, _ = _gate_addressing(netlist_text, {"refdes": refdes, "param": param})
+    if gate is not None:
+        return None
+    component = baseline_components.get(refdes)
+    token = _deck_token(component, param) if component is not None else None
+    if token is None:
+        return None
+    value = _current_value(component, token)
+    if value is None:
+        return None
+    return KnobState(token=token, value=value, integer=is_count_param(component, token))
+
+
 async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agents) -> dict:
     """면적 최소화 단계. **선언이 필요 없고 LLM을 부르지 않는다.**
 
@@ -1496,62 +1524,91 @@ async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agen
 
     `counted == 0`에서 REFUSED를 내는 것은 그것이 UNCHANGED와 다른 사실이기
     때문이다 - "쟀는데 못 줄였다"와 "잴 수 없었다"를 합치면 면적 모델이 이
-    덱에서 아무것도 못 읽는다는 것을 아무도 모른다."""
+    덱에서 아무것도 못 읽는다는 것을 아무도 모른다.
+
+    준비 구간(구조 유도, 노브 값 읽기, 순위 계산) 전체를 `run_optimization`의
+    호출 **앞에** 두면서도 같은 예외 계약 아래 둔다 - "최적화에는 FAIL이
+    없다"는 이 모듈 전체의 약속이고, `run_optimization`은 자기 안에서 터진
+    실패만 잡는다. 이 준비 구간에서 예외가 새어 나가면 이미 PASS한 실행이
+    result.json도 report.md도 없이 트레이스백으로 끝난다 - 이 저장소가 이미
+    기록한 실패 모양이다. REFUSED도 나머지 결과와 같은 모양(`_result`)으로
+    돌려준다 - 그러지 않으면 `steps_accepted`/`final_netlist_paths`를 읽는
+    소비자가 조용히 기본값이나 빈 값을 받는다."""
     canonical_name = spec.canonical.name
     start_text = netlist_texts[canonical_name]
+    area_before = 0.0
 
-    base = DEFAULT_AREA_MODEL(start_text)
-    if base.counted == 0:
-        reason = (
-            f"area model resolved no device on this deck "
-            f"(counted={base.counted}, skipped={base.skipped})"
-        )
+    try:
+        base = DEFAULT_AREA_MODEL(start_text)
+        area_before = base.area
+        if base.counted == 0:
+            reason = (
+                f"area model resolved no device on this deck "
+                f"(counted={base.counted}, skipped={base.skipped})"
+            )
+            state.log_event(
+                "optimize_area_refused",
+                {"reason": reason, "counted": base.counted, "skipped": base.skipped},
+            )
+            result = _result("REFUSED", state, None, None, base.area, base.area, failure=reason)
+            # 브리프가 정한 이름을 대체가 아니라 추가로 남긴다 - "reason"을
+            # 읽는 기존 소비자와 "failure"를 읽는 나머지 결과 소비자 둘 다
+            # 맞아야 한다.
+            result["reason"] = reason
+            return result
+
+        structure = derive_structure(start_text, spec.circuit_name)
+        baseline_components = index_baseline_components(start_text)
+        candidates = []
+        for entry in structure.tunable:
+            knob_state = _area_knob_state(
+                start_text, baseline_components, entry.refdes, entry.param
+            )
+            if knob_state is None:
+                continue
+            # entry.param이 아니라 knob_state.token을 쓴다 - 덱에 실제로 적힌
+            # 철자다(_deck_token 참고). 오늘은 둘이 같지만, 대소문자가 섞인
+            # 덱에서는 token 쪽이 apply_changes가 실제로 찾을 수 있는 이름이다.
+            candidates.append(
+                (entry.refdes, knob_state.token, knob_state.value, knob_state.integer)
+            )
+
+        ranking = rank_by_area_gain(start_text, candidates, _area_change)
         state.log_event(
-            "optimize_area_refused",
-            {"reason": reason, "counted": base.counted, "skipped": base.skipped},
+            "optimize_area_ranking",
+            {
+                "ranked": [
+                    {"refdes": e.refdes, "param": e.param, "gain": e.gain} for e in ranking.entries
+                ],
+                "zero_gain": ranking.zero_gain,
+                "unknown": ranking.unknown,
+                "counted": base.counted,
+                "skipped": base.skipped,
+                "area_before": base.area,
+                # 이 단계에는 비율 가드가 없다. 실측 여유분이 붙지 않은 기준은
+                # 여유분 0으로 판정되므로 **어느 기준이 무방비인지** 드러나야
+                # 한다. 여기서는 실측 여유분을 아직 모르므로 전 기준을 싣는다 -
+                # 과대 보고는 읽는 사람을 놀라게 하고, 과소 보고는 속인다.
+                "unguarded_criteria": [c.name for c in spec.all_criteria],
+            },
         )
-        return {"status": "REFUSED", "reason": reason, "accepted": 0, "rejected": 0}
 
-    structure = derive_structure(start_text, spec.circuit_name)
-    reader = SearchOracle(
-        spec, state, agents, canonical_name,
-        index_baseline_components(start_text), base.area, {}, AREA_PHASE,
-    )
-    candidates = []
-    for entry in structure.tunable:
-        knob_state, _, _ = reader.knob_state(entry.refdes, entry.param)
-        if knob_state is None:
-            continue
-        candidates.append((entry.refdes, entry.param, knob_state.value, knob_state.integer))
-
-    ranking = rank_by_area_gain(start_text, candidates, _area_change)
-    state.log_event(
-        "optimize_area_ranking",
-        {
-            "ranked": [
-                {"refdes": e.refdes, "param": e.param, "gain": e.gain} for e in ranking.entries
+        area_agents = OptimizerAgents(
+            propose=agents.propose,
+            simulate=agents.simulate,
+            verify_corners=agents.verify_corners,
+            search_strategy=agents.search_strategy,
+            knob_ranking=[
+                {"refdes": e.refdes, "param": e.param, "direction": "decrease"}
+                for e in ranking.entries
             ],
-            "zero_gain": ranking.zero_gain,
-            "unknown": ranking.unknown,
-            "counted": base.counted,
-            "skipped": base.skipped,
-            "area_before": base.area,
-            # 이 단계에는 비율 가드가 없다. 실측 여유분이 붙지 않은 기준은
-            # 여유분 0으로 판정되므로 **어느 기준이 무방비인지** 드러나야
-            # 한다. 여기서는 실측 여유분을 아직 모르므로 전 기준을 싣는다 -
-            # 과대 보고는 읽는 사람을 놀라게 하고, 과소 보고는 속인다.
-            "unguarded_criteria": [c.name for c in spec.all_criteria],
-        },
-    )
+        )
+    except (AgentExecutionError, ValueError, OSError) as exc:
+        # run_optimization의 예외 처리기(:1171-1188 부근)와 같은 계약이다:
+        # 이 단계에도 FAIL이 없다. 여기서 잡는 것은 run_optimization에 들어가기
+        # **전**의 구간이므로, 안 잡으면 그 계약이 여기서 뚫린다.
+        reason = f"{type(exc).__name__}: {exc}"
+        state.log_event("optimize_area_failed", {"reason": reason})
+        return _result("UNCHANGED", state, None, None, area_before, area_before, failure=reason)
 
-    area_agents = OptimizerAgents(
-        propose=agents.propose,
-        simulate=agents.simulate,
-        verify_corners=agents.verify_corners,
-        search_strategy=agents.search_strategy,
-        knob_ranking=[
-            {"refdes": e.refdes, "param": e.param, "direction": "decrease"}
-            for e in ranking.entries
-        ],
-    )
     return await run_optimization(netlist_texts, spec, state, area_agents, phase=AREA_PHASE)

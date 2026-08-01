@@ -190,5 +190,78 @@ async def test_a_deck_whose_devices_cannot_be_resolved_is_refused_not_unchanged(
 
     assert result["status"] == "REFUSED"
     assert "counted" in result["reason"]
+    # REFUSED도 나머지 결과와 같은 모양이어야 한다 - _result()를 거쳐야
+    # steps_accepted/steps_rejected/final_netlist_paths가 함께 실린다.
+    # 그러지 않으면 .get("steps_accepted", 0)으로 읽는 소비자가 이 결과를
+    # "0단계짜리 정상 실행"으로 오독한다.
+    assert "steps_accepted" in result
+    assert "steps_rejected" in result
+    assert "final_netlist_paths" in result
     events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
     assert any(e["step"] == "optimize_area_refused" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_a_crash_in_the_area_phase_preamble_does_not_escape(tmp_path, monkeypatch):
+    """면적 단계의 준비 구간(구조 유도, 노브 값 읽기, 순위 계산)에서 터진
+    예외도 run_optimization과 같은 계약을 지켜야 한다 - 이 단계에도 FAIL이
+    없다.
+
+    derive_structure를 강제로 터뜨린다: 이 준비 구간은 run_optimization의
+    호출 앞에 있어서 그 함수의 예외 가드 안에 있지 않다. 안 잡으면 이미
+    PASS한 실행이 result.json도 report.md도 없이 트레이스백으로 끝난다 -
+    이 저장소가 이미 기록한 실패 모양이다."""
+    import analogcoder.optimizer as optimizer_mod
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    def boom(*args, **kwargs):
+        raise ValueError("boom in derive_structure")
+
+    monkeypatch.setattr(optimizer_mod, "derive_structure", boom)
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    result = await optimizer_mod.run_area_optimization(
+        {"tb": DECK}, _spec(optimize=None), state, agents
+    )
+
+    assert result["status"] == "UNCHANGED"
+    assert result["failure"] is not None
+    assert "steps_accepted" in result
+    assert "final_netlist_paths" in result
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    assert any(e["step"] == "optimize_area_failed" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_the_area_phase_ranks_knobs_from_the_passed_deck_not_states_deck(tmp_path):
+    """netlist_texts 인자와 state의 현재 덱이 다를 수 있다 - `_optimize`가
+    탐색 앞에서 `state.current_netlist_texts() != netlist_texts`를 확인해
+    둘을 맞추는 이유가 정확히 이것이다. 면적 순위는 그 맞춤보다 먼저 돌기
+    때문에, 노브의 현재 값은 **인자로 받은 텍스트**에서 읽어야 한다 -
+    state의 텍스트에서 읽으면 순위가 잘못된 기준값에서 계산된 스텝을
+    이득으로 보고한다."""
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state_deck = DECK  # w=2e-6, l=1e-6, m=4
+    passed_deck = DECK.replace("w=2e-6", "w=4e-6")  # w=4e-6, l=1e-6, m=4
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": state_deck})
+
+    await run_area_optimization({"tb": passed_deck}, _spec(optimize=None), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    ranking_event = next(e for e in events if e["step"] == "optimize_area_ranking")
+    ranked_by_key = {(e["refdes"], e["param"]): e["gain"] for e in ranking_event["ranked"]}
+
+    # 0.9배 한 단계는 4e-6 -> 3.6e-6이고, 이득은 (4e-6 - 3.6e-6) * 1e-6 * 4
+    # = 1.6e-12이다. state 덱(w=2e-6)에서 현재값을 읽었다면 2e-6 -> 1.8e-6이
+    # 되어, base(4e-6 기준)와의 차이가 8.8e-12로 완전히 다르게 나온다.
+    assert ranked_by_key[("AMP.M1", "w")] == pytest.approx(1.6e-12, rel=1e-6)
