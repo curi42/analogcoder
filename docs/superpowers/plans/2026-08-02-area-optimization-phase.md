@@ -332,9 +332,10 @@ AREA_PHASE = PhaseConfig(
 )
 ```
 
-- [ ] **Step 4: 여섯 자리를 배선한다**
+- [ ] **Step 4: 일곱 자리를 배선한다**
 
-각각 오늘과 **같은 값**이 흐르므로 동작이 바뀌지 않는다.
+1~5·7은 오늘과 **같은 값**이 흐르므로 동작이 바뀌지 않는다. 6(이벤트 접두)도
+전류 단계에서는 문자열이 동일하다.
 
 1. `SearchOracle.__init__`에 `phase: PhaseConfig`를 **마지막 인자로** 더하고 `self._phase = phase`.
 2. 오라클의 예산 검사를 감싼다:
@@ -359,7 +360,36 @@ AREA_PHASE = PhaseConfig(
            )
    ```
    그리고 기존의 `{**ratio_allowances(...), **corner_allowances(...)}` 자리에 `ratio`를 쓴다.
-6. `run_optimization(netlist_texts, spec, state, agents, phase: PhaseConfig | None = None)`:
+6. **이벤트 이름에 `phase.label`을 접두로 붙인다.** 이것이 `label`이 존재하는
+   이유이며, 붙이지 않으면 `label`은 정의만 되고 아무도 안 읽는 죽은 필드가 된다.
+   더 나쁘게는, **면적 단계와 전류 단계가 한 실행에서 같은 이름의 이벤트를 쓰게
+   되어** `history.jsonl`에서 구별할 수 없다. 대상은 `optimizer.py`의 `optimize_`로
+   시작하는 이벤트 **10개**다:
+   ```
+   optimize_baseline   optimize_proposal   optimize_step        optimize_failed
+   optimize_entry_sweep   optimize_confirm_sweep   optimize_bisect_probe
+   optimize_bisect_result   optimize_budget_exhausted   optimize_guard_infeasible
+   ```
+   각 자리를 `state.log_event(f"{label}_baseline", ...)` 꼴로 바꾼다. 전류 단계는
+   `label="optimize"`이므로 **문자열이 한 글자도 달라지지 않는다**(전역 제약
+   "기존 이벤트 이름을 바꾸지 않는다"가 이렇게 지켜진다). 면적 단계는
+   `optimize_area_baseline` 등이 된다.
+
+   `optimize_skipped`는 **접두를 붙이지 않는다.** 그것은 단계가 정해지기 **전에**
+   나오는 이벤트이고(선언이 없어 아무 단계도 안 돈다는 뜻), 붙일 `label`이 없다.
+
+   `_bisect_last_passing`처럼 `PhaseConfig` 전체가 필요 없는 자유 함수에는
+   `label: str`만 넘긴다. `_optimize`에는 `phase`를 넘긴다.
+
+   확인 방법:
+   ```bash
+   grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
+   ```
+   기대: 10. 그리고 기존 테스트가 `optimize_step` 등을 이름으로 찾고 있으므로,
+   **그 테스트들이 전부 그대로 통과해야 한다** — 하나라도 깨지면 전류 단계의
+   이름이 바뀐 것이다.
+
+7. `run_optimization(netlist_texts, spec, state, agents, phase: PhaseConfig | None = None)`:
    ```python
        if phase is None:
            if spec.optimize is None:
@@ -369,15 +399,47 @@ AREA_PHASE = PhaseConfig(
    ```
    **조기 반환이 `phase is None`일 때만 일어나야 한다.** 명시적 `phase`가 오면 `spec.optimize`를 보지 않는다.
 
-- [ ] **Step 5: 통과와 회귀 없음을 확인한다**
+- [ ] **Step 5: 이벤트 이름이 두 단계에서 갈리는지 테스트로 핀한다**
+
+```python
+@pytest.mark.asyncio
+async def test_the_two_phases_do_not_share_event_names(tmp_path):
+    """한 실행에 두 단계가 있으므로 이벤트 이름이 갈려야 한다.
+
+    갈리지 않으면 history.jsonl 에서 어느 단계의 optimize_step 인지 알 수
+    없고, 이 저장소의 측정 스크립트들이 두 단계를 하나로 읽는다. label 이
+    존재하는 이유가 이것이며, 쓰이지 않으면 label 은 죽은 필드다."""
+    from analogcoder.optimizer import AREA_PHASE, run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([200.0, 190.0, 180.0])
+
+    await run_optimization({"tb": DECK}, _spec(), state, agents)             # 전류 단계
+    await run_optimization({"tb": DECK}, _spec(), state, agents, phase=AREA_PHASE)
+
+    names = {
+        json.loads(line)["step"]
+        for line in open(state.history_path, encoding="utf-8")
+    }
+    # 전류 단계의 이름은 한 글자도 바뀌지 않았다.
+    assert "optimize_baseline" in names
+    # 면적 단계는 자기 이름을 쓴다.
+    assert "optimize_area_baseline" in names
+```
+
+- [ ] **Step 6: 통과와 회귀 없음을 확인한다**
 
 ```bash
 .venv/bin/python -m pytest tests/unit/test_optimizer_area_phase.py -v
 .venv/bin/python -m pytest -m "not slow" -q
+grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
 ```
-기대: **기존 optimizer 테스트가 하나도 깨지지 않는다.** 깨지면 리팩터가 동작을 바꾼 것이다.
+기대: **기존 optimizer 테스트가 하나도 깨지지 않는다**(깨지면 전류 단계의 이벤트 이름이 바뀐 것이다), 그리고 접두 적용이 10곳.
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add src/analogcoder/optimizer.py tests/unit/
