@@ -385,7 +385,9 @@ AREA_PHASE = PhaseConfig(
    ```bash
    grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
    ```
-   기대: 10. 그리고 기존 테스트가 `optimize_step` 등을 이름으로 찾고 있으므로,
+   기대: **13**. 이름은 10개이지만 `optimize_step`은 3곳, `optimize_proposal`은
+   2곳에서 발화하므로 **호출 사이트 수는 13**이다(이름 수와 사이트 수를 혼동하지
+   말 것). 그리고 기존 테스트가 `optimize_step` 등을 이름으로 찾고 있으므로,
    **그 테스트들이 전부 그대로 통과해야 한다** — 하나라도 깨지면 전류 단계의
    이름이 바뀐 것이다.
 
@@ -437,7 +439,7 @@ async def test_the_two_phases_do_not_share_event_names(tmp_path):
 .venv/bin/python -m pytest -m "not slow" -q
 grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
 ```
-기대: **기존 optimizer 테스트가 하나도 깨지지 않는다**(깨지면 전류 단계의 이벤트 이름이 바뀐 것이다), 그리고 접두 적용이 10곳.
+기대: **기존 optimizer 테스트가 하나도 깨지지 않는다**(깨지면 전류 단계의 이벤트 이름이 바뀐 것이다), 그리고 접두 적용이 13곳(이름 10개).
 
 - [ ] **Step 7: 커밋**
 
