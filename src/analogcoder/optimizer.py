@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable
 
@@ -82,10 +83,12 @@ class PhaseConfig:
     objective: "str | _AreaObjective"
     # None이면 예산 검사를 하지 않는다.
     area_budget: float | None
-    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다. **코너를 잴 수 있을 때의
-    # 여유분 조립(비율 위에 코너 실측을 덮어쓰는 것)에만 쓰인다** - 이 필드를
-    # margin_floor와 겸용하지 않는다. 한 필드가 두 단계에서 다른 뜻을 가지면
-    # 안 된다.
+    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다. 코너를 잴 수 있으면
+    # 비율 위에 코너 실측을 덮어쓰는 바탕이 되고, **코너를 잴 수 없고
+    # margin_floor도 없으면 그 실행의 여유분 전부다** - 오늘 `optimize:`를
+    # 선언한 코너 없는 스펙이 모두 그 경로다. 그래도 이 필드를
+    # margin_floor와 겸용하지 않는다: 한 필드가 두 뜻을 가지면 안 되고,
+    # 하한이 있는 실행에서는 하한이 이 값을 **대체**한다(더하지 않는다).
     guard_band: float | None
     # 이벤트 이름 접두사. 기존 optimize_*를 읽는 쪽이 새 단계의 이벤트를
     # 오늘의 것으로 오독하면 안 된다.
@@ -357,6 +360,42 @@ def _tightest_slack(criteria: list[Criterion], criteria_results: list[dict]) -> 
     if tightest_name is None:
         return None
     return {"criterion": tightest_name, "value": tightest_value}
+
+
+def _criteria_slack(
+    criteria: list[Criterion], criteria_results: list[dict]
+) -> list[dict]:
+    """이 판정의 **모든** 기준에 대한 상대 여유. 사전 등록의 첫째 절
+    ("각 수락 스텝 이후 모든 기준의 상대 여유를 기록하고")이 요구하는 것.
+
+    `_tightest_slack`은 **착지한 덱 하나**의 최솟값이다 - 실행이 지나온
+    중간 버전의 여유는 어디에도 남지 않는다. 실제로 갈라지는 구성이
+    이 저장소에 이미 기록돼 있다: 밴드갭 목적 단계는 10스텝을 수락하고
+    확인 스윕이 실패해 이분 탐색이 v4에 착지한다 - `tightest_slack`은
+    v4를 설명하고, 더 빠듯했던 v10의 여유는 사라진다. 그래서 스텝마다
+    남긴다.
+
+    최솟값 경쟁이 아니므로 여기서는 기준을 **빼지 않는다** - 빠진
+    이름과 잰 이름이 섞이면 "이 스텝에서 이 기준을 안 봤다"와 "여유를
+    못 쟀다"가 같은 모양이 된다. 값을 낼 수 없는 경우만 `NaN`으로
+    남긴다: `evaluate_criteria`가 측정 실패에 쓰는 표식 그대로다.
+    `relative_slack`을 NaN에 부르지 않는 이유는 그 함수의 docstring에
+    있다(`max()`가 인자 순서에 따라 다른 값을 돌려준다). 수락된 스텝은
+    `overall_pass`를 요구하고 NaN 기준은 언제나 `pass=False`이므로 이
+    분기는 오늘 도달하지 않는다 - 수락되지 않은 판정에도 이 함수를
+    쓰게 되는 날을 위한 것이다."""
+    by_name = {c.name: c for c in criteria}
+    out: list[dict] = []
+    for entry in criteria_results:
+        criterion = by_name.get(entry.get("name"))
+        if criterion is None:
+            continue
+        actual = entry.get("actual")
+        if actual is None or actual != actual:  # actual != actual: NaN 판정.
+            out.append({"criterion": entry.get("name"), "value": math.nan})
+            continue
+        out.append({"criterion": criterion.name, "value": relative_slack(criterion, actual)})
+    return out
 
 
 def _result(
@@ -1011,6 +1050,16 @@ class SearchRun:
             after=parse_spice_value(evaluation.changes[0]["new_value"]),
             objective=evaluation.objective,
             area=evaluation.area,
+            # 사전 등록의 첫째 절: **각 수락 스텝 이후** 모든 기준의 상대
+            # 여유를 기록한다. 거절된 스텝은 덱이 되돌아가므로 그 판정이
+            # 설명하는 덱이 남지 않는다 - 그래서 값이 아니라 `None`이고,
+            # 키 자체는 모든 스텝 이벤트가 든다(`_event` 기본값). 없는 키와
+            # 비어 있는 값이 같아 보이면 계측이 사라진 것을 못 본다.
+            criteria_slack=(
+                _criteria_slack(self._spec.all_criteria, evaluation.verdict["criteria"])
+                if accepted
+                else None
+            ),
         )
         if len(steps) > 1:
             # 오늘의 전략은 절대 여기 오지 않는다. 여러 노브를 한 후보로 미는
@@ -1047,6 +1096,7 @@ class SearchRun:
         after: float | None = None,
         objective: float | None = None,
         area: float | None = None,
+        criteria_slack: list[dict] | None = None,
     ) -> dict:
         return {
             "refdes": knob.refdes,
@@ -1068,6 +1118,12 @@ class SearchRun:
             # 결과의 rejected_by_reason을 이력에서 그대로 되셀 수 있다.
             # 수락된 단계에서는 None이다.
             "reason_code": reason_code,
+            # 수락된 단계에서만 값이 있다 - `_criteria_slack` 참고. 여기서
+            # 재는 것은 이 스텝이 **남긴 덱**의 여유이므로, 실행이 지나온
+            # 모든 중간 버전의 여유가 이력에 남는다. `result`의
+            # `tightest_slack`은 **착지한 덱 하나**의 최솟값이라 그 둘은
+            # 다른 사실이다.
+            "criteria_slack": criteria_slack,
         }
 
     def _count_rejection(self, code: str) -> None:
@@ -1303,13 +1359,17 @@ async def run_optimization(
 
 def _margin_floor_allowances(
     baseline_measurements: dict, criteria: list[Criterion], floor: "MarginFloor | None"
-) -> dict[str, float]:
-    """코너를 잴 수 없을 때의 대체 여유분. **세 규칙(f1/f2/f3)이 갈리는
-    유일한 곳** - 호출부는 이 함수를 부를 뿐, `rule`을 다시 묻지 않는다.
+) -> tuple[dict[str, float], str | None]:
+    """코너를 잴 수 없을 때의 대체 여유분과 **그것을 만든 규칙 이름**.
+    **규칙이 갈리는 유일한 곳** - 호출부는 이 함수를 부를 뿐, `rule`을
+    다시 묻지 않는다. 둘째 반환값이 있는 이유가 그것이다: 이벤트에
+    "어떤 규칙이 요청됐나"를 남기려고 호출부가 `floor.rule`을 다시 읽으면
+    규칙을 읽는 지점이 둘이 되고, 그 둘이 갈리는 것이 이 저장소가
+    compose.py에서 이미 치른 대가다.
 
     `floor`가 `None`이면 대체 여유분이 없다 - 모든 기준이 무방비로 남는다
     (오늘의 면적 단계 출하 상태이고, 2026-08-02 측정이 코너에서 깨지는
-    것을 확인한 그 상태다).
+    것을 확인한 그 상태다). 그때 둘째 값도 `None`이다.
 
     f1은 `ratio_allowances`(임계값 비율) 그 자체이므로 모든 기준 이름이
     채워진다. f2는 `baseline_ratio_allowances`(기준선 여유의 배율)를 쓰고,
@@ -1321,29 +1381,40 @@ def _margin_floor_allowances(
     `baseline_ratio_allowances`가 함께 돌려주는 제외 이름 목록을 여기서
     따로 들고 다니지 않아도 같은 사실이 두 번 다른 방법으로 재지지 않는다.
 
-    f3은 별도 계산이 아니다 - 사전 등록(`2026-08-02-area-phase-margin-floor
-    -design.md`)이 이미 "코너 없는 절반에서 F1·F2의 우승자를 그대로 쓰므로
-    별도 격자가 없다"고 적었다. 코너가 있을 때 코너 실측을 쓰는 것은 세
-    규칙 전부가 이미 하는 일이므로(`_optimize`가 비율 위에
-    `corner_allowances`를 덮어쓴다), f3이 f1·f2와 갈릴 수 있는 입력은 코너
-    없는 이 절반뿐인데 거기서 f3의 정의 자체가 f1 아니면 f2와 같은
-    딕셔너리를 만드는 것이다. 그래서 f1로 환원한다고 **여기서 명시적으로
-    기록한다** - 사전 등록을 지우지 않고 "구별되지 않음"으로 보고하는
-    쪽은 Task 4의 결과 문서가 한다."""
+    **f3은 거절한다 - 조용히 f1으로 환원하지 않는다.** 사전 등록
+    (`2026-08-02-area-phase-margin-floor-design.md`)은 f3을 "코너가 있으면
+    코너 실측, 없으면 F1·F2의 우승자"로 적었고, 코너 실측 쪽은 이미 세
+    규칙 전부가 하는 일이며(`_optimize`가 비율 위에 `corner_allowances`를
+    덮어쓴다), 코너 없는 절반의 우승자는 **판정 규칙 3이 발화해 정해지지
+    않았다**. 그래서 `rule="f3"`은 정의가 미완인 이름이지 f1의 동의어가
+    아니다. 예전 코드는 여기서 f1을 골랐고 그 선택은 임의였다: 다음 사전
+    등록이 F2 `r=0.75`를 우승자로 삼아 `MarginFloor("f3", 0.75)`를 배선하면
+    그 0.75가 f1의 `g`로 읽혀 `vbgout >= 2.1` **및** `<= 0.32`라는 빈 구간을
+    요구하고, 모든 기준이 기준선에서 infeasible이 되어 0스텝 수락으로 깨끗한
+    `UNCHANGED`가 나온다 - 조용히 아무것도 안 하는, 이 저장소가 반복해서
+    당한 그 모양이다. `run_optimization`이 `ValueError`를 잡으므로 잘못된
+    호출부는 `optimize_failed`로 기록되고 끝난다."""
     if floor is None:
-        return {}
+        return {}, None
 
     rule = floor.rule
     if rule == "f3":
-        rule = "f1"  # 코너 없는 절반에서 f1과 구별되지 않는다 - 위 독스트링 참고.
+        raise ValueError(
+            "margin_floor rule 'f3' is not implemented: its corner half is what "
+            "corner_allowances already does for every rule, and its corner-less half "
+            "is whichever of f1/f2 wins - a choice verdict rule 3 of "
+            "2026-08-02-area-phase-margin-floor-design.md never got to make. "
+            "Name 'f1' or 'f2' explicitly, with the value in that rule's own unit "
+            "(f1: ratio of |threshold|; f2: ratio of the baseline slack)."
+        )
 
     if rule == "f1":
-        return ratio_allowances(criteria, floor.value)
+        return ratio_allowances(criteria, floor.value), rule
     if rule == "f2":
         allowances, _excluded = baseline_ratio_allowances(
             baseline_measurements, criteria, floor.value
         )
-        return allowances
+        return allowances, rule
 
     raise ValueError(f"unknown margin_floor rule {floor.rule!r}")
 
@@ -1466,7 +1537,9 @@ async def _optimize(
         그것이다."""
         return [c.name for c in spec.all_criteria if c.name not in allowances]
 
-    def _baseline_event(allowances: dict[str, float]) -> dict:
+    def _baseline_event(
+        allowances: dict[str, float], floor_applied: str | None = None
+    ) -> dict:
         """`{label}_baseline` 페이로드. unguarded_criteria는 그 호출 시점까지
         **실제로 확정된** allowances에서 계산한다 - 상수가 아니다.
 
@@ -1478,7 +1551,17 @@ async def _optimize(
         덮으므로 그 상수는 과대 보고가 아니라 **틀린** 이름표가 된다 -
         "무방비"라고 말하면서 실은 방비돼 있다. 이름이 없으면
         guard_band_violations가 그 이름을 여유분 0.0으로 읽는다 - 그것이
-        "무방비"의 정의다."""
+        "무방비"의 정의다.
+
+        **여유분 하한 두 필드는 언제나 쓴다 - 하한이 없어도 `None`으로
+        쓴다.** 안 쓰면 "하한이 없었다"와 "이 계측이 사라졌다"가
+        history.jsonl에서 같은 모양이 된다(`tuning_retries`·`corner_seed`가
+        무조건 쓰이는 것과 같은 이유다). 두 필드가 갈라지는 것이 신호다:
+        f1이 만드는 allowances는 `guard_band=g`가 만드는 것과 **바이트까지
+        같아서**, 이 필드가 없으면 하한 없는 실행과 `MarginFloor("f1", g)`
+        실행이 로그만으로는 구별되지 않는다. `_applied`가 `None`인데
+        `_requested`가 이름을 들고 있으면 그것은 "하한을 줬는데 이 경로가
+        쓰지 않았다"는 사실이다 - 코너를 잴 수 있는 실행이 정확히 그렇다."""
         return {
             "objective": objective_name,
             "area_before": area_before,
@@ -1487,10 +1570,20 @@ async def _optimize(
             "area_budget_enforced": area_coverage["budget_enforced"],
             "area_reason": area_coverage["reason"],
             "unguarded_criteria": _unguarded(allowances),
+            "margin_floor_rule_requested": floor_rule,
+            "margin_floor_rule_applied": floor_applied,
             **(sim_result or {"failure": sim_failure}),
         }
 
     baseline_measurements = sim_result["measurements"] if sim_result else {}
+    # 하한을 여기서 한 번 푼다. 코너를 잴 수 있는 실행은 결과를 쓰지 않지만
+    # (`corner_allowances`가 이깁니다 - 아래 분기 참고) **요청된 규칙 이름은
+    # 그 실행도 기록해야 한다**: 하한을 줬는데 무시됐다는 사실이 어디에도
+    # 안 남으면 "코너에서는 하한이 무해하다"는 틀린 결론이 나온다.
+    # 정의가 미완인 규칙(f3)은 여기서 터진다 - 코너 유무와 무관하게.
+    floor_allowances, floor_rule = _margin_floor_allowances(
+        baseline_measurements, spec.all_criteria, phase.margin_floor
+    )
     objective_before = _objective_value(phase.objective, baseline_measurements, area_before)
 
     if objective_before is None:
@@ -1588,20 +1681,23 @@ async def _optimize(
             **ratio,
             **corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria),
         }
+        # **여유분 하한은 이 분기에서 쓰이지 않는다** - 코너를 실제로 잰
+        # 값이 있으므로 대체값이 필요 없다. 하한을 받고도 안 썼다는 사실은
+        # `margin_floor_rule_applied=None`으로 남는다(요청 쪽은 이름을 든
+        # 채로). 그래야 "하한을 켰는데 코너에서 아무 차이가 없더라"가
+        # "하한이 코너에서 무해하다"로 오독되지 않는다.
+        floor_applied = None
     else:
         # 코너를 잴 수 없는 절반 - margin_floor가 있으면 그 규칙, 없으면
         # 오늘 그대로 ratio(guard_band 대체, 없으면 {}). margin_floor가
         # None인 한 이 분기의 값은 어제와 한 글자도 다르지 않다.
-        allowances = (
-            _margin_floor_allowances(baseline_measurements, spec.all_criteria, phase.margin_floor)
-            if phase.margin_floor is not None
-            else ratio
-        )
+        allowances = floor_allowances if phase.margin_floor is not None else ratio
+        floor_applied = floor_rule
 
     # allowances가 이 실행이 실제로 쓸 최종값으로 확정되는 지점이 여기다 -
     # 코너 대응이면 실측이 섞이고, 아니면 비율뿐이다. baseline 이벤트를 더
     # 일찍 남기면 아직 모르는 것을 안다고 말하게 되므로 여기서 남긴다.
-    state.log_event(f"{phase.label}_baseline", _baseline_event(allowances))
+    state.log_event(f"{phase.label}_baseline", _baseline_event(allowances, floor_applied))
 
     # **기준선이 자기 가드밴드를 지키는가.** 지키지 못하면 어떤 후보도 수락될
     # 수 없다: 수락 규칙이 매 단계 이 같은 검사를 돌리기 때문이다.
@@ -1782,6 +1878,17 @@ async def run_area_optimization(
     필드 하나만 다른 새 `PhaseConfig`를 만든다 - **`AREA_PHASE` 자체는
     바뀌지 않는다**(Task 4의 측정 스크립트가 여럿을 순서대로 도는 동안 같은
     모듈 상수를 공유 상태로 바꾸면 조합끼리 오염된다).
+
+    **하한은 코너를 잴 수 없는 실행에서만 쓰인다.** 스펙이 `pvt_corners`를
+    선언하고 `OptimizerAgents.verify_corners`가 배선돼 있으면 `_optimize`는
+    진입 스윕에서 읽은 **실측** 여유분을 쓰고 하한은 아예 참조하지 않는다 -
+    여기에 하한을 넘겨도 결과는 하한 없는 실행과 같다. 그것은 결함이 아니라
+    설계다(실측이 추측을 이긴다). 다만 **그 실행에서도 하한을 준 사실은
+    기록된다**: `{label}_baseline` 이벤트의
+    `margin_floor_rule_requested`가 규칙 이름을 들고
+    `margin_floor_rule_applied`가 `None`이다. 그 비대칭이 신호 전부다 -
+    "코너에서는 하한이 아무 차이를 안 만든다"는 결론을 이 두 필드를 보지
+    않고 내리면 안 된다.
 
     `counted == 0`에서 REFUSED를 내는 것은 그것이 UNCHANGED와 다른 사실이기
     때문이다 - "쟀는데 못 줄였다"와 "잴 수 없었다"를 합치면 면적 모델이 이

@@ -321,9 +321,15 @@ async def test_the_area_phase_ranks_knobs_from_the_passed_deck_not_states_deck(t
 # --- 여유분 하한(MarginFloor) - 결정 지점은 _margin_floor_allowances 하나 ---
 
 
-def test_the_area_phase_with_no_floor_leaves_every_criterion_unguarded():
-    """하한이 없으면 코너 없는 스펙에서 모든 기준이 무방비다 - 이것이
-    2026-08-02 측정이 코너에서 깨지는 것을 확인한 출하 상태다."""
+def test_margin_floor_allowances_with_no_floor_returns_an_empty_dict_and_no_rule():
+    """하한이 없으면 여유분이 하나도 없다 - 코너 없는 스펙에서 모든 기준이
+    무방비로 남는다는 것이고, 2026-08-02 측정이 코너에서 깨지는 것을 확인한
+    출하 상태다.
+
+    (이름을 좁혔다: 이 테스트가 부르는 것은 헬퍼 하나이지 면적 단계가
+    아니다. 단계 전체가 그렇게 도는지는
+    `test_margin_floor_is_actually_wired_into_the_optimize_baseline_event`가
+    본다.)"""
     from analogcoder.optimizer import _margin_floor_allowances
     from analogcoder.spec import Criterion
 
@@ -333,10 +339,10 @@ def test_the_area_phase_with_no_floor_leaves_every_criterion_unguarded():
     ]
     baseline = {"gain_db": 65.0, "psrr_db": -30.0}
 
-    # floor가 None이면 baseline이 무엇이든, 임계값이 무엇이든 결과는 늘 {}다 -
+    # floor가 None이면 baseline이 무엇이든, 임계값이 무엇이든 결과는 늘 ({}, None)다 -
     # "잴 수 없다"가 아니라 "규칙이 없다"이므로 입력에 좌우되지 않는다.
-    assert _margin_floor_allowances(baseline, criteria, None) == {}
-    assert _margin_floor_allowances({}, criteria, None) == {}
+    assert _margin_floor_allowances(baseline, criteria, None) == ({}, None)
+    assert _margin_floor_allowances({}, criteria, None) == ({}, None)
 
 
 def test_f1_fills_every_criterion_from_the_threshold():
@@ -352,10 +358,12 @@ def test_f1_fills_every_criterion_from_the_threshold():
     floor = MarginFloor(rule="f1", value=0.1)
 
     # F1은 기준선을 보지 않는다 - 빈 딕셔너리를 줘도 값이 같아야 한다.
-    allowances = _margin_floor_allowances({}, criteria, floor)
+    allowances, rule = _margin_floor_allowances({}, criteria, floor)
 
     assert set(allowances) == {"gain", "psrr"}
     assert allowances == ratio_allowances(criteria, 0.1)
+    # 둘째 값은 **실제로 적용된** 규칙 이름이다 - 이벤트가 이것을 남긴다.
+    assert rule == "f1"
 
 
 def test_f2_fills_from_the_baseline_distance_and_names_what_it_could_not():
@@ -374,29 +382,49 @@ def test_f2_fills_from_the_baseline_distance_and_names_what_it_could_not():
     baseline = {"gain_db": 65.0, "psrr_db": -25.0}
     floor = MarginFloor(rule="f2", value=0.5)
 
-    allowances = _margin_floor_allowances(baseline, criteria, floor)
+    allowances, rule = _margin_floor_allowances(baseline, criteria, floor)
 
     assert allowances == {"gain": 2.5}
+    assert rule == "f2"
     # psrr은 조용히 빠진 게 아니라 "이 이름이 allowances에 없다"로 확인할 수
     # 있게 빠져 있다 - guard_band_violations는 없는 이름을 여유분 0.0으로
     # 읽으므로, 여기서 "이름이 없다"는 곧 "무방비"의 정의다.
     assert "psrr" not in allowances
 
 
-def test_f3_reduces_to_f1_explicitly():
-    """F3 은 구별되는 규칙이 아니다 - 사전 등록이 "코너 없는 절반에서
-    F1·F2의 우승자를 그대로 쓰므로 별도 격자가 없다"고 적었고, 코너 없는
-    이 절반에서 f3의 정의(코너가 있으면 그것, 없으면 F1/F2) 자체가 f1과
-    같은 딕셔너리를 만드는 것과 같다. 그 환원을 여기서 고정한다."""
+def test_f3_is_refused_rather_than_silently_resolved_to_f1():
+    """F3 은 정의가 미완인 이름이다 - **조용히 f1으로 환원하지 않는다.**
+
+    사전 등록은 f3을 "코너가 있으면 코너 실측, 없으면 F1·F2의 우승자"로
+    적었는데, 우승자는 판정 규칙 3이 발화해 정해지지 않았다. 예전 코드는
+    그 자리에서 f1을 골랐고 그 선택은 임의였다 - 그리고 임의라는 사실이
+    코드 주석에만 있고 결과 문서와 CLAUDE.md에는 "f1과 같다"는 동일성으로
+    적혀 있었다.
+
+    이 테스트가 막는 구체적 시나리오: 다음 사전 등록이 F2 `r=0.75`를
+    우승자로 삼아 `MarginFloor(rule="f3", value=0.75)`를 배선한다. 옛
+    코드는 그 0.75를 f1의 `g`로 읽어 밴드갭에서 `vbgout >= 2.1` **및**
+    `<= 0.32`라는 빈 구간을 만들고, 모든 기준이 기준선에서 infeasible이
+    되어 0스텝 수락 - 깨끗한 `UNCHANGED`가 나온다. 조용히 아무것도 하지
+    않는 그 모양이 이 저장소가 반복해서 당한 실패다.
+
+    `run_optimization`이 `ValueError`를 잡으므로, 잘못된 호출부는
+    크래시가 아니라 `optimize_failed` 로 기록되고 끝난다."""
+    import pytest
+
     from analogcoder.optimizer import MarginFloor, _margin_floor_allowances
     from analogcoder.spec import Criterion
 
     criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0)]
 
-    f1 = _margin_floor_allowances({}, criteria, MarginFloor(rule="f1", value=0.1))
-    f3 = _margin_floor_allowances({}, criteria, MarginFloor(rule="f3", value=0.1))
+    with pytest.raises(ValueError) as excinfo:
+        _margin_floor_allowances({}, criteria, MarginFloor(rule="f3", value=0.1))
 
-    assert f3 == f1
+    # 메시지는 무엇이 거절됐고 무엇을 대신 써야 하는지를 말해야 한다 -
+    # 이름만 있는 예외는 다음 호출부를 f1로 다시 유도한다.
+    message = str(excinfo.value)
+    assert "f3" in message
+    assert "f1" in message and "f2" in message
 
 
 def test_the_three_rules_are_decided_in_exactly_one_place():
@@ -503,6 +531,100 @@ async def test_margin_floor_is_actually_wired_into_the_optimize_baseline_event(t
     # gain은 F2가 여유 2.5(=0.5*(65-60))를 채운다. psrr은 임계값에 정확히
     # 붙어 있어 F2가 이름으로 제외하고, _unguarded는 그 이름을 무방비로 본다.
     assert baseline["unguarded_criteria"] == ["psrr"]
+    # 규칙 이름이 이벤트에 남는다. f1이었다면 allowances가 `guard_band=g`와
+    # 바이트까지 같아 로그만으로는 구별되지 않는다 - 그래서 이름을 남긴다.
+    assert baseline["margin_floor_rule_requested"] == "f2"
+    assert baseline["margin_floor_rule_applied"] == "f2"
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_no_floor_still_writes_both_margin_floor_fields_as_none(tmp_path):
+    """"하한이 없었다"와 "이 계측이 사라졌다"가 같은 모양이면 안 된다.
+
+    두 필드를 **무조건** 쓴다 - `tuning_retries`와 `corner_seed`가 무조건
+    쓰이는 것과 같은 이유다. 특히 f1은 `guard_band=g`와 **바이트까지 같은**
+    allowances를 만들므로, 이 필드가 없으면 하한 없는 실행과
+    `MarginFloor("f1", g)` 실행이 history.jsonl만으로는 구별되지 않는다."""
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    await run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    baseline = next(e for e in events if e["step"] == "optimize_area_baseline")
+
+    # 키가 **있고** 값이 None이다 - `.get()`이 아니라 `in`으로 본다.
+    assert "margin_floor_rule_requested" in baseline
+    assert "margin_floor_rule_applied" in baseline
+    assert baseline["margin_floor_rule_requested"] is None
+    assert baseline["margin_floor_rule_applied"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_floor_on_a_corner_capable_spec_is_recorded_as_requested_but_not_applied(tmp_path):
+    """코너를 잴 수 있으면 하한은 참조되지 않는다 - 실측이 추측을 이긴다.
+
+    그 자체는 설계지만, **아무 기록도 없으면** 후속 스크립트가
+    "코너에서는 하한이 무해하다"는 틀린 결론을 낸다(결과가 하한 없는
+    실행과 동일하고 반증할 것이 어디에도 없으므로). 비대칭이 신호다:
+    요청은 이름을 들고, 적용은 `None`이다."""
+    from types import SimpleNamespace
+
+    from analogcoder.optimizer import MarginFloor, OptimizerAgents, PhaseConfig, run_optimization
+    from analogcoder.spec import Criterion
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _spec
+
+    tb = SimpleNamespace(
+        name="tb",
+        criteria=[Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0)],
+        control_block=".control\nmeas dc iq_ua FIND i(Vdd) AT=27\n.endc\n",
+        fragments=None,
+    )
+    # 코너 선언이 있어야 corner_capable이 True가 된다.
+    spec = _spec(
+        testbenches=[tb], optimize=None,
+        pvt_corners=SimpleNamespace(corners=[], nominal=None),
+    )
+
+    async def simulate(netlist_texts, spec_arg):
+        return {
+            "measurements": {"iq_ua": 200.0, "gain_db": 65.0},
+            "status": "success",
+            "warnings": [],
+        }
+
+    def verify_corners(netlist_texts):
+        # 진입 스윕이 통과해야 하한이 "쓰이지 않는" 그 경로까지 간다.
+        return {
+            "overall_pass": True,
+            "criteria": [{"name": "gain", "actual": 64.0}],
+            "summary": "ok",
+            "worst_case_corners": {},
+        }
+
+    agents = OptimizerAgents(
+        propose=None, simulate=simulate, knob_ranking=[], verify_corners=verify_corners
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    phase = PhaseConfig(
+        objective="iq_ua", area_budget=None, guard_band=None, label="optimize_cc",
+        margin_floor=MarginFloor(rule="f2", value=0.5),
+    )
+    await run_optimization({"tb": DECK}, spec, state, agents, phase=phase)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    baseline = next(e for e in events if e["step"] == "optimize_cc_baseline")
+
+    assert baseline["margin_floor_rule_requested"] == "f2"
+    assert baseline["margin_floor_rule_applied"] is None
 
 
 # --- run_area_optimization의 margin_floor 인자 - Task 4 리뷰(B-7)가 지적한
@@ -583,6 +705,96 @@ async def test_run_area_optimization_with_a_floor_carries_it_without_mutating_ar
     assert phase.label == optimizer_mod.AREA_PHASE.label
     # AREA_PHASE 자체는 바뀌지 않는다 - replace()가 새 객체를 만들 뿐이다.
     assert optimizer_mod.AREA_PHASE.margin_floor is None
+
+
+# --- 사전 등록의 첫째 절: **각 수락 스텝 이후** 모든 기준의 상대 여유 ------
+#
+# 잠긴 문장은 두 절이다: "각 수락 스텝 이후 모든 기준의 상대 여유를
+# **기록**하고, 실행 종료 시 **최솟값과 그 기준 이름**을 결과와 보고서에
+# 남긴다." 둘째 절이 아래의 tightest_slack이고, 첫째 절이 이것이다. 둘은
+# 다른 사실이다: tightest_slack은 **착지한 덱 하나**를 설명하는데, 실행이
+# 지나온 중간 버전이 더 빠듯했을 수 있다(밴드갭 목적 단계: 10스텝 수락 ->
+# 확인 스윕 실패 -> 이분 탐색이 v4 착지. v10의 여유는 어디에도 안 남는다).
+
+
+@pytest.mark.asyncio
+async def test_each_accepted_step_records_the_relative_slack_of_every_criterion(tmp_path):
+    """수락된 스텝 이벤트가 그 스텝이 남긴 덱의 기준별 상대 여유를 든다.
+
+    `test_the_result_carries_the_tightest_relative_slack_and_its_criterion`과
+    같은 시나리오(기준선 235 -> 수락 후 200)를 쓰되, 결과가 아니라 **이력**을
+    본다 - 그것이 중간 버전을 붙잡는 유일한 채널이다."""
+    from analogcoder.optimizer import run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0, 200.0])
+
+    await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    accepted = [e for e in events if e["step"] == "optimize_step" and e.get("accepted")]
+
+    assert accepted, "no accepted step was logged - the scenario changed"
+    for event in accepted:
+        assert event["criteria_slack"] == [
+            {"criterion": "iq", "value": pytest.approx((300.0 - 200.0) / 300.0)},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_step_carries_the_key_with_a_null_value_not_no_key(tmp_path):
+    """거절된 스텝은 덱이 되돌아가므로 그 판정이 설명할 덱이 없다 - 값은
+    `None`이다. 그러나 **키는 있다**: 키가 통째로 없으면 "이 스텝은 수락되지
+    않았다"와 "이 계측이 사라졌다"가 같은 모양이 된다."""
+    from analogcoder.optimizer import run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    # 유일한 후보가 목적값을 올려 거절된다.
+    agents, _ = _agents([235.0, 260.0, 260.0, 260.0])
+
+    await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    rejected = [
+        e for e in events
+        if e["step"] == "optimize_step" and e.get("accepted") is False and "reason_code" in e
+    ]
+
+    assert rejected, "no rejected step was logged - the scenario changed"
+    for event in rejected:
+        assert "criteria_slack" in event
+        assert event["criteria_slack"] is None
+
+
+def test_criteria_slack_keeps_every_criterion_and_marks_an_unmeasured_one_nan():
+    """최솟값 경쟁이 아니므로 기준을 **빼지 않는다**. `_tightest_slack`은
+    NaN을 경쟁에서 빼지만(그 함수의 docstring 참고) 여기서 같은 규칙을
+    쓰면 "이 스텝에서 이 기준을 안 봤다"와 "여유를 못 쟀다"가 같아진다."""
+    import math
+
+    from analogcoder.optimizer import _criteria_slack
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0),
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+    ]
+    results = [
+        {"name": "iq", "actual": 200.0},
+        {"name": "gain", "actual": math.nan},
+    ]
+
+    slack = _criteria_slack(criteria, results)
+
+    assert [entry["criterion"] for entry in slack] == ["iq", "gain"]
+    assert slack[0]["value"] == pytest.approx((300.0 - 200.0) / 300.0)
+    assert math.isnan(slack[1]["value"])
 
 
 # --- 새 트리거: tightest_slack - 코너 없이도 한 실행만으로 읽는 상대 여유 ----
