@@ -25,6 +25,7 @@ from pathlib import Path
 
 from analogcoder.area import total_area
 from analogcoder.json_io import json_safe
+from analogcoder.judge_tools import relative_slack
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_area_optimization
 from analogcoder.pvt import run_full_pvt_sweep
@@ -42,22 +43,10 @@ def _criteria_key(spec) -> dict:
     return {c.name: (c.measurement, c.operator, c.threshold) for c in spec.all_criteria}
 
 
-def _relative_slack(criterion, actual: float | None) -> float | None:
-    """임계값 대비 남은 상대 여유. 부호는 통과 방향이 양수다.
-
-    스케일은 `max(|threshold|, |actual|)` 이다 - 임계값이 0 인 기준에서
-    0 으로 나누지 않기 위해서이고, 이 저장소가 개선량 정의에서 이미 쓰는
-    스케일과 같다. **판정에는 쓰지 않는다**(사전 등록의 "부수적으로 기록하되
-    판정에 쓰지 않는 것"). 2 단계가 읽을 값이다.
-    """
-    if actual is None:
-        return None
-    scale = max(abs(criterion.threshold), abs(actual))
-    if scale == 0.0:
-        return 0.0
-    if criterion.operator in (">=", ">"):
-        return (actual - criterion.threshold) / scale
-    return (criterion.threshold - actual) / scale
+# _relative_slack은 judge_tools.relative_slack으로 옮겨졌다 - 이 스크립트와
+# optimizer.py의 tightest_slack이 같은 정의를 공유해야 갈라지지 않는다
+# (**판정에는 쓰지 않는다**는 사전 등록의 규칙은 그대로다: 2 단계가 읽을
+# 부수 기록일 뿐이다).
 
 
 def _texts(spec) -> dict[str, str]:
@@ -190,7 +179,7 @@ def main() -> int:
     for c in sweep["criteria"]:
         crit = by_name.get(c["name"])
         if crit is not None:
-            slacks[c["name"]] = _relative_slack(crit, c.get("actual"))
+            slacks[c["name"]] = relative_slack(crit, c.get("actual"))
 
     record["run_b_sweep"] = {
         "spec": str(SPEC_B.relative_to(REPO)),

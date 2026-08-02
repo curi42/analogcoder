@@ -36,6 +36,21 @@ def _unguarded_summary(names: list | None) -> str:
     return f"{len(names)} (too many to list here - see result.json)"
 
 
+def _tightest_slack_summary(slack: dict | None) -> str:
+    """`tightest_slack`을 사람이 읽는 문장 하나로.
+
+    `unguarded_criteria`와 같은 이유로 `None`을 별도 문장으로 그린다 -
+    `optimizer._result`는 이 필드에서도 `None`을 `{}`로 접지 않는다.
+    `None`은 "이 판정에서 어떤 기준의 상대 여유도 계산되지 않았다"는
+    사실이고(기준선 시뮬레이션/목적값 확보 실패, 진입 스윕 실패, 이
+    단계 자체가 준비 구간이나 예외 처리기에서 접힌 경로), 값이 있는
+    경우와 같은 모양으로 그리면 "쟀는데 값이 없었다"로 읽혀 그 차이가
+    사라진다."""
+    if slack is None:
+        return "알 수 없음 - 이 실행에서 기준의 상대 여유가 계산되지 않았다"
+    return f"{slack['value']:.4f} ({slack['criterion']})"
+
+
 def write_result_json(run_dir: str, result: dict) -> str:
     # `json_io.dump`는 비유한 float를 문자열 표지로 정규화한 뒤
     # `allow_nan=False`로 쓴다. 이 파일에는 실제로 NaN이 들어간다 -
@@ -129,6 +144,12 @@ def _area_optimization_lines(area: dict | None) -> list[str]:
         f"- 무방비 기준(여유분 0으로 판정됨): "
         f"{_unguarded_summary(area.get('unguarded_criteria'))}"
     )
+    # 사전 등록의 마지막 절 - 코너를 선언하지 않은 스펙에서 하한이 필요한
+    # 이유를 한 실행만으로 보여준다: 이 값이 임계값에 가까워질수록 다음
+    # 코너 스윕에서 깨질 위험이 크다.
+    lines.append(
+        f"- 가장 빠듯한 상대 여유: {_tightest_slack_summary(area.get('tightest_slack'))}"
+    )
     if area.get("corner_failure"):
         lines.append(f"- 코너 확인이 돌지 못했다: {area['corner_failure']}")
     if area.get("failure"):
@@ -200,6 +221,10 @@ def _optimization_lines(optimization: dict | None) -> list[str]:
     lines.append(
         f"**Unguarded criteria (judged with zero margin):** "
         f"{_unguarded_summary(optimization.get('unguarded_criteria'))}"
+    )
+    lines.append(
+        f"**Tightest relative slack:** "
+        f"{_tightest_slack_summary(optimization.get('tightest_slack'))}"
     )
 
     return lines

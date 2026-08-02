@@ -1160,3 +1160,79 @@ def test_the_provenance_names_the_area_phase_when_only_it_moved_the_deck(tmp_pat
     both_md = open(both, encoding="utf-8").read()
     assert "optimization phase landed on" in both_md
     assert "area phase landed on" not in both_md
+
+
+# --- 새 트리거: tightest_slack - 두 형제 절 모두 그려야 한다 -----------------
+
+
+def test_the_area_section_renders_the_tightest_slack_value_and_criterion_name(tmp_path):
+    """값이 있으면 숫자와 기준 이름이 둘 다 보여야 한다 - 숫자만 있으면
+    다음 사람이 어느 기준인지 알아내려고 45 코너를 다시 돌려야 한다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "OPTIMIZED", "steps_accepted": 16, "steps_rejected": 3,
+            "area_before": 41.0, "area_after": 33.14,
+            "tightest_slack": {"criterion": "buf0_phase_margin", "value": 0.024},
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_slack_known"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "buf0_phase_margin" in md
+    assert "0.0240" in md
+
+
+def test_the_area_section_reports_unknown_when_the_slack_could_not_be_computed(tmp_path):
+    """`tightest_slack`이 `None`이면 "0"이나 빈 문장이 아니라 명시적으로
+    '알 수 없음'을 그려야 한다 - 크래시 경로와 '전 기준이 여유 0으로 빠듯함'을
+    구별해야 한다. 두 렌더를 `tightest_slack` 값만 다르게 만들고 비교한다."""
+    known = {
+        "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
+        "area_before": 41.0, "area_after": 41.0,
+        "tightest_slack": {"criterion": "iq", "value": 0.2},
+    }
+    unknown = {**known, "tightest_slack": None}
+
+    known_path = write_report_md(
+        _dir(tmp_path, "area_slack_a"), _result(status="PASS", area_optimization=known)
+    )
+    unknown_path = write_report_md(
+        _dir(tmp_path, "area_slack_b"), _result(status="PASS", area_optimization=unknown)
+    )
+    known_md = open(known_path, encoding="utf-8").read()
+    unknown_md = open(unknown_path, encoding="utf-8").read()
+
+    known_line = next(l for l in known_md.splitlines() if "가장 빠듯한 상대 여유" in l)
+    unknown_line = next(l for l in unknown_md.splitlines() if "가장 빠듯한 상대 여유" in l)
+    assert known_line != unknown_line
+    assert "알 수 없음" in unknown_line
+    assert "알 수 없음" not in known_line
+
+
+def test_the_optimization_section_also_renders_the_tightest_slack(tmp_path):
+    """면적 절뿐 아니라 형제 절(`_optimization_lines`)도 같은 사실을 그려야
+    한다 - 브리프가 두 절 모두를 명시했다."""
+    result = _result(
+        status="PASS",
+        optimization={
+            "status": "OPTIMIZED", "steps_accepted": 4, "steps_rejected": 1,
+            "objective_before": 212.99, "objective_after": 211.68,
+            "area_before": 41.0, "area_after": 41.0,
+            "tightest_slack": {"criterion": "psrr_minus_db", "value": 0.055},
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "opt_slack_known"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "psrr_minus_db" in md
+    assert "0.0550" in md
+
+    absent = write_report_md(
+        _dir(tmp_path, "opt_slack_unknown"),
+        _result(status="PASS", optimization={
+            "status": "OPTIMIZED", "steps_accepted": 4, "steps_rejected": 1,
+            "objective_before": 212.99, "objective_after": 211.68,
+            "area_before": 41.0, "area_after": 41.0, "tightest_slack": None,
+        }),
+    )
+    absent_md = open(absent, encoding="utf-8").read()
+    assert "알 수 없음" in absent_md

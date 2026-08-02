@@ -503,3 +503,90 @@ async def test_margin_floor_is_actually_wired_into_the_optimize_baseline_event(t
     # gain은 F2가 여유 2.5(=0.5*(65-60))를 채운다. psrr은 임계값에 정확히
     # 붙어 있어 F2가 이름으로 제외하고, _unguarded는 그 이름을 무방비로 본다.
     assert baseline["unguarded_criteria"] == ["psrr"]
+
+
+# --- 새 트리거: tightest_slack - 코너 없이도 한 실행만으로 읽는 상대 여유 ----
+#
+# 사전 등록의 마지막 절. 원래 트리거("코너 스윕에서 깨지면")는 코너를
+# 선언하지 않은 스펙에서 관측 불가능하고, 그 스펙이야말로 하한이 필요한
+# 곳이다. 세 시나리오 모두 `_spec()`의 유일한 기준 "iq"(`iq_ua <= 300`)를
+# 쓴다 - 상대 여유는 `(threshold - actual) / max(|threshold|, |actual|)`다.
+
+
+@pytest.mark.asyncio
+async def test_the_result_carries_the_tightest_relative_slack_and_its_criterion(tmp_path):
+    """최솟값만으로는 어느 기준인지 모른다. 이름이 없으면 다음 사람이 45
+    코너를 다시 돌려야 알아낸다.
+
+    `test_a_step_that_lowers_the_objective_is_accepted`와 같은 시나리오를
+    쓴다: 기준선 235 -> 수락된 스텝 후 200. 착지한 덱에서 다시 잰 상대
+    여유가 나와야 한다 - (300-200)/300."""
+    from analogcoder.optimizer import run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "OPTIMIZED"
+    assert result["steps_accepted"] >= 1
+    assert result["tightest_slack"] == {
+        "criterion": "iq", "value": pytest.approx((300.0 - 200.0) / 300.0),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_phase_that_accepted_nothing_reports_the_baseline_s_tightest_slack(tmp_path):
+    """수락이 0 이어도 값이 있어야 한다 - 그때의 최솟값은 기준선의 것이고,
+    '태우지 않았다'와 '재지 않았다'는 다른 사실이다.
+
+    `test_a_step_that_raises_the_objective_is_reverted`와 같은 시나리오를
+    쓴다: 유일한 후보가 목적값을 올려서 거절되고 덱은 기준선(235)으로
+    되돌아간다. 착지한 덱은 기준선 그 자체이므로 상대 여유도 기준선의
+    것 - (300-235)/300 - 이어야 한다."""
+    from analogcoder.optimizer import run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 260.0, 260.0, 260.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert result["steps_accepted"] == 0
+    assert result["tightest_slack"] == {
+        "criterion": "iq", "value": pytest.approx((300.0 - 235.0) / 300.0),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_phase_that_could_not_measure_reports_unknown_not_zero(tmp_path):
+    """크래시 경로에서는 알 수 없음이지 0 이 아니다. 이 브랜치는 같은
+    붕괴를 unguarded_criteria 에서 이미 한 번 고쳤다.
+
+    기준선 시뮬레이션이 목적값 measurement 자체를 내놓지 못하면
+    (`objective_before is None`) 어떤 기준의 상대 여유도 계산되지
+    않았다 - `_search`에 들어가기도 전에 `_result`가 불린다."""
+    from analogcoder.optimizer import OptimizerAgents, run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _spec
+
+    async def simulate(netlist_texts, spec_arg):
+        return {"measurements": {}, "status": "success", "warnings": []}
+
+    async def propose(structure_view, margins, objective, netlist_view):
+        raise AssertionError("목적값을 못 재면 propose까지 가면 안 된다")
+
+    agents = OptimizerAgents(propose=propose, simulate=simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert result["tightest_slack"] is None

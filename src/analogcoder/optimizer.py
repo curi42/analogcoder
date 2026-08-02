@@ -11,6 +11,7 @@ from analogcoder.judge_tools import (
     evaluate_criteria,
     guard_band_violations,
     ratio_allowances,
+    relative_slack,
 )
 from analogcoder.netlist import (
     Component,
@@ -315,6 +316,49 @@ def _sweep_event(sweep: dict | None, failure: str | None, **extra) -> dict:
     }
 
 
+def _tightest_slack(criteria: list[Criterion], criteria_results: list[dict]) -> dict | None:
+    """이 판정에서 가장 빠듯한 상대 여유와 그 기준 이름.
+
+    코너 스윕에서 관측 가능한("코너에서 깨진다") 것을 기다리지 않고 코너
+    없는 스펙에서도 한 실행만으로 읽을 수 있게 하는 것이 이 태스크의
+    이유다 - 원래 트리거는 그 스펙에서 구조적으로 발화할 수 없었다.
+
+    `criteria_results`는 `evaluate_criteria`가 내는 모양(list of
+    `{"name","actual",...}`)이다 - `records[version]["criteria"]`는
+    기준선 판정이든 탐색이 다시 잰 것이든 언제나 이 모양을 공유하므로
+    호출부를 가리지 않는다.
+
+    NaN은 `evaluate_criteria`가 측정 실패에 실제로 쓰는 표식이고
+    (`records`를 거쳐 여기 도달하는 것이 재현 가능한 경로다), 여기서
+    **최솟값 경쟁에서 빼는 것으로** 처리한다. `relative_slack`은 NaN을
+    막지 않으므로(그 함수의 docstring 참고), 그대로 넘기면
+    `max(|threshold|, |NaN|)`이 인자 순서에 따라 값이 갈리고 그 결과가
+    `min()`에 들어가 "가장 나쁘다"도 "가장 좋다"도 아닌, 어느 쪽이 될지
+    코드 순서로 결정되는 값이 된다. NaN은 여기서 이기지도 지지도
+    않는다 - 그 기준은 이번 최솟값 계산에서 그냥 빠지고, 측정 실패라는
+    사실 자체는 `criteria_results`의 그 항목(`actual=NaN`,
+    `pass=False`)이 이미 들고 있다."""
+    by_name = {c.name: c for c in criteria}
+    tightest_name: str | None = None
+    tightest_value: float | None = None
+    for entry in criteria_results:
+        criterion = by_name.get(entry.get("name"))
+        if criterion is None:
+            continue
+        actual = entry.get("actual")
+        if actual is None or actual != actual:  # actual != actual: NaN 판정, math 없이.
+            continue
+        slack = relative_slack(criterion, actual)
+        if slack is None:
+            continue
+        if tightest_value is None or slack < tightest_value:
+            tightest_value = slack
+            tightest_name = criterion.name
+    if tightest_name is None:
+        return None
+    return {"criterion": tightest_name, "value": tightest_value}
+
+
 def _result(
     status: str,
     state,
@@ -332,6 +376,7 @@ def _result(
     area_coverage: dict | None = None,
     final_criteria: list[dict] | None = None,
     unguarded_criteria: list[str] | None = None,
+    tightest_slack: dict | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -405,6 +450,20 @@ def _result(
         # 거짓이다: 어떤 기준도 어떤 allowance와도 비교되지 않았다. `0`과
         # `unknown`은 이 저장소에서 한 칸을 나눠 쓰지 않는다.
         "unguarded_criteria": list(unguarded_criteria) if unguarded_criteria is not None else None,
+        # 사전 등록의 마지막 절: 각 수락 스텝 이후 모든 기준의 상대 여유를
+        # 재고, 실행 종료 시 최솟값과 그 기준 이름을 남긴다. 원래 트리거
+        # ("코너 스윕에서 깨지면")는 코너를 선언하지 않은 스펙에서
+        # 관측 불가능했다 - 그 스펙이야말로 하한이 필요한 곳이었다. 이
+        # 값은 한 실행만으로 읽을 수 있다.
+        #
+        # unguarded_criteria와 같은 이유로 **`None`을 `{}`나 빈 값으로
+        # 접지 않는다.** `None`은 "이 판정에서 어떤 기준의 상대 여유도
+        # 계산되지 않았다"는 사실이다(final_criteria가 None인 모든
+        # 경로 - 기준선 시뮬레이션/목적값 확보 실패, 진입 스윕이 아예
+        # 못 돌거나 실패해 탐색에 들어가지도 못한 경로, 이 단계 자체가
+        # 준비 구간이나 예외 처리기에서 접힌 경로). `{}`로 접으면 "쟀고
+        # 값이 없었다"로 읽혀 "재지 못했다"는 사실을 지운다.
+        "tightest_slack": tightest_slack,
     }
 
 
@@ -1594,6 +1653,13 @@ async def _optimize(
             # 이 실행이 실제로 판정에 쓴 allowances에서 잰다 - 진입 스윕 이후로
             # 고정된 값이므로 탐색 결과가 어떤 버전에 착지하든 같다.
             unguarded_criteria=_unguarded(allowances),
+            # record["criteria"]는 착지한 버전의 것이다(기준선일 수도,
+            # 이분 탐색이 되돌아온 중간 버전일 수도) - final_criteria와
+            # 같은 덱을 설명해야 하므로 같은 record에서 잰다. accepted가
+            # 0이면 record는 baseline_verdict 그대로이므로, 그때의
+            # 최솟값은 "기준선의 것"이 된다 - 태우지 않은 것과 재지
+            # 않은 것을 구분하는 지점이다.
+            tightest_slack=_tightest_slack(spec.all_criteria, record.get("criteria") or []),
         )
 
     if not corner_capable:

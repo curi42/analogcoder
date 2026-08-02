@@ -91,6 +91,36 @@ def guard_band_violations(
     return violations
 
 
+def relative_slack(criterion: Criterion, actual: float | None) -> float | None:
+    """임계값 대비 남은 상대 여유. 부호는 통과 방향이 양수다.
+
+    `scripts/area_guard_measurement.py`가 처음 정의했던 것을 그대로 옮긴
+    것 - 스크립트와 `optimizer.py`(Task 3의 `tightest_slack`) 둘 다 이
+    함수 하나를 쓴다. 두 곳에 같은 식을 두면 갈라진다는 것이
+    `compose.py`가 `netlist.py`의 include 규칙을 손으로 베껴 겪은 일이다.
+
+    스케일은 `max(|threshold|, |actual|)`다 - 임계값이 0인 기준에서
+    0으로 나누지 않기 위해서다. `scale == 0.0`은 폴백이 **아니다**: 그
+    값은 임계값과 실측이 **둘 다** 0일 때만 나오고, 그때 여유는 정확히
+    0이다(기준이 자기 임계값 위에 정확히 서 있다) - 나눗셈을 피하려는
+    임의의 대체값이 아니라 실제로 옳은 답이다.
+
+    `actual`이 NaN이면 이 함수는 그 NaN을 그대로(또는 `scale` 계산의
+    인자 순서에 따라 뒤섞인 값으로) 돌려준다 - 이 함수 자체는 NaN을
+    막지 않는다. 최솟값 경쟁(`optimizer._tightest_slack`)에 넣기 전에
+    NaN을 걸러내는 것은 그 호출부의 책임이다: `max()`가 NaN 비교에서
+    인자 순서에 따라 다른 값을 돌려주므로, 이 함수 안에서 막으면 그
+    사실이 안 보이게 된다."""
+    if actual is None:
+        return None
+    scale = max(abs(criterion.threshold), abs(actual))
+    if scale == 0.0:
+        return 0.0
+    if criterion.operator in _LOWER_BOUND:
+        return (actual - criterion.threshold) / scale
+    return (criterion.threshold - actual) / scale
+
+
 def corner_allowances(
     reference: dict, sweep: dict, criteria: list[Criterion]
 ) -> dict[str, float]:

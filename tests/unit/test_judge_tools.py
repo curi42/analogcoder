@@ -1,4 +1,6 @@
-from analogcoder.judge_tools import baseline_ratio_allowances, evaluate_criteria
+import pytest
+
+from analogcoder.judge_tools import baseline_ratio_allowances, evaluate_criteria, relative_slack
 from analogcoder.spec import Criterion
 
 
@@ -79,3 +81,33 @@ def test_f2_allowance_is_positive_regardless_of_threshold_sign():
     allowances, excluded = baseline_ratio_allowances({"psrr_db": -35.0}, criteria, 0.5)
     assert allowances == {"psrr": 5.0}
     assert excluded == []
+
+
+# --- relative_slack: scripts/area_guard_measurement.py 에서 옮겨와 공유 ------
+
+
+def test_relative_slack_is_positive_when_passing_and_scaled_by_the_larger_magnitude():
+    """`<=` 기준에서 통과 중이면 부호가 양수다. 스케일은
+    max(|threshold|, |actual|) - 여기서는 threshold(10)가 더 크다."""
+    criterion = Criterion(name="x", measurement="m", operator="<=", threshold=10.0)
+    assert relative_slack(criterion, 8.0) == pytest.approx((10.0 - 8.0) / 10.0)
+
+
+def test_relative_slack_is_negative_when_failing():
+    """실패 중이면 부호가 음수다 - "얼마나 초과했는가"를 같은 스케일로 잰다."""
+    criterion = Criterion(name="x", measurement="m", operator=">=", threshold=10.0)
+    assert relative_slack(criterion, 8.0) == pytest.approx((8.0 - 10.0) / 10.0)
+
+
+def test_relative_slack_is_none_without_a_measurement():
+    """actual이 None이면 거리를 잴 수 없다 - 0으로 읽지 않는다."""
+    criterion = Criterion(name="x", measurement="m", operator="<=", threshold=10.0)
+    assert relative_slack(criterion, None) is None
+
+
+def test_relative_slack_at_a_zero_threshold_and_actual_is_an_exact_tie_not_a_fallback():
+    """`scale == 0.0`은 나눗셈을 피하려는 임의 대체값이 아니다 - 임계값과
+    실측이 둘 다 0일 때만 나오는 값이고, 그때 여유는 정확히 0이다(기준이
+    자기 임계값 위에 정확히 서 있다)."""
+    criterion = Criterion(name="x", measurement="m", operator=">=", threshold=0.0)
+    assert relative_slack(criterion, 0.0) == 0.0
