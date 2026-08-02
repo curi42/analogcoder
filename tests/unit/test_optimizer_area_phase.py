@@ -402,10 +402,25 @@ def test_f3_reduces_to_f1_explicitly():
 def test_the_three_rules_are_decided_in_exactly_one_place():
     """규칙이 셋으로 늘어도 결정 지점은 하나여야 한다.
 
-    소스를 읽어 `MarginFloor.rule`을 분기하는(`rule ==`/`rule in`) 줄이
-    `_margin_floor_allowances` 안에만 있는지 확인한다. compose.py가
-    netlist.py의 규칙을 손으로 베껴 양방향으로 갈라진 것이 이 저장소가
-    이미 치른 대가다.
+    **이 스캔이 증명하는 것은 정확히 이것이다: optimizer.py 안에서
+    `.rule` 속성에 접근하는(`floor.rule` 같은) 줄이
+    `_margin_floor_allowances` 밖에 없다.** 비교 연산자 토큰
+    (`rule ==`/`rule in`)을 찾는 이전 버전은 리뷰에서 실측으로 반증됐다 -
+    비교 지점 앞에서 `picked = floor.rule`로 로컬 변수 이름을 바꾸면
+    `rule ==` 토큰 자체가 사라져 검출을 피해 간다. `.rule` **읽기**를
+    스캔하면 그 우회도 잡힌다 - 이름을 뭐라 바꾸든 `floor.rule`을 읽는
+    순간은 감출 수 없다.
+
+    이 스캔이 증명하지 **못하는** 것: 점 표기를 쓰지 않는 접근
+    (`getattr(floor, "rule")`), 그리고 `_margin_floor_allowances`가 돌려준
+    dict를 받아 그 키 집합에서 규칙을 거꾸로 추론하는 코드 - 그런 경로는
+    `.rule`을 다시 읽지 않으므로 이 정규식에 보이지 않는다. 그래서 이
+    테스트의 이름과 주장은 "`.rule`을 읽는 지점이 하나"로 좁혀 읽어야
+    한다 - "규칙을 결정하는 모든 가능한 방법이 하나"라는 더 넓은 주장을
+    이 스캔 하나로 증명한다고 말하지 않는다.
+
+    compose.py가 netlist.py의 규칙을 손으로 베껴 양방향으로 갈라진 것이
+    이 저장소가 이미 치른 대가다.
 
     (브리프는 이 형태의 소스 스캔에 tests/unit/test_area_ranking.py의
     선례가 있다고 적었지만, 확인 결과 그 파일에는 inspect.getsource를
@@ -420,14 +435,22 @@ def test_the_three_rules_are_decided_in_exactly_one_place():
     func_lines, func_start = inspect.getsourcelines(_margin_floor_allowances)
     func_line_numbers = set(range(func_start, func_start + len(func_lines)))
 
-    pattern = re.compile(r"\brule\s*(==|in)\s")
-    branching_lines = [i + 1 for i, line in enumerate(module_lines) if pattern.search(line)]
+    # `\.rule\b` - 속성 접근(`floor.rule`, `phase.margin_floor.rule` 등)만
+    # 잡는다. dataclass 필드 선언 `rule: str`은 앞에 점이 없어 걸리지
+    # 않는다 - 그건 "정의"이지 "이 값이 무엇인지 물어 갈라지는" 읽기가
+    # 아니다.
+    pattern = re.compile(r"\.rule\b")
+    access_lines = [i + 1 for i, line in enumerate(module_lines) if pattern.search(line)]
 
-    # 패턴이 하나도 안 걸리면 정규식이 코드와 어긋난 것이지, "분기가 없다"는
-    # 뜻이 아니다 - 침묵을 통과로 읽지 않는다.
-    assert branching_lines, "no 'rule ==' / 'rule in' line found at all"
-    outside = [ln for ln in branching_lines if ln not in func_line_numbers]
-    assert outside == [], f"rule is branched outside _margin_floor_allowances at lines {outside}"
+    # 패턴이 하나도 안 걸리면 정규식이 코드와 어긋난 것이지, "접근이 없다"는
+    # 뜻이 아니다 - 침묵을 통과로 읽지 않는다. 오늘 실제로 걸리는 두 줄은
+    # `rule = floor.rule`과 예외 메시지의 `floor.rule!r}` 이고 둘 다
+    # `_margin_floor_allowances` 안에 있다.
+    assert access_lines, "no '.rule' attribute access found at all"
+    outside = [ln for ln in access_lines if ln not in func_line_numbers]
+    assert outside == [], (
+        f".rule is accessed outside _margin_floor_allowances at lines {outside}"
+    )
 
 
 @pytest.mark.asyncio
