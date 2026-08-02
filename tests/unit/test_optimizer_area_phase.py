@@ -505,6 +505,86 @@ async def test_margin_floor_is_actually_wired_into_the_optimize_baseline_event(t
     assert baseline["unguarded_criteria"] == ["psrr"]
 
 
+# --- run_area_optimization의 margin_floor 인자 - Task 4 리뷰(B-7)가 지적한
+# 빈 자리. `_optimize`를 직접 부르는 위 테스트는 run_area_optimization을
+# 거치지 않으므로, `AREA_PHASE`를 건드리지 않는다는 계약이 그 함수 자체에서
+# 지켜지는지는 이 둘이 아니면 아무도 보지 않는다.
+
+
+@pytest.mark.asyncio
+async def test_run_area_optimization_with_no_floor_passes_the_identical_area_phase_object(
+    tmp_path, monkeypatch
+):
+    """`margin_floor=None`(기본값)이면 `run_optimization`에 넘어가는 phase는
+    `AREA_PHASE` **그 객체**여야 한다 - 동일성이지 동등성이 아니다.
+
+    매 호출마다 `dataclasses.replace`로 새 객체를 만들면 필드값은 여전히
+    같아 보이지만, "오늘의 기본 경로는 어제와 한 글자도 다르지 않다"는
+    계약이 객체 정체성에서부터 조용히 깨진다 - `is` 비교로만 잡힌다."""
+    import analogcoder.optimizer as optimizer_mod
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    real_run_optimization = optimizer_mod.run_optimization
+    captured = {}
+
+    async def spy(netlist_texts, spec, state, agents, phase=None):
+        captured["phase"] = phase
+        return await real_run_optimization(netlist_texts, spec, state, agents, phase=phase)
+
+    monkeypatch.setattr(optimizer_mod, "run_optimization", spy)
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    await optimizer_mod.run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+
+    assert captured["phase"] is optimizer_mod.AREA_PHASE
+
+
+@pytest.mark.asyncio
+async def test_run_area_optimization_with_a_floor_carries_it_without_mutating_area_phase(
+    tmp_path, monkeypatch
+):
+    """`margin_floor`를 주면 `run_optimization`이 받는 phase의
+    `margin_floor`가 그 값을 그대로 들고, 나머지 필드는 `AREA_PHASE`와
+    같으면서도 `AREA_PHASE` 자체는 여전히 `margin_floor=None`인 채로
+    남는다 - 조합끼리 하한이 다른 이 태스크의 측정 스크립트가 순서대로
+    여럿을 돌려도 모듈 상수가 오염되지 않는다는 것이 이 테스트의 요지다."""
+    import analogcoder.optimizer as optimizer_mod
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    real_run_optimization = optimizer_mod.run_optimization
+    captured = {}
+
+    async def spy(netlist_texts, spec, state, agents, phase=None):
+        captured["phase"] = phase
+        return await real_run_optimization(netlist_texts, spec, state, agents, phase=phase)
+
+    monkeypatch.setattr(optimizer_mod, "run_optimization", spy)
+
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    floor = optimizer_mod.MarginFloor(rule="f2", value=0.5)
+    await optimizer_mod.run_area_optimization(
+        {"tb": DECK}, _spec(optimize=None), state, agents, margin_floor=floor
+    )
+
+    phase = captured["phase"]
+    assert phase.margin_floor is floor
+    assert phase is not optimizer_mod.AREA_PHASE
+    assert phase.objective is optimizer_mod.AREA_PHASE.objective
+    assert phase.area_budget == optimizer_mod.AREA_PHASE.area_budget
+    assert phase.guard_band == optimizer_mod.AREA_PHASE.guard_band
+    assert phase.label == optimizer_mod.AREA_PHASE.label
+    # AREA_PHASE 자체는 바뀌지 않는다 - replace()가 새 객체를 만들 뿐이다.
+    assert optimizer_mod.AREA_PHASE.margin_floor is None
+
+
 # --- 새 트리거: tightest_slack - 코너 없이도 한 실행만으로 읽는 상대 여유 ----
 #
 # 사전 등록의 마지막 절. 원래 트리거("코너 스윕에서 깨지면")는 코너를

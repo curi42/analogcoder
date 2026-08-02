@@ -16,7 +16,18 @@ Task 4: 사전 등록 `docs/superpowers/specs/2026-08-02-area-phase-margin-floor
   불통과"로 거절되고, 단계는 UNCHANGED로 깨끗하게 끝난다.
 - **계측기 검증은 재기 전에, 그리고 각 쌍에 대해 한다.** 기준선 시뮬레이션이
   기준이 요구하는 측정값을 실제로 내놓는지 먼저 확인하고, 아니면 재지 않고
-  멈춘다. VOID(조건이 발생하지 않음)와 REFUSED(계측기가 고장)는 다른 사실이다.
+  멈춘다(`outcome="refused"`).
+
+**이 스크립트의 최상위 `outcome`에는 VOID가 없다** - 원래 단일 조합
+스크립트의 "수락 스텝이 0이면 판정 전체가 무효"라는 규칙은, 값마다 결과가
+다른 이 격자에서는 "스텝을 하나도 못 밟았다"가 그 자체로 유용한 측정값이기
+때문이다(F1의 여러 값이 정확히 그 모양으로 "안전하지만 기능을 끔"을 보인다).
+대신 void는 **`safe` 필드 하나의 값**으로 되살아난다(`_safe_state` 참고):
+수락이 0이고 착지 덱(=기준선)이 하한을 켜기도 **전에** 이미 어떤 기준을
+위반하고 있으면, `safe`는 `True`/`False`가 아니라 `"void"`다. 이 구별을
+놓친 첫 버전은 P2의 7개 조합 전부를 `"safe": false`로 적어 "하한이
+측정됐고 안전하지 않았다"는 거짓 주장을 냈다 - REFUSED(계측기 고장)와도,
+`False`(측정됐고 불안전)와도 다른 세 번째 사실이다.
 
 세 번째 도구화 결정(이 스크립트가 새로 지는 것): **조합 하나는 별도 프로세스로
 돈다.** 사전 등록의 10분 timeout을 프로세스 경계 없이 이 저장소의 코드로
@@ -30,6 +41,15 @@ Task 4: 사전 등록 `docs/superpowers/specs/2026-08-02-area-phase-margin-floor
 새로 만들어진다 - 사전 등록이 이미 적어 둔 사실("조합 간 적중률을 미리 알 수
 없다")과 어긋나지 않는다: 공유 캐시는 비용을 줄이는 최적화였지 판정의 일부가
 아니었다.
+
+**`--run-one`의 종료 코드는 오케스트레이터(셸 루프)의 유일한 관측 수단이라
+outcome마다 갈린다.** `0`=`completed`(안에서 무엇이 나왔든 이 프로세스는
+살아서 끝냈다), `1`=`error`(예외를 삼키고 파일은 썼지만 이 조합은 못 쟀다),
+`2`=CLI 인자 오류(모르는 쌍/규칙, 격자 밖 값 - 실행조차 시작 안 함),
+`3`=`refused`(계측기 검증 실패 또는 기준 불일치 - 계측기 문제로 재지
+않았다). 이전 버전은 `completed`/`refused`/`error` 셋 다 `0`을 돌려줬다 -
+셸 루프가 `$?`로 갈라 쓸 수 없었고, 직전 라운드의 두 죽음이 정확히 이
+모양(exit 0인데 유효하지 않은 결과)이었다.
 """
 
 from __future__ import annotations
@@ -77,6 +97,17 @@ GRID: dict[str, list[float]] = {
     "f1": [0.02, 0.05, 0.10, 0.20],
     "f2": [0.25, 0.50, 0.75],
 }
+# GRID에 "f3" 키가 없다 - 사전 등록이 이미 적어 둔 대로 F3은 코너 없는
+# 절반에서 F1로 환원되므로 별도 격자가 없다. `--run-one ... f3 ...`은 아래
+# `main`의 "알 수 없는 규칙" 분기에서 exit 2로 거절된다 - F3을 별도로 요청할
+# 방법이 이 스크립트에 없다는 것 자체가 그 사실의 증거다.
+
+# `--run-one`의 종료 코드. 오케스트레이터(셸 루프)가 `$?`로 갈라 쓴다 -
+# 정의는 위 모듈 docstring 참고.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_BAD_ARGS = 2
+EXIT_REFUSED = 3
 
 # 사전 등록: "조합 하나가 10분을 넘기면 그 조합을 timeout으로 기록하고
 # 다음으로 간다."
@@ -176,6 +207,43 @@ def probe_degn(text: str, backend: CachingSimulator, sim_dir: Path, tag: str) ->
     return value, None
 
 
+def _safe_state(
+    accepted: int, tightest_slack: dict | None, overall_pass: bool
+) -> tuple["bool | str", str | None]:
+    """`safe` 축의 세 값 - `True`/`False`/`"void"` - 과 void일 때의 사유.
+
+    사전 등록의 "안전 = 스윕의 overall_pass"는 그 스윕이 **하한을 시험한
+    것**일 때만 뜻이 있다. 수락 스텝이 0이고 착지 덱(=기준선)이 하한을 켜기도
+    **전에** 이미 어떤 기준을 위반하고 있으면(`tightest_slack`의 상대 여유가
+    음수), `overall_pass`가 무엇이든 그 값은 "이 하한이 안전한가"를 답하지
+    않는다 - 기준선 자체의 사실이다. 그런 경우를 `False`로 접으면 "하한이
+    측정됐고 안전하지 않았다"는 거짓 주장이 된다. `tightest_slack`은
+    `record[version]["criteria"]`(수락 0이면 기준선 판정 그 자체)에서 재는
+    같은 값이므로 이 판단에 새 시뮬레이션이 필요 없다 - 이미 결과에 있는
+    사실을 다시 읽을 뿐이다.
+
+    수락이 0이지만 착지 덱이 기준선에서부터 통과 중이면(P1의 F1 0.05/0.10/
+    0.20처럼 가드가 infeasible이라 아무 스텝도 못 밟은 경우) 이것은 void가
+    아니다 - "하한이 너무 엄격해 아무것도 안 했다"는 그 자체로 하한에 대한
+    실측이다. void는 정확히 "재기도 전에 이미 깨져 있었다"는 경우다."""
+    if (
+        accepted == 0
+        and tightest_slack is not None
+        and tightest_slack.get("value") is not None
+        and tightest_slack["value"] < 0.0
+    ):
+        reason = (
+            f"0 accepted steps; the landed (=baseline) deck already violates "
+            f"{tightest_slack['criterion']!r} at nominal, before any margin floor "
+            f"is applied (relative slack {tightest_slack['value']:.5f} < 0). "
+            f"accept_step requires overall_pass, so no floor rule/value could have "
+            f"produced a different accepted-step outcome on this deck; the corner "
+            f"sweep result describes the baseline, not the floor."
+        )
+        return "void", reason
+    return bool(overall_pass), None
+
+
 def check_degn_contamination(
     state: RunState, canonical_name: str, backend: CachingSimulator, sim_dir: Path
 ) -> dict:
@@ -220,7 +288,11 @@ async def _run_combination_async(
     """(F, value, Pair) 하나. 코너 없는 스펙에서 하한 F(value)를 켠 면적
     단계를 돌리고, 착지한 덱을 짝의 45코너 그리드로 전체 스윕한다.
 
-    **안전** = 스윕의 `overall_pass`. **유용** = 면적 감소율 > 0(문턱 없음).
+    **안전** = 스윕의 `overall_pass` - **단, 착지 덱이 하한을 켜기도 전에
+    이미 어떤 기준을 위반하고 있지 않을 때만.** 그 경우는 `_safe_state`가
+    `"void"`로 가른다(True/False가 아니다) - `overall_pass`를 그대로
+    `safe`에 옮기면 "하한이 측정됐고 안전하지 않았다"는 거짓 주장이 된다.
+    **유용** = 면적 감소율 > 0(문턱 없음, void와 무관하게 항상 실측값).
     """
     pair = PAIRS[pair_name]
     spec_nc = load_spec(str(pair["no_corner"]))
@@ -281,7 +353,7 @@ async def _run_combination_async(
         if crit is not None:
             slacks[c["name"]] = relative_slack(crit, c.get("actual"))
 
-    safe = bool(sweep.get("overall_pass"))
+    safe, void_reason = _safe_state(accepted, result.get("tightest_slack"), sweep.get("overall_pass"))
     useful = reduction is not None and reduction > 0.0
 
     return {
@@ -319,6 +391,7 @@ async def _run_combination_async(
         },
         "degn": degn,
         "safe": safe,
+        "void_reason": void_reason,
         "useful": useful,
     }
 
@@ -328,7 +401,13 @@ def run_one(pair_name: str, rule: str, value: float, out_dir: Path) -> int:
     `outcome="error"`로 적는다 - 이 프로세스가 죽으면 오케스트레이터가 timeout과
     구별할 수 없게 되므로, 어떤 실패든 파일 하나는 남기는 편이 낫다(진짜
     timeout은 이 프로세스 자체가 OS에 의해 죽는 경우라 여기서 처리할 수 없고,
-    호출부의 몫이다)."""
+    호출부의 몫이다).
+
+    **종료 코드는 `outcome`을 그대로 따라간다** - `completed`→0,
+    `refused`→3, `error`→1(`EXIT_*` 상수). 이전 버전은 파일을 썼으면 무조건
+    0을 돌려줬다 - `refused`와 `error`가 `completed`와 exit code로
+    구별되지 않아, 셸 루프로 조합을 도는 오케스트레이터가 `$?`만 보고는
+    셋을 가를 수 없었다."""
     out_dir.mkdir(parents=True, exist_ok=True)
     combo_id = f"{pair_name}_{rule}_{value}"
     t0 = time.time()
@@ -347,7 +426,9 @@ def run_one(pair_name: str, rule: str, value: float, out_dir: Path) -> int:
         json.dumps(json_safe(record), indent=2, ensure_ascii=False), encoding="utf-8"
     )
     print(f"[{combo_id}] outcome={record['outcome']} ({record['wall_seconds']:.1f}s) -> {result_path}")
-    return 0
+    return {"completed": EXIT_OK, "refused": EXIT_REFUSED, "error": EXIT_ERROR}.get(
+        record["outcome"], EXIT_ERROR
+    )
 
 
 def verify_pairs() -> int:
@@ -369,7 +450,7 @@ def verify_pairs() -> int:
         status = "OK" if inst["ok"] else "REFUSED"
         print(f"[{pair_name}] {status}: 요구 {inst['wanted']}개, 없는 것 {inst['missing']}")
         ok = ok and inst["ok"]
-    return 0 if ok else 2
+    return EXIT_OK if ok else EXIT_REFUSED
 
 
 def main() -> int:
@@ -390,14 +471,14 @@ def main() -> int:
     pair_name, rule, value_s, out_dir_s = args.run_one
     if pair_name not in PAIRS:
         print(f"알 수 없는 쌍: {pair_name!r} (있는 것: {sorted(PAIRS)})")
-        return 2
+        return EXIT_BAD_ARGS
     if rule not in GRID:
-        print(f"알 수 없는 규칙: {rule!r} (있는 것: {sorted(GRID)})")
-        return 2
+        print(f"알 수 없는 규칙: {rule!r} (있는 것: {sorted(GRID)} - 'f3'은 코너 없는 절반에서 f1로 환원되므로 별도 격자가 없다)")
+        return EXIT_BAD_ARGS
     value = float(value_s)
     if value not in GRID[rule]:
         print(f"격자에 없는 값: {rule}={value} (격자: {GRID[rule]}) - 사후에 값을 추가하지 않는다")
-        return 2
+        return EXIT_BAD_ARGS
     return run_one(pair_name, rule, value, Path(out_dir_s))
 
 
