@@ -1543,6 +1543,13 @@ async def _optimize(
             # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다. corner_allowances는
             # 돌지 않았으므로 이 시점에 정직하게 아는 여유분은 ratio뿐이다.
             state.log_event(f"{phase.label}_baseline", _baseline_event(ratio))
+            # tightest_slack은 여기서 None으로 남는다(final_criteria와 같은
+            # 자리) - baseline_measurements는 이미 채워져 있으므로 값을 낼
+            # 수는 있었다는 뜻이다(evaluate_criteria 한 번이면 된다). 이
+            # 경로에서는 corner_failure/entry_sweep이 이미 "코너를 못
+            # 버틴다"는 사실을 실어 나르므로 버려도 정보 손실이 크지
+            # 않다고 판단했지만, 여전히 잴 수 있었던 값을 안 재는
+            # 선택이다 - 필요해지면 여기서 계산해 채운다.
             return _result(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,

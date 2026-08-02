@@ -590,3 +590,37 @@ async def test_a_phase_that_could_not_measure_reports_unknown_not_zero(tmp_path)
 
     assert result["status"] == "UNCHANGED"
     assert result["tightest_slack"] is None
+
+
+def test_tightest_slack_ignores_nan_regardless_of_entry_order():
+    """NaN 이 최솟값 경쟁에서 이기지도 지지도 않아야 한다 - 리스트 순서를
+    뒤집어도 같은(유한한) 기준이 이겨야 한다.
+
+    가드(`actual != actual`로 NaN을 건너뛰는 분기)를 지우면
+    `relative_slack`의 `max(|threshold|, |actual|)`이 NaN 비교(전부
+    False)로 인자 순서에 따라 값이 갈리고, 그 값이 `min()` 경쟁에
+    들어가 어느 기준이 이기는지가 코드 순서로 결정된다 - 실측: 가드
+    없이 (a, b) 순서면 "a"가 이기지만 (b, a) 순서면 "b"(NaN)가 이겨
+    반환값 자체가 NaN이 된다. 정상 결과라면 어느 순서든 "a"가 이겨야
+    하고 그 값은 NaN이면 안 된다 - 그 두 사실을 이 테스트가 함께
+    확인한다."""
+    from analogcoder.optimizer import _tightest_slack
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="a", measurement="ma", operator="<=", threshold=100.0),
+        Criterion(name="b", measurement="mb", operator="<=", threshold=50.0),
+    ]
+    entry_a = {"name": "a", "actual": 99.01}  # 상대 여유 (100-99.01)/100 ~= 0.0099
+    entry_b = {"name": "b", "actual": float("nan")}  # 측정 실패
+
+    order1 = _tightest_slack(criteria, [entry_a, entry_b])
+    order2 = _tightest_slack(criteria, [entry_b, entry_a])
+
+    assert order1 is not None and order2 is not None
+    assert order1["criterion"] == order2["criterion"] == "a"
+    assert order1["value"] == pytest.approx(0.0099, abs=1e-4)
+    assert order2["value"] == pytest.approx(0.0099, abs=1e-4)
+    # NaN은 자기 자신과 같지 않다 - 이 등식으로 두 값 모두 NaN이 아님을 확인한다.
+    assert order1["value"] == order1["value"]
+    assert order2["value"] == order2["value"]
