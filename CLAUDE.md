@@ -1330,22 +1330,31 @@ baseline — a genuine model capability gap, not a pipeline defect.
 - `tests/integration/` holds two skip-gated real-backend tests
   (`ANTHROPIC_API_KEY`, `LOCAL_LLM_BASE_URL`) — skipped by default.
 - `tests/unit/*_ngspice.py` assume `ngspice` on PATH rather than skipping, and all
-  but two finish in seconds. The long one is
+  but three finish in seconds. The long one is
   `test_optimizer_bandgap_ngspice.py`'s corner-anchored case at ~30 min (six
   45-corner sweeps); deselect it for a normal TDD cycle and run it before merging
-  anything under `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`. The other
+  anything under `optimizer.py`, `area.py`, `pvt.py` or `judge_tools.py`. Another
   is `test_corner_reduction_bandgap_ngspice.py` at ~129 s, dominated by two
-  9-corner × 5-testbench sweeps shared through module-scoped fixtures.
+  9-corner × 5-testbench sweeps shared through module-scoped fixtures. The third is
+  `test_optimizer_area_phase_ngspice.py` (Task 6 of the area-optimization-phase
+  plan, ~148 s total: bandgap ~124 s over 5 testbenches per step,
+  two_stage_opamp ~24 s over 4) — it measures `optimizer.run_area_optimization`
+  against both benchmarks and its numbers are the 2단계 baseline table in
+  `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1473
-  passed, 2 skipped, 7 deselected, 98.0 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1497
+  passed, 2 skipped, 7 deselected, 98.08 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473), so do not treat a single timing as a regression signal. A plain `pytest -q` is ~3 min and ~33 min with
-  everything. Both slow files carry the `slow` marker, registered in
-  `pyproject.toml`. **Re-measure this line when you add a real-simulator test** —
-  it has drifted three times.
+  (1273 → 1473 → 1497), so do not treat a single timing as a regression signal. A
+  plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
+  carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
+  when you add a real-simulator test** — it has drifted four times now
+  (`test_optimizer_area_phase_ngspice.py` is the latest addition, and being
+  `slow`-marked it does not itself change this count — confirmed by collecting
+  under `-m "not slow"` before touching this line: deselected went 7 → 9, exactly
+  the two new test functions it adds).
 - **A drift guard is updated in one order only**: confirm the new inputs pass the
   gate, *then* raise the count.
   `test_every_shipped_benchmark_control_block_is_accepted` counts 52 control blocks

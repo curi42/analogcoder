@@ -1202,10 +1202,39 @@ EOF
 
 ## 측정된 기준선 (Task 6에서 채운다)
 
-| 스펙 | 면적 before | 면적 after | 감소율 | 수락/거절 | zero_gain | unknown | 소요 |
-|---|---|---|---|---|---|---|---|
-| `benchmarks/bandgap/spec.yaml` | | | | | | | |
-| `benchmarks/two_stage_opamp/spec.yaml` | | | | | | | |
+`tests/unit/test_optimizer_area_phase_ngspice.py`로 실측 (2026-08-02, 로컬 ngspice,
+`.venv/bin/python -m pytest tests/unit/test_optimizer_area_phase_ngspice.py -v -s`).
+`unguarded_criteria` 열은 컨트롤러 추가 지시 C — `_optimize`가 남기는
+`optimize_area_baseline` 이벤트의 `unguarded_criteria` 길이 / 스펙의 전체 기준 수.
+
+| 스펙 | 면적 before | 면적 after | 감소율 | 수락/거절 | zero_gain | unknown | unguarded_criteria | 소요 |
+|---|---|---|---|---|---|---|---|---|
+| `benchmarks/bandgap/spec.yaml` | 1.10546e-08 | 8.93292e-09 | 19.19% | 16/4 (steps_accepted/steps_rejected) | 1 (`BGR_CORE.Xq8.m`) | 0 | 22/22 | 123.5s (21 sims, 5 testbenches/step) |
+| `benchmarks/two_stage_opamp/spec.yaml` | 2.38037e-10 | 2.38037e-10 | 0.00% (UNCHANGED) | 0/20 | 7 (`Lfb.value`, `Cin.value`, `Cload.value`, `OPAMP2STAGE.Rdeg.value`, `OPAMP2STAGE.Rstart.value`, `OPAMP2STAGE.Xcc.mf`, `OPAMP2STAGE.Xca.mf`) | 0 | 7/7 | 24.1s (21 sims, 4 testbenches/step) |
+
+예상과 다른 점: bandgap은 예상대로 `unguarded_criteria`가 22/22(전부)였지만,
+**두 스펙 모두 status가 정확히 예측되지 않았다** — bandgap은 OPTIMIZED로
+19.19% 줄었고(83개 소자 중 82개가 면적 이득을 갖고, `BGR_CORE.Xq8.m`만
+zero_gain), two_stage_opamp는 20스텝을 전부 시도하고도 UNCHANGED로 끝났다.
+zero_gain 7개 전부가 면적 모델이 w/l/m으로 세지 않는 값 하나짜리 소자
+(`Lfb`/`Cin`/`Cload`의 `value`, `Rdeg`/`Rstart`의 `value`, `Xcc`/`Xca`의
+`mf`)라 순위에 오를 후보 자체가 애초에 `counted=13`짜리 소자 목록에서
+갈 곳이 적었다는 뜻이다.
+
+**거절 사유를 직접 읽으면 두 스펙 모두 무방비 가드(여유분 0)로 거절된
+스텝이 하나도 없다.** `optimize_area_step`의 `reason`을 모두 확인했다 —
+bandgap의 4건(`BUF_N.Xcc`/`BUF_P.Xcc`의 `L`/`W`)과 two_stage_opamp의
+20건 전부가 `"criteria no longer pass: one or more criteria failed"`이고,
+`accept_step`(optimizer.py:557-560)에서 이것은 `evaluation.violations`
+(가드 위반, unguarded_criteria가 여유분 0으로 만드는 그 검사)보다 **먼저**
+검사되는 `overall_pass`가 그냥 False였다는 뜻이다 — 즉 이 실행에서는
+무방비 가드가 한 번도 실제로 발화하지 않았다. 22/22와 7/7이라는
+`unguarded_criteria` 수는 "안전이 느슨해진 위험이 이만큼 존재한다"는
+사실이지 "이번 거절이 그 위험 때문이었다"는 사실이 아니다 — 이 표를
+읽는 2단계 구현자가 후자로 오독하지 않도록 남긴다. 2단계가 "게이트
+강등 + 대안 3개"를 붙여야 할 이유는 여전히 유효하다: 순위 1위 소자를
+줄이면 곧바로 기준이 깨지는 스텝이 이렇게 많다는 것 자체가, 대안 없이
+1위만 시도하는 오늘의 탐색이 얕다는 증거다.
 
 이 표가 **2단계 계획의 입력**이다.
 
