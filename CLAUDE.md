@@ -303,7 +303,63 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   rejection — with allowance `0.0`, `guard_band_violations`' limit collapses to the
   exact predicate `accept_step` already checked one line earlier as `overall_pass`.
   Scanning rejections for this risk, as this feature's own first measurement did,
-  is structurally blind to it.
+  is structurally blind to it. **The stage-1 plan's "확정됨" decision — that the
+  area phase carries no ratio guard band — was reverted on that evidence**
+  (`docs/superpowers/plans/2026-08-02-area-optimization-phase.md`): the accepted
+  steps broke **2 of 22** criteria at corners on a deck that passed all 45 before,
+  firing the pre-registered revert rule of
+  `2026-08-02-area-phase-guard-measurement-results.md`. What the revert bought is
+  the four bullets below — measured, and **not** a value.
+- **A margin floor for the area phase was pre-registered, measured over 14
+  combinations, and *not adopted* — `AREA_PHASE.margin_floor` stays `None`.** Three
+  rule shapes (F1 fixed relative slack `f`, F2 ratio `r` of the baseline slack, F3
+  corner-measured-where-available) over a locked grid × 2 (deck, grid) pairs.
+  **Pre-registration verdict rule 3 fired** — no `(rule, value)` was safe on both
+  pairs — so the whole family is rejected and any alternative needs a *new*
+  pre-registration; no value was chosen here. The one safe **and** useful point in
+  the entire grid was F2 `r=0.75` on `benchmarks/bandgap`: 8 accepted / 12
+  rejected, area −10.74% (1.10546e-08 → 9.8670e-09), 45-corner sweep PASS. It
+  rests on **one deck**, and the pre-registration conceded up front that the
+  **grid axis is untested** — both pairs' 45-corner grids share identical
+  coordinates — so it is an input to the next pre-registration, never a value to
+  wire in. `2026-08-02-area-phase-margin-floor-results.md`.
+- **P2's whole arm is `void`, and the cause is a defect in the pre-registration,
+  not in the floor.** `two_stage_opamp/spec.yaml`'s baseline already fails
+  `phase_margin` at nominal (34.5636° against `>=60`, relative slack **−0.42394**)
+  and `accept_step` requires *every* criterion to pass, so all 7 P2 combinations
+  returned 0 accepted / 20 rejected regardless of the floor's rule or value. **The
+  condition under which P2 could have returned a different answer was never
+  present.** The pre-registration verified that P2's corner-less and corner specs
+  carry identical criteria, but never that P2's baseline *passes* — and in
+  production the area phase runs only after the loop returns PASS (`cli.py`), so
+  the measurement ran it in a state it never sees. **This is standing question 2
+  asked too late**: ask it while *choosing the runs*. Both readings are on the
+  record and **neither is resolved** — rule 3 fired *literally* and its action
+  stands, while `void` is a record label the controller added *after* results (the
+  locked definition of "safe" is binary, and no verdict moves under either
+  reading). Which reading governs P2 next time is deliberately left open, to be
+  fixed **before** results arrive.
+- **The only baseline-feasible F1 value accepted exactly the same steps as having
+  no floor at all.** `f1=0.02` on bandgap: 16 accepted / 4 rejected, 1.10546e-08 →
+  8.932917e-09 (19.19%), failing `buf0_phase_margin` 65.0993 at `sf/1.98/125` and
+  `buf1_phase_margin` 76.0735 at `sf/1.62/-40` — digit-for-digit the unguarded
+  control in `2026-08-02-area-phase-guard-measurement-results.md`. On this deck and
+  this grid the one F1 value the baseline could carry was indistinguishable from no
+  gate. **It was considered for the silently-inert-gate running total and
+  deliberately not counted**: that number enumerates gates in shipped or reviewed
+  *code*, and this is a measured grid point that was never a gate in this codebase
+  — folding a second kind of thing in would make the count mean two things.
+- **The revisit trigger is the tightest relative slack now, because the old one
+  could not fire where the risk lives.** "The area phase's accepted steps break at
+  a later corner sweep" is unobservable on a spec that declares no corners —
+  exactly the specs where every criterion is unguarded. So every run records the
+  smallest relative slack across all criteria and the criterion it belongs to, at
+  `result["area_optimization"]["tightest_slack"]` (and
+  `result["optimization"]["tightest_slack"]` for the objective phase), rendered in
+  both `report.md` sections. `None` is drawn as its own sentence and never as a
+  value — it means no criterion's slack was computed at all. This is recorded
+  **independently of whether a floor is ever adopted**; with rule 3 fired it is the
+  *only* observation channel there is.
 - **The accept rule deliberately does NOT reuse `verify_post`**: that contract is
   "roll back if regressed", and a good optimization step consumes margin on
   purpose. A step is kept only if every criterion still passes with its guarded
@@ -339,7 +395,15 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   empty interval the 1.2389 V baseline already violates. `spec_pvt.yaml`'s sweep
   replaces that 0.24 with a measured 0.0051 and the same search then accepts ten
   steps. Both outcomes are pinned in
-  `tests/unit/test_optimizer_bandgap_ngspice.py`.
+  `tests/unit/test_optimizer_bandgap_ngspice.py`. The **area phase's** F1 floor
+  reproduces the same empty interval at `f ∈ {0.05, 0.10, 0.20}` on the same deck,
+  and that is an **arithmetic identity, not independent corroboration** —
+  `_margin_floor_allowances` returns `ratio_allowances` for `f1`, the same function
+  the objective phase calls, with the same arguments. The genuinely new fact is the
+  finer grid: `f=0.02` is baseline-feasible and so is `f ≈ 0.03` — the global
+  minimum crossing is `vbgout_max` at **0.032130** — so the locked grid left
+  `(0.02, 0.03213)` **unsampled**. Say "unsampled gap", never "F1 has no feasible
+  middle"; the grid was not widened because the pre-registration forbids it.
 - **The guard band can be infeasible at the baseline**, and the condition is not
   "`pvt_corners` is absent" — the measured path reaches it whenever nominal is
   worse than every corner for some criterion. `guard_band_violations` runs on the
@@ -1385,11 +1449,12 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1499
-  passed, 2 skipped, 9 deselected, 96.06 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1529
+  passed, 2 skipped, 9 deselected, 97.71 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499), so do not treat a single timing as a regression signal. A
+  (1273 → 1473 → 1499 → 1529), so do not treat a single timing as a regression
+  signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
   when you add a real-simulator test** — it has drifted four times now
