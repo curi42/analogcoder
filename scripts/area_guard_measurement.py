@@ -29,6 +29,14 @@ Task 4: 사전 등록 `docs/superpowers/specs/2026-08-02-area-phase-margin-floor
 측정됐고 안전하지 않았다"는 거짓 주장을 냈다 - REFUSED(계측기 고장)와도,
 `False`(측정됐고 불안전)와도 다른 세 번째 사실이다.
 
+`safe`에는 네 번째 값도 있다 - **`"unjudged"`**: void인지조차 판단할 값이
+없는 경우(`tightest_slack`이 아예 `None`)다. 면적 게이트가 이미 쓰는 어휘
+(`bounded`/`neutral`/`blind`/`unjudged`)를 그대로 가져왔다 - "측정은
+돌았지만 판정에 쓸 값이 안 나왔다"는 그 게이트의 `unjudged`와 같은
+모양이다. 이 14조합 그리드에서는 도달하지 않았지만(다음 그리드가 밟을 수
+있다), 도달하면 고치기 전 코드는 이것도 `False`로 접어 void와 같은 거짓
+주장을 냈을 것이다 - `_safe_state`가 그 자리를 채운다.
+
 세 번째 도구화 결정(이 스크립트가 새로 지는 것): **조합 하나는 별도 프로세스로
 돈다.** 사전 등록의 10분 timeout을 프로세스 경계 없이 이 저장소의 코드로
 강제하려면 asyncio 안에서 진짜 선점이 필요한데, `agents.propose=None`인 이
@@ -47,9 +55,17 @@ outcome마다 갈린다.** `0`=`completed`(안에서 무엇이 나왔든 이 프
 살아서 끝냈다), `1`=`error`(예외를 삼키고 파일은 썼지만 이 조합은 못 쟀다),
 `2`=CLI 인자 오류(모르는 쌍/규칙, 격자 밖 값 - 실행조차 시작 안 함),
 `3`=`refused`(계측기 검증 실패 또는 기준 불일치 - 계측기 문제로 재지
-않았다). 이전 버전은 `completed`/`refused`/`error` 셋 다 `0`을 돌려줬다 -
-셸 루프가 `$?`로 갈라 쓸 수 없었고, 직전 라운드의 두 죽음이 정확히 이
-모양(exit 0인데 유효하지 않은 결과)이었다.
+않았다). VALUE가 숫자로 안 읽히는 것도(`float()` 실패) 실행이 시작조차
+안 한 CLI 인자 오류이므로 `2`다. 이전 버전은 `completed`/`refused`/`error`
+셋 다 `0`을 돌려줬고 VALUE 파싱 실패는 잡히지 않은 `ValueError`로 새어
+나가(우연히 exit 1) `error`와 구별되지 않았다 - 셸 루프가 `$?`로 넷을
+갈라 쓸 수 없었고, 직전 라운드의 두 죽음이 정확히 이 모양(exit 0인데
+유효하지 않은 결과)이었다.
+
+**`--verify`도 같은 상수를 쓴다** - 두 쌍 다 계측기 검증을 통과하면
+`EXIT_OK`(0), 하나라도 REFUSED면 `EXIT_REFUSED`(3)다. `--run-one`과 값이
+같은 이유는 뜻이 같기 때문이다(계측기 문제로 재지 못함) - 별도 코드를
+만들지 않는다.
 """
 
 from __future__ import annotations
@@ -210,28 +226,56 @@ def probe_degn(text: str, backend: CachingSimulator, sim_dir: Path, tag: str) ->
 def _safe_state(
     accepted: int, tightest_slack: dict | None, overall_pass: bool
 ) -> tuple["bool | str", str | None]:
-    """`safe` 축의 세 값 - `True`/`False`/`"void"` - 과 void일 때의 사유.
+    """`safe` 축의 네 값과, 특수한 셋일 때의 사유(둘째 반환값 - 이름은
+    `void_reason`이지만 `"unjudged"`의 사유도 같은 자리에 싣는다, 나중 상태
+    하나 때문에 스키마를 새로 만들지 않는다).
 
-    사전 등록의 "안전 = 스윕의 overall_pass"는 그 스윕이 **하한을 시험한
-    것**일 때만 뜻이 있다. 수락 스텝이 0이고 착지 덱(=기준선)이 하한을 켜기도
-    **전에** 이미 어떤 기준을 위반하고 있으면(`tightest_slack`의 상대 여유가
-    음수), `overall_pass`가 무엇이든 그 값은 "이 하한이 안전한가"를 답하지
-    않는다 - 기준선 자체의 사실이다. 그런 경우를 `False`로 접으면 "하한이
-    측정됐고 안전하지 않았다"는 거짓 주장이 된다. `tightest_slack`은
-    `record[version]["criteria"]`(수락 0이면 기준선 판정 그 자체)에서 재는
-    같은 값이므로 이 판단에 새 시뮬레이션이 필요 없다 - 이미 결과에 있는
-    사실을 다시 읽을 뿐이다.
+    - **`True`/`False`** - 스윕의 `overall_pass`를 그대로 옮긴 것. 아래 둘
+      중 어디에도 안 걸릴 때만, 즉 하한이 실제로 무언가를 판정했을 때만
+      쓴다.
+    - **`"void"`** - 수락 스텝이 0이고 착지 덱(=기준선)이 하한을 켜기도
+      **전에** 이미 어떤 기준을 위반하고 있으면(`tightest_slack`의 상대
+      여유가 음수), `overall_pass`가 무엇이든 그 값은 "이 하한이 안전한가"를
+      답하지 않는다 - 기준선 자체의 사실이다. 그런 경우를 `False`로 접으면
+      "하한이 측정됐고 안전하지 않았다"는 거짓 주장이 된다.
+    - **`"unjudged"`** - `tightest_slack` 자체가 `None`(또는 그 안의
+      `value`가 `None`)이면 void인지조차 판단할 수 없다 - **B-1의 결함이
+      다른 경로에서 재발한 자리**다. 면적 게이트가 이미 쓰는 어휘
+      (`bounded`/`neutral`/`blind`/`unjudged`)를 그대로 가져온다: 측정
+      자체는 돌았지만(이 스크립트는 이 지점까지 왔다는 것 자체가 45코너
+      스윕까지 돌렸다는 뜻이다) 판정에 필요한 값이 나오지 않은 경우다.
+      `optimizer.py`에서 `_result(...)`가 `tightest_slack` 인자 없이(기본값
+      `None`으로) 불리는 자리가 최소 셋이다: `run_area_optimization`이
+      `counted == 0`으로 REFUSED를 내는 경로, `run_optimization` 진입 전
+      준비 구간(구조 유도·순위 계산)에서 예외가 터지는 경로, `_optimize`의
+      진입(entry) 스윕이 실패하는 경로. **이 그리드의 14개 조합은 셋 중
+      어느 것도 밟지 않았으므로 지금 기록된 숫자는 전부 옳다** - 그러나
+      다음 그리드가 이 경로 중 하나를 밟으면, 고치기 전 코드는 `bool(
+      overall_pass)`로 접어 "쟀고 안전하지 않았다"는 void와 같은 모양의
+      거짓 주장을 냈을 것이다. void와의 차이: void는 "쟀고, 기준선이 이미
+      깨져 있었다"는 **사실**이 있고, unjudged는 그 사실 자체가 없다.
+
+    `tightest_slack`은 `record[version]["criteria"]`(수락 0이면 기준선
+    판정 그 자체)에서 재는 같은 값이므로 이 판단에 새 시뮬레이션이
+    필요 없다 - 이미 결과에 있는 사실을 다시 읽을 뿐이다.
 
     수락이 0이지만 착지 덱이 기준선에서부터 통과 중이면(P1의 F1 0.05/0.10/
     0.20처럼 가드가 infeasible이라 아무 스텝도 못 밟은 경우) 이것은 void가
     아니다 - "하한이 너무 엄격해 아무것도 안 했다"는 그 자체로 하한에 대한
     실측이다. void는 정확히 "재기도 전에 이미 깨져 있었다"는 경우다."""
-    if (
-        accepted == 0
-        and tightest_slack is not None
-        and tightest_slack.get("value") is not None
-        and tightest_slack["value"] < 0.0
-    ):
+    if tightest_slack is None or tightest_slack.get("value") is None:
+        reason = (
+            "no tightest_slack was recorded for this run (area phase did not "
+            "reach a state where relative slack could be measured - REFUSED, "
+            "a crash in the pre-run_optimization preamble, or an entry-sweep "
+            "failure all return tightest_slack=None), so it cannot be "
+            "determined whether the baseline already violated a criterion "
+            "before the floor was applied; the corner sweep's overall_pass "
+            "cannot be attributed to the floor."
+        )
+        return "unjudged", reason
+
+    if accepted == 0 and tightest_slack["value"] < 0.0:
         reason = (
             f"0 accepted steps; the landed (=baseline) deck already violates "
             f"{tightest_slack['criterion']!r} at nominal, before any margin floor "
@@ -241,7 +285,15 @@ def _safe_state(
             f"sweep result describes the baseline, not the floor."
         )
         return "void", reason
+
     return bool(overall_pass), None
+
+
+# 이 필드를 truthiness로 읽지 않는다 - "void"와 "unjudged"는 둘 다 파이썬
+# truthy 문자열이다(`bool("void") is True`). `if record["safe"]:`는 두
+# 상태 모두 "안전하다"로 오독한다. 오늘 이 저장소 안에는 이 필드를 읽는
+# 소비자가 없고, 밖에서 `measurement.json`을 만드는 어그리게이터는 이
+# 저장소에 없어(재현 절 참고) 감사할 수 없다 - 그래서 여기 적어 둔다.
 
 
 def check_degn_contamination(
@@ -289,10 +341,13 @@ async def _run_combination_async(
     단계를 돌리고, 착지한 덱을 짝의 45코너 그리드로 전체 스윕한다.
 
     **안전** = 스윕의 `overall_pass` - **단, 착지 덱이 하한을 켜기도 전에
-    이미 어떤 기준을 위반하고 있지 않을 때만.** 그 경우는 `_safe_state`가
-    `"void"`로 가른다(True/False가 아니다) - `overall_pass`를 그대로
-    `safe`에 옮기면 "하한이 측정됐고 안전하지 않았다"는 거짓 주장이 된다.
-    **유용** = 면적 감소율 > 0(문턱 없음, void와 무관하게 항상 실측값).
+    이미 어떤 기준을 위반하고 있지 않고, 판정에 쓸 `tightest_slack`이
+    실제로 나왔을 때만.** 앞의 경우는 `_safe_state`가 `"void"`로,
+    뒤의 경우(`tightest_slack`이 아예 없음)는 `"unjudged"`로 가른다 -
+    둘 다 `True`/`False`가 아니다. `overall_pass`를 그대로 `safe`에
+    옮기면 "하한이 측정됐고 안전하지 않았다"는 거짓 주장이 된다.
+    **유용** = 면적 감소율 > 0(문턱 없음, safe의 네 값과 무관하게 항상
+    실측값).
     """
     pair = PAIRS[pair_name]
     spec_nc = load_spec(str(pair["no_corner"]))
@@ -475,7 +530,18 @@ def main() -> int:
     if rule not in GRID:
         print(f"알 수 없는 규칙: {rule!r} (있는 것: {sorted(GRID)} - 'f3'은 코너 없는 절반에서 f1로 환원되므로 별도 격자가 없다)")
         return EXIT_BAD_ARGS
-    value = float(value_s)
+    try:
+        value = float(value_s)
+    except ValueError:
+        # 이전 버전은 여기서 그냥 float(value_s)를 불렀다 - 숫자가 아닌
+        # VALUE(`abc` 등)가 잡히지 않은 ValueError로 새어 나가 main()이
+        # 아니라 파이썬 자체가 트레이스백과 함께 exit 1로 죽었다. 그 exit
+        # 1은 EXIT_ERROR("돌았고 예외를 삼켰고 result.json을 썼다")와
+        # 우연히 같은 숫자였지만 사실은 정반대다 - 이 경로는 run_one에
+        # 들어가지도 못해 파일을 하나도 안 쓴다. CLI 인자 오류이므로
+        # EXIT_BAD_ARGS로 가른다.
+        print(f"VALUE는 숫자여야 한다: {value_s!r}")
+        return EXIT_BAD_ARGS
     if value not in GRID[rule]:
         print(f"격자에 없는 값: {rule}={value} (격자: {GRID[rule]}) - 사후에 값을 추가하지 않는다")
         return EXIT_BAD_ARGS
