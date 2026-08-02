@@ -3708,7 +3708,7 @@
       2.0
     ],
     "unique_sims": 289,
-    "wall_seconds": 37.73886545887217
+    "wall_seconds": 37.74121616710909
   },
   "stage2": {
     "cache_stats": {
@@ -3775,12 +3775,18 @@
       2.0,
       3.0
     ],
+    "selected_pairs": [
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ]
+    ],
     "skip_reason": null,
     "skipped": false,
     "unique_sims": 49,
     "untested_candidates": [],
     "untested_candidates_reason": null,
-    "wall_seconds": 5.665810249978676
+    "wall_seconds": 5.692441083025187
   },
   "testbench": "dc_tc",
   "tolerance": 0.001,
@@ -3788,6 +3794,6 @@
     "budget_exceeded": false,
     "stage2_untested_candidate_count": 0,
     "total_sims": 329,
-    "total_wall_seconds": 45.22332499991171
+    "total_wall_seconds": 45.17958854092285
   }
 }

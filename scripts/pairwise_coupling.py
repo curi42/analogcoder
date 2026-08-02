@@ -947,6 +947,10 @@ def main() -> int:
         if any(v["coupled"] for v in rec["measurements"].values())
     ]
     _log(f"1단계 결합 후보 쌍: {len(candidate_pairs)}개")
+    # 상한이 걸리기 **전**의 전체 후보. `stage1.coupled_candidates`가 잘린
+    # 목록을 들면 "1단계에서 몇 쌍이 후보였는가"라는 사실이 산출물에서
+    # 사라진다 - 결과는 자기가 돌려주는 것을 기술해야 한다.
+    all_candidate_pairs = list(candidate_pairs)
 
     untested_candidates: list = []
     if args.stage2_max_pairs is not None and len(candidate_pairs) > args.stage2_max_pairs:
@@ -1053,7 +1057,9 @@ def main() -> int:
             "pairs": {
                 f"{a}|{b}": rec for (a, b), rec in s1["pairs"].items()
             },
-            "coupled_candidates": [[a, b] for a, b in candidate_pairs],
+            # 상한 적용 **전**의 1단계 후보 전부. 2단계로 보낸 것은
+            # stage2.selected_pairs, 못 보낸 것은 stage2.untested_candidates다.
+            "coupled_candidates": [[a, b] for a, b in all_candidate_pairs],
         },
         "stage2": None if s2 is None else {
             "scales": list(SCALES_STAGE2),
@@ -1074,6 +1080,7 @@ def main() -> int:
                 f"{a}|{b}|{name}": rec for (a, b, name), rec in s2["confirmations"].items()
             },
             "confirmed_pairs": confirmed_pairs,
+            "selected_pairs": [[a, b] for a, b in candidate_pairs],
             "untested_candidates": [[a, b] for a, b in untested_candidates],
             "untested_candidates_reason": (
                 None if not untested_candidates else

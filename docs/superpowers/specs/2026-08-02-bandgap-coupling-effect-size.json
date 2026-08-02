@@ -1,0 +1,1213 @@
+{
+  "area_gain_ranking": {
+    "n_candidates": 167,
+    "n_tunable": 167,
+    "ranked_all": [
+      {
+        "gain": 2.4999999999999893e-10,
+        "param": "L",
+        "refdes": "BUF_N.Xcc"
+      },
+      {
+        "gain": 2.4999999999999893e-10,
+        "param": "W",
+        "refdes": "BUF_N.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "BUF_P.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "BUF_P.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "ERRAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "ERRAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "TRIMAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "TRIMAMP.Xcc"
+      },
+      {
+        "gain": 4.395999999999909e-11,
+        "param": "l",
+        "refdes": "BANDGAP.XRl2"
+      },
+      {
+        "gain": 4.395999999999909e-11,
+        "param": "w",
+        "refdes": "BANDGAP.XRl2"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "L",
+        "refdes": "BGR_CORE.Xcc"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "W",
+        "refdes": "BGR_CORE.Xcc"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "L",
+        "refdes": "BUF_P.Xcl"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "W",
+        "refdes": "BUF_P.Xcl"
+      },
+      {
+        "gain": 3.9999999999999035e-11,
+        "param": "L",
+        "refdes": "BUF_N.Xcl"
+      },
+      {
+        "gain": 3.9999999999999035e-11,
+        "param": "W",
+        "refdes": "BUF_N.Xcl"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "l",
+        "refdes": "BGR_CORE.XRpa"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "w",
+        "refdes": "BGR_CORE.XRpa"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "l",
+        "refdes": "BGR_CORE.XRpb"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "w",
+        "refdes": "BGR_CORE.XRpb"
+      },
+      {
+        "gain": 3.1360000000001017e-11,
+        "param": "l",
+        "refdes": "BANDGAP.XRl1"
+      },
+      {
+        "gain": 3.1360000000001017e-11,
+        "param": "w",
+        "refdes": "BANDGAP.XRl1"
+      },
+      {
+        "gain": 6.8599999999997054e-12,
+        "param": "l",
+        "refdes": "BANDGAP.XRl4"
+      },
+      {
+        "gain": 6.8599999999997054e-12,
+        "param": "w",
+        "refdes": "BANDGAP.XRl4"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X1"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X1"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X2"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_N.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_N.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "l",
+        "refdes": "BUF_N.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "w",
+        "refdes": "BUF_N.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_P.X1"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_P.X1"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_P.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_P.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "l",
+        "refdes": "ERRAMP.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "w",
+        "refdes": "ERRAMP.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X6"
+      },
+      {
+        "gain": 3.312000000000288e-12,
+        "param": "l",
+        "refdes": "BGR_CORE.XR1"
+      },
+      {
+        "gain": 3.312000000000288e-12,
+        "param": "w",
+        "refdes": "BGR_CORE.XR1"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "L",
+        "refdes": "BUF_P.X7"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "W",
+        "refdes": "BUF_P.X7"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xt"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xt"
+      },
+      {
+        "gain": 2.339999999999808e-12,
+        "param": "l",
+        "refdes": "BANDGAP.XRl3"
+      },
+      {
+        "gain": 2.339999999999808e-12,
+        "param": "w",
+        "refdes": "BANDGAP.XRl3"
+      },
+      {
+        "gain": 2.0000000000006135e-12,
+        "param": "L",
+        "refdes": "BUF_P.X6"
+      },
+      {
+        "gain": 2.0000000000006135e-12,
+        "param": "W",
+        "refdes": "BUF_P.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "BUF_N.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "BUF_N.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "BUF_N.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "BUF_N.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xt"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xt"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xc1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xc1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xc2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xc2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xp2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xm1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xm1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xm2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xm2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xn1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xn1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xn2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xn2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xp1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xp1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xp2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xp2"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "l",
+        "refdes": "BUF_P.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "w",
+        "refdes": "BUF_P.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "l",
+        "refdes": "TRIMAMP.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "w",
+        "refdes": "TRIMAMP.XRz"
+      },
+      {
+        "gain": 9.999999999994796e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xmpout"
+      },
+      {
+        "gain": 9.999999999994796e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xmpout"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_b"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_b"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_r"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_r"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xc1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xc1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xc2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xc2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xt"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb3"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb3"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb5"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb5"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb6"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb6"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.X7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.X7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xm1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xm1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xm2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xm2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xn1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xn1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xn2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xn2"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_d"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_d"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_i"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_i"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb4"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb4"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb8"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb8"
+      }
+    ],
+    "source": "optimizer.run_area_optimization \uc900\ube44 \uad6c\uac04 \uc7ac\ud604 (derive_structure \u2192 _area_knob_state \u2192 rank_by_area_gain(_area_change))",
+    "top_knobs_requested": 12,
+    "top_knobs_used": [
+      "BUF_N.Xcc.L",
+      "BUF_N.Xcc.W",
+      "BUF_P.Xcc.L",
+      "BUF_P.Xcc.W",
+      "ERRAMP.Xcc.L",
+      "ERRAMP.Xcc.W",
+      "TRIMAMP.Xcc.L",
+      "TRIMAMP.Xcc.W",
+      "BANDGAP.XRl2.l",
+      "BANDGAP.XRl2.w",
+      "BGR_CORE.Xcc.L",
+      "BGR_CORE.Xcc.W"
+    ],
+    "unknown": [],
+    "zero_gain": [
+      "BGR_CORE.Xq8.m"
+    ]
+  },
+  "bistability_checked": false,
+  "bistability_note": "\uc774 \uc2e4\ud589\uc5d0\uc11c\ub3c4 \ubc14\uc774\uc2a4\ud14c\uc774\ube14 \ud655\uc778\uc740 \ub3cc\uc9c0 \uc54a\uc558\ub2e4 - \ubc34\ub4dc\uac2d \ud504\ub85c\ud30c\uc77c\uc5d0\ub294 \ud504\ub85c\ube0c\ub3c4 \uc644\ud654\ucc45\ub3c4 \uc5c6\ub2e4. \uadfc\uac70\ub294 scripts/dc_solution_uniqueness.py \uc758 \ubcc4\ub3c4 \uce21\uc815\uc774\ub2e4.",
+  "effect_size": {
+    "note": "I_rel \uc740 \ub2e8\uc77c\ucd95 \ud6a8\uacfc\ub85c \uc815\uaddc\ud654\ud55c \uc591\uc774\ub77c \ud06c\uae30\uac00 \uc544\ub2c8\ub2e4. grid_span \uc744 axis_a_span/axis_b_span \uacfc \ub098\ub780\ud788 \uc77d\uc5b4\uc57c '\ub450 \ucd95\uc744 \ud568\uaed8 \uc6c0\uc9c1\uc5ec\uc57c\ub9cc \ub2ff\ub294 \uacf3'\uc758 \ud06c\uae30\ub97c \uc54c \uc218 \uc788\ub2e4.",
+    "pairs": {
+      "BUF_P.Xcc.L|BUF_P.Xcc.W": {
+        "levels_a": [
+          12.0,
+          20.0,
+          28.0,
+          40.0,
+          56.0,
+          80.0,
+          120.0
+        ],
+        "levels_b": [
+          12.0,
+          20.0,
+          28.0,
+          40.0,
+          56.0,
+          80.0,
+          120.0
+        ],
+        "measurements": {
+          "buf0_gain_db": {
+            "axis_a_span": 0.02199999999999136,
+            "axis_b_span": 0.02199999999999136,
+            "baseline": 100.158,
+            "grid_span": 0.08799999999999386,
+            "n_valid_points": 36
+          },
+          "buf0_pm_deg": {
+            "axis_a_span": 30.102800000000002,
+            "axis_b_span": 30.4696,
+            "baseline": 104.39,
+            "grid_span": 70.7327,
+            "n_valid_points": 36
+          },
+          "buf1_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 97.9842,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "buf1_pm_deg": {
+            "axis_a_span": 0.001999999999995339,
+            "axis_b_span": 0.001999999999995339,
+            "baseline": 101.558,
+            "grid_span": 0.0040000000000048885,
+            "n_valid_points": 36
+          },
+          "core_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 57.8277,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "core_pm_deg": {
+            "axis_a_span": 0.0010999999999938836,
+            "axis_b_span": 0.0010999999999938836,
+            "baseline": 66.0807,
+            "grid_span": 0.0023999999999944066,
+            "n_valid_points": 36
+          },
+          "trim_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 87.5449,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "trim_pm_deg": {
+            "axis_a_span": 0.09860000000000468,
+            "axis_b_span": 0.10099999999999909,
+            "baseline": 81.1382,
+            "grid_span": 0.25500000000000966,
+            "n_valid_points": 36
+          }
+        },
+        "n_grid_points": 49,
+        "n_missing_points": 13
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L": {
+        "levels_a": [
+          12.0,
+          20.0,
+          28.0,
+          40.0,
+          56.0,
+          80.0,
+          120.0
+        ],
+        "levels_b": [
+          6.0,
+          10.0,
+          14.0,
+          20.0,
+          28.0,
+          40.0,
+          60.0
+        ],
+        "measurements": {
+          "buf0_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 100.158,
+            "grid_span": 0.0,
+            "n_valid_points": 42
+          },
+          "buf0_pm_deg": {
+            "axis_a_span": 0.0010000000000047748,
+            "axis_b_span": 0.04000000000000625,
+            "baseline": 104.39,
+            "grid_span": 0.1280000000000001,
+            "n_valid_points": 42
+          },
+          "buf1_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 97.9842,
+            "grid_span": 0.0,
+            "n_valid_points": 42
+          },
+          "buf1_pm_deg": {
+            "axis_a_span": 0.0010000000000047748,
+            "axis_b_span": 0.21599999999999397,
+            "baseline": 101.558,
+            "grid_span": 0.3089999999999975,
+            "n_valid_points": 42
+          },
+          "core_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 57.8277,
+            "grid_span": 0.0,
+            "n_valid_points": 42
+          },
+          "core_pm_deg": {
+            "axis_a_span": 45.4862,
+            "axis_b_span": 31.148999999999994,
+            "baseline": 66.0807,
+            "grid_span": 64.6242,
+            "n_valid_points": 42
+          },
+          "trim_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 87.5449,
+            "grid_span": 0.0,
+            "n_valid_points": 42
+          },
+          "trim_pm_deg": {
+            "axis_a_span": 0.49210000000000775,
+            "axis_b_span": 1.2960999999999956,
+            "baseline": 81.1382,
+            "grid_span": 2.9194999999999993,
+            "n_valid_points": 42
+          }
+        },
+        "n_grid_points": 49,
+        "n_missing_points": 7
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W": {
+        "levels_a": [
+          12.0,
+          20.0,
+          28.0,
+          40.0,
+          56.0,
+          80.0,
+          120.0
+        ],
+        "levels_b": [
+          12.0,
+          20.0,
+          28.0,
+          40.0,
+          56.0,
+          80.0,
+          120.0
+        ],
+        "measurements": {
+          "buf0_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 100.158,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "buf0_pm_deg": {
+            "axis_a_span": 0.20400000000000773,
+            "axis_b_span": 0.2049999999999983,
+            "baseline": 104.39,
+            "grid_span": 0.2639999999999958,
+            "n_valid_points": 36
+          },
+          "buf1_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 97.9842,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "buf1_pm_deg": {
+            "axis_a_span": 0.945999999999998,
+            "axis_b_span": 0.9469999999999885,
+            "baseline": 101.558,
+            "grid_span": 1.0960000000000036,
+            "n_valid_points": 36
+          },
+          "core_gain_db": {
+            "axis_a_span": 0.0,
+            "axis_b_span": 0.0,
+            "baseline": 57.8277,
+            "grid_span": 0.0,
+            "n_valid_points": 36
+          },
+          "core_pm_deg": {
+            "axis_a_span": 0.1057999999999879,
+            "axis_b_span": 0.10589999999999122,
+            "baseline": 66.0807,
+            "grid_span": 0.24370000000000402,
+            "n_valid_points": 36
+          },
+          "trim_gain_db": {
+            "axis_a_span": 0.0002999999999957481,
+            "axis_b_span": 0.0002999999999957481,
+            "baseline": 87.5449,
+            "grid_span": 0.0014000000000038426,
+            "n_valid_points": 36
+          },
+          "trim_pm_deg": {
+            "axis_a_span": 27.6665,
+            "axis_b_span": 27.7012,
+            "baseline": 81.1382,
+            "grid_span": 65.958,
+            "n_valid_points": 36
+          }
+        },
+        "n_grid_points": 49,
+        "n_missing_points": 13
+      }
+    },
+    "rank_testbench": "dc_tc",
+    "scales": [
+      0.3,
+      0.5,
+      0.7,
+      1.0,
+      1.4,
+      2.0,
+      3.0
+    ],
+    "testbench": "amp_loops"
+  },
+  "inertness": {
+    "baseline_measurements": {
+      "idd": -0.000212988,
+      "iq_ua": 212.9881,
+      "tc_ppm_per_c": 36.11784,
+      "vbg0_v": 0.4999021,
+      "vbg1_v": 1.199929,
+      "vbgout_v": 1.238874
+    },
+    "note": "identical_to_baseline=true \ub294 \uadf8 \ub178\ube0c\uac00 \uc774 \ud14c\uc2a4\ud2b8\ubca4\uce58\uc758 \uc5b4\ub290 \uce21\uc815\uac12\ub3c4 \ubc14\uafb8\uc9c0 \uc54a\ub294\ub2e4\ub294 \ub73b\uc774\ub2e4. \uadf8\ub7f0 \ub178\ube0c\uc758 I_rel=0 \uc740 '\uacb0\ud569 \uc5c6\uc74c'\uc774 \uc544\ub2c8\ub77c '\uacc4\uae30\uac00 \ubabb \ubd04'\uc774\ub2e4.",
+    "probes": [
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "25",
+        "param": "W",
+        "refdes": "BUF_N.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "100",
+        "param": "W",
+        "refdes": "BUF_N.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "25",
+        "param": "L",
+        "refdes": "BUF_N.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "20",
+        "param": "W",
+        "refdes": "BUF_P.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "20",
+        "param": "W",
+        "refdes": "ERRAMP.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "20",
+        "param": "W",
+        "refdes": "TRIMAMP.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {},
+        "identical_to_baseline": true,
+        "new_value": "10",
+        "param": "W",
+        "refdes": "BGR_CORE.Xcc",
+        "status": "success"
+      },
+      {
+        "changed_measurements": {
+          "idd": [
+            -0.000212988,
+            -0.000211345
+          ],
+          "iq_ua": [
+            212.9881,
+            211.3452
+          ],
+          "vbg0_v": [
+            0.4999021,
+            0.3133221
+          ],
+          "vbg1_v": [
+            1.199929,
+            1.214518
+          ]
+        },
+        "identical_to_baseline": false,
+        "new_value": "0.5",
+        "param": "w",
+        "refdes": "BANDGAP.XRl2",
+        "status": "success"
+      }
+    ],
+    "testbench": "dc_tc"
+  },
+  "purpose": "T18b \ubcf4\uc870 \uce21\uc815. pairwise_coupling\uc758 I_rel\uc774 \ub2f5\ud560 \uc218 \uc5c6\ub294 \ub450 \uac00\uc9c0: (1) I_rel=0\uc774 \uc9c1\uad50\uc131\uc778\uac00 \ubb34\ud6a8\uacfc\uc778\uac00, (2) \ud655\uc815\ub41c \uacb0\ud569\uc758 \uc808\ub300 \ud06c\uae30.",
+  "spec": "benchmarks/bandgap/spec.yaml"
+}

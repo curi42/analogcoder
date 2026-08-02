@@ -980,63 +980,267 @@
     },
     "coupled_candidates": [
       [
-        "BUF_P.Xcc.L",
-        "BUF_P.Xcc.W"
-      ],
-      [
         "BUF_N.Xcc.L",
         "BUF_N.Xcc.W"
       ],
       [
-        "TRIMAMP.Xcc.L",
+        "BUF_N.Xcc.L",
+        "BUF_P.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
         "TRIMAMP.Xcc.W"
       ],
       [
-        "BANDGAP.XRl2.l",
+        "BUF_N.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_N.Xcc.L",
         "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BUF_P.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BGR_CORE.Xcc.W"
       ],
       [
         "ERRAMP.Xcc.L",
         "ERRAMP.Xcc.W"
       ],
       [
+        "ERRAMP.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.w",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BANDGAP.XRl2.w",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
         "BGR_CORE.Xcc.L",
-        "BGR_CORE.Xcc.W"
-      ],
-      [
-        "ERRAMP.Xcc.L",
-        "BGR_CORE.Xcc.L"
-      ],
-      [
-        "ERRAMP.Xcc.L",
-        "BGR_CORE.Xcc.W"
-      ],
-      [
-        "ERRAMP.Xcc.W",
-        "BGR_CORE.Xcc.L"
-      ],
-      [
-        "ERRAMP.Xcc.W",
-        "BGR_CORE.Xcc.W"
-      ],
-      [
-        "TRIMAMP.Xcc.W",
-        "BANDGAP.XRl2.l"
-      ],
-      [
-        "TRIMAMP.Xcc.L",
-        "BANDGAP.XRl2.l"
-      ],
-      [
-        "TRIMAMP.Xcc.W",
-        "BANDGAP.XRl2.w"
-      ],
-      [
-        "TRIMAMP.Xcc.L",
-        "BANDGAP.XRl2.w"
-      ],
-      [
-        "TRIMAMP.Xcc.L",
         "BGR_CORE.Xcc.W"
       ]
     ],
@@ -5210,7 +5414,7 @@
       2.0
     ],
     "unique_sims": 289,
-    "wall_seconds": 47.64471254195087
+    "wall_seconds": 47.6409321250394
   },
   "stage2": {
     "cache_stats": {
@@ -6093,6 +6297,68 @@
       2.0,
       3.0
     ],
+    "selected_pairs": [
+      [
+        "BUF_P.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BUF_N.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BGR_CORE.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ]
+    ],
     "skip_reason": null,
     "skipped": false,
     "unique_sims": 613,
@@ -6303,7 +6569,7 @@
       ]
     ],
     "untested_candidates_reason": "1\ub2e8\uacc4 \ucd5c\ub313\uac12 I_rel \uc0c1\uc704 15\uc30d\ub9cc \uc608\uc0b0 \uc548\uc5d0\uc11c \ud655\uc778\ud588\ub2e4 - \ub098\uba38\uc9c0 51\uc30d\uc740 2\ub2e8\uacc4\ub97c \uac70\uce58\uc9c0 \uc54a\uc558\uc73c\ubbc0\ub85c \uacb0\ud569 \uc5ec\ubd80\uac00 \ubbf8\uc815\uc774\ub2e4(\uacb0\ud569 \uc5c6\uc74c\uc73c\ub85c \uc77d\uc73c\uba74 \uc548 \ub41c\ub2e4).",
-    "wall_seconds": 80.22214812482707
+    "wall_seconds": 80.37634091707878
   },
   "testbench": "amp_loops",
   "tolerance": 0.001,
@@ -6311,6 +6577,6 @@
     "budget_exceeded": false,
     "stage2_untested_candidate_count": 51,
     "total_sims": 817,
-    "total_wall_seconds": 130.78719854098745
+    "total_wall_seconds": 130.91960199992172
   }
 }
