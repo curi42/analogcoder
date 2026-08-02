@@ -257,17 +257,56 @@ class TargetSpec:
         return None
 
 
+# 스펙이 선언할 수 있는 비교 연산자. **이 저장소의 모든 소비자가 같은 뜻으로
+# 구현한 것만** 들어 있다.
+#
+# `==`는 일부러 빠져 있다. `evaluate_criteria`는 그것을 판정할 수 있지만
+# (`_OPERATORS`에 있다) 그 아래의 세 소비자가 서로 다르게 읽는다:
+# `judge_tools.relative_slack`과 `baseline_ratio_allowances`는 상한(`<=`)
+# 분기로 떨어지고, `guard_band_violations`는 `==`를 아예 건너뛴다. 결과가
+# 조용한 거짓 주장이다 - `vref == 1.2`가 1.0을 재면 `relative_slack`이
+# **+0.167**(실패 중인 기준에 양수 여유)을 돌려주므로 `_tightest_slack`이
+# 과소 보고하고, `baseline_ratio_allowances`는 여유분을 주는데
+# `guard_band_violations`는 그 여유분을 적용하지 않아 리포트가 "0 (every
+# criterion is corner- or ratio-guarded)"라고 쓰면서 실제로는 가드가 0이다.
+#
+# 세 모듈이 서로 다른 답을 갖고 있으므로 **셋 중 하나를 조용히 고르는 대신
+# 거절한다** - `render_corner_report`가 다시 쓸 수 없는 공급 라인을 반쯤
+# 처리하는 대신 예외를 던지는 것과 같은 모양이다. 오타난 연산자(`>==`,
+# `=>`)도 같은 문에서 걸린다: 오늘은 그런 것이 `evaluate_criteria`의
+# `_OPERATORS[...]`에서 `KeyError`로, 즉 스펙 로드가 아니라 **판정 시점에**
+# 터진다.
+#
+# 되살리려면: `==`를 판정하는 방법을 세 소비자 모두에서 정의하고(허용 오차를
+# 무엇으로 할지가 그 결정의 핵심이다), 그 다음 여기에 넣는다. 오늘 출하된
+# 스펙 중 `==`를 쓰는 것은 없다(벤치마크 14개 스펙의 210개 기준 전부가
+# `>=` 아니면 `<=`다).
+ALLOWED_OPERATORS = (">=", ">", "<=", "<")
+
+
 def _load_criteria(raw_criteria: list[dict]) -> list[Criterion]:
-    return [
-        Criterion(
-            name=c["name"],
-            measurement=c["measurement"],
-            operator=c["operator"],
-            threshold=float(c["threshold"]),
-            unit=c.get("unit"),
+    criteria = []
+    for c in raw_criteria:
+        operator = c["operator"]
+        if operator not in ALLOWED_OPERATORS:
+            raise ValueError(
+                f"criterion {c['name']!r} declares operator {operator!r}, which this "
+                f"repository does not implement consistently. Allowed: "
+                f"{list(ALLOWED_OPERATORS)}. (An '==' criterion is read three "
+                f"different ways by relative_slack, baseline_ratio_allowances and "
+                f"guard_band_violations, so it is refused rather than silently "
+                f"resolved to one of them.)"
+            )
+        criteria.append(
+            Criterion(
+                name=c["name"],
+                measurement=c["measurement"],
+                operator=operator,
+                threshold=float(c["threshold"]),
+                unit=c.get("unit"),
+            )
         )
-        for c in raw_criteria
-    ]
+    return criteria
 
 
 def _axis(raw_pvt: dict, key: str) -> list:

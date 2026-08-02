@@ -556,11 +556,18 @@ async def _run(args) -> dict:
                 #
                 # **왜 Exception인가.** 좁게 잡는 것으로는 부족하다:
                 # `OSError`(워커의 ENOSPC/EAGAIN)와 `ValueError`(pvt.py의
-                # CornerRenderError)만이 아니라, 스펙의 `operator: "=~"` 오타
-                # 하나가 `judge_tools._OPERATORS[c.operator]`에서 `KeyError`를
-                # 낸다 - 환경 장애 없이, 결정론적으로. 예외 종류를 열거하는
+                # CornerRenderError) 둘 다 여기 도달하고, 환경 장애 없이
+                # 결정론적으로 도달하는 종류가 또 있다. 예외 종류를 열거하는
                 # 것은 "다음에 어떤 종류가 이 자리에 도달하는가"를 추측하는
                 # 것이고, 이 저장소는 그런 추측을 사실로 쓰지 않는다.
+                #
+                # **그 목록이 실제로 틀린다는 증거가 이미 하나 있다.** 이
+                # 주석은 원래 세 번째 예로 스펙의 `operator: "=~"` 오타가
+                # `judge_tools._OPERATORS[c.operator]`에서 내는 `KeyError`를
+                # 들고 있었다. 그 채널은 `spec.ALLOWED_OPERATORS`가 닫았다 -
+                # 그런 스펙은 이제 로드 자체가 거절되므로 여기 오지 못한다.
+                # 목록에서 한 종류가 이렇게 **사라지듯** 다른 종류가 들어올
+                # 수도 있다는 것이 열거하지 않는 이유다.
                 #
                 # 조용해지지 않는다: 예외의 **종류와 메시지가 그대로**
                 # failure_reason과 history 이벤트에 실리고 종료 코드는 1이다.

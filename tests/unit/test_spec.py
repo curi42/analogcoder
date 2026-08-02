@@ -738,3 +738,39 @@ def test_a_tau_outside_zero_exclusive_to_one_is_refused(tau):
         _load_corner_reduction(
             {"corner_reduction": {"coverage": {"epsilon": 0.03, "tau": tau}}}
         )
+
+
+# --- 비교 연산자 검증 - 세 소비자가 서로 다르게 읽는 것은 로드에서 거절한다 --
+
+
+@pytest.mark.parametrize("operator", ["==", ">==", "=>", "!=", "≥", ""])
+def test_an_operator_the_repo_does_not_implement_consistently_is_refused(operator):
+    """`spec.py`는 오늘까지 연산자를 **전혀** 검증하지 않았다 - 어떤 스펙도
+    임의의 문자열을 넣을 수 있었고, 오타는 판정 시점의 `KeyError`로,
+    `==`는 조용한 거짓 주장으로 나타났다.
+
+    `==`가 왜 거절되는가: `judge_tools.relative_slack`과
+    `baseline_ratio_allowances`는 그것을 상한(`<=`)으로 읽고
+    `guard_band_violations`는 아예 건너뛴다. `vref == 1.2`가 1.0을 재면
+    `relative_slack`은 **+0.167**, 즉 실패 중인 기준에 양수 여유를
+    돌려준다. 셋 중 하나를 조용히 고르는 대신 거절한다."""
+    from analogcoder.spec import _load_criteria
+
+    with pytest.raises(ValueError, match="operator"):
+        _load_criteria([
+            {"name": "ref", "measurement": "vref_v", "operator": operator, "threshold": 1.2},
+        ])
+
+
+@pytest.mark.parametrize("operator", [">=", ">", "<=", "<"])
+def test_the_four_implemented_operators_load(operator):
+    """거절이 너무 넓지 않다는 쪽도 고정한다 - 이 넷은 세 소비자가 모두
+    같은 뜻으로 구현한다. 출하된 벤치마크 14개 스펙의 기준 210개가 전부
+    `>=` 아니면 `<=`이므로, 이 게이트는 오늘 아무것도 막지 않는다."""
+    from analogcoder.spec import _load_criteria
+
+    criteria = _load_criteria([
+        {"name": "ref", "measurement": "vref_v", "operator": operator, "threshold": 1.2},
+    ])
+
+    assert criteria[0].operator == operator

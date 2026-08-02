@@ -2799,48 +2799,65 @@ def _artifacts(run_dir: str) -> tuple[dict, str]:
 BAD_OPERATOR_SPEC_YAML = CORNER_REDUCTION_SPEC_YAML.replace('operator: ">="', 'operator: "=~"', 1)
 
 
-def test_an_unknown_operator_in_a_spec_reaches_evaluate_criteria_as_a_key_error(tmp_path):
-    """§2.6 시나리오 2의 트리거가 **환경 장애 없이** 존재한다는 사실.
+def test_an_unknown_operator_is_refused_at_spec_load_before_anything_simulates(tmp_path):
+    """**이 트리거는 이제 경계에서 닫힌다.** 예전 이 테스트는 반대를 못박고
+    있었다: `_load_criteria`가 operator를 검증 없이 싣고
+    `judge_tools._OPERATORS[c.operator]`가 그것을 색인해, 오타 하나가 45코너
+    스윕 **한가운데서** `KeyError`가 된다는 사실을.
 
-    `spec.py`의 `_load_criteria`는 operator를 검증 없이 싣고,
-    `judge_tools._OPERATORS[c.operator]`가 그것을 그대로 색인한다. 오타 하나가
-    45코너 스윕 한가운데서 `KeyError`가 되며, 진입 스윕이 그 첫 소비자다.
+    `spec.ALLOWED_OPERATORS`가 그 자리를 옮겼다 - 이제 스펙 로드가
+    `ValueError`로 거절하므로 시뮬레이션은 한 번도 돌지 않는다. `load_spec`이
+    던지는 다른 거절들(빈 축, 중복 코너, 양쪽 모양 동시 선언)과 같은
+    범주다: 시작하지 않은 실행은 산출물을 남기지 않는다.
 
-    (operator 검증 자체는 `spec.py` 소유가 아니므로 여기서 고치지 않는다 -
-    이 테스트는 트리거가 실재한다는 것만 못박는다.)"""
-    from analogcoder.judge_tools import evaluate_criteria
+    `==`도 같은 문에서 걸리며 그 이유는 오타와 다르다 - 세 소비자가 서로
+    다른 뜻으로 구현했기 때문이다. `tests/unit/test_spec.py`가 그쪽을
+    본다."""
     from analogcoder.spec import load_spec
 
     (tmp_path / "netlist.cir").write_text(ORIGINAL_TEXT)
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(BAD_OPERATOR_SPEC_YAML)
-    spec = load_spec(str(spec_path))
 
-    with pytest.raises(KeyError):
-        evaluate_criteria({"gain_db": 41.0}, spec.all_criteria)
+    with pytest.raises(ValueError, match="operator"):
+        load_spec(str(spec_path))
 
 
 def test_an_entry_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_path):
     """진입 스윕이 터져도 `result.json`과 `report.md`가 써져야 한다.
 
     여기서 쓰는 대역은 예외를 손으로 던지지 않는다 - 프로덕션
-    `run_full_pvt_sweep`이 마지막에 하는 일(`spec.all_criteria`를 하나씩
-    `evaluate_criteria`에 넣는 것)을 그대로 하고, 스펙의 operator 오타가
-    `KeyError`를 만든다. 즉 이 테스트가 재현하는 것은 "예외가 나면"이 아니라
-    **"스펙에 오타 하나가 있으면"**이다.
+    `run_full_pvt_sweep`이 코너마다 하는 일(덱을 그 코너로 렌더링하는 것)을
+    그대로 하고, 다시 쓸 수 없는 공급 라인(괄호 없는 bare PWL)이
+    `CornerRenderError`를 만든다. 즉 이 테스트가 재현하는 것은 "예외가
+    나면"이 아니라 **"덱이 이 코드가 다룰 수 있는 모양이 아니면"**이다.
 
-    **수정 전 실측**: `KeyError: '=~'`가 `_run` -> `asyncio.run` -> `main()`을
-    그대로 뚫고, run-dir에 `history.jsonl`만 남는다.
+    **트리거가 바뀌었다.** 원래 이 대역은 스펙의 `operator: "=~"` 오타가
+    `judge_tools._OPERATORS`에서 내는 `KeyError`를 썼다. 그 채널은
+    `spec.ALLOWED_OPERATORS`가 닫았다 - 이제 그런 스펙은 로드되지 않으므로
+    스윕까지 오지 못한다(`test_an_unknown_operator_is_refused_at_spec_load_
+    before_anything_simulates`). 이 테스트가 지키는 사실은 그 트리거가
+    아니라 **산출물 보장**이므로, 여전히 프로덕션 경로에 실재하는 다른
+    예외로 옮겼다. `cli.py`가 `Exception`을 통째로 잡는 근거도 그대로다:
+    예외 **종류를 열거하는 것 자체가 추측**이고, 실제로 그 목록에서 한
+    종류가 이렇게 사라진다.
+
+    **수정 전 실측**: 예외가 `_run` -> `asyncio.run` -> `main()`을 그대로
+    뚫고, run-dir에 `history.jsonl`만 남는다.
     """
-    from analogcoder.judge_tools import evaluate_criteria
+    from analogcoder.pvt import render_corner_report
 
     run_dir = str(tmp_path / "runs" / "entryboom")
-    args = _corner_args(tmp_path, BAD_OPERATOR_SPEC_YAML, run_dir)
+    args = _corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir)
+    # 괄호 없는 bare PWL - ngspice는 받지만 렌더러는 추측하지 않고 거절한다.
+    (tmp_path / "netlist.cir").write_text(
+        "* ac netlist\nVdd vdd 0 PWL 0 0 1u 1.8\n.end\n"
+    )
 
     def production_shaped_sweep(netlist_texts, spec, sim_backend, log_event=None):
-        for criterion in spec.all_criteria:
-            evaluate_criteria({criterion.measurement: 41.0}, [criterion])
-        raise AssertionError("unreachable: the bad operator must raise first")
+        for text in netlist_texts.values():
+            render_corner_report(text, "ss", 1.62, -40.0, str(tmp_path))
+        raise AssertionError("unreachable: the unrenderable supply must raise first")
 
     with (
         patch("analogcoder.cli.run_full_pvt_sweep", new=production_shaped_sweep),
@@ -2854,7 +2871,7 @@ def test_an_entry_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_pat
     result, report = _artifacts(run_dir)
     assert result["status"] == "FAIL"
     assert "entry PVT sweep could not run" in result["failure_reason"]
-    assert "KeyError" in result["failure_reason"]
+    assert "CornerRenderError" in result["failure_reason"]
     # '스윕이 돌지 못했다'와 '스윕이 돌았고 실패했다'는 다른 사실이다.
     assert result["pvt_sweep"] is None
     assert result["pvt_sweep_error"]["phase"] == "entry"
