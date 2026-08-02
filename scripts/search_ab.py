@@ -77,6 +77,7 @@ from analogcoder.netlist import resolve_includes  # noqa: E402
 from analogcoder.optimizer import (  # noqa: E402
     SEARCH_STRATEGIES,
     OptimizerAgents,
+    run_area_optimization,
     run_optimization,
 )
 from analogcoder.pvt import all_corners, run_full_pvt_sweep  # noqa: E402
@@ -225,17 +226,24 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-def _steps_from_history(state) -> list[dict]:
-    """이력의 optimize_step을 비교 가능한 모양으로 줄인다.
+def _steps_from_history(state, step_event: str) -> list[dict]:
+    """이력의 `step_event`(단계에 따라 `optimize_step` 또는 `optimize_area_step`)를
+    비교 가능한 모양으로 줄인다.
 
     기록에 이것을 넣는 이유는 자기 검사 때문이다. 같은 전략을 양쪽에 넣었을 때
     최종 목적값만 같은 것으로는 부족하다 - 서로 다른 경로로 같은 값에 도달할 수
-    있고, 그러면 통제되지 않은 무언가가 남아 있는데도 검사가 통과한다."""
+    있고, 그러면 통제되지 않은 무언가가 남아 있는데도 검사가 통과한다.
+
+    **`step_event`는 호출자가 준다, 여기서 추측하지 않는다.** `SearchRun.log_event`가
+    `f"{phase.label}_{suffix}"`로 스스로 라벨을 붙이므로(목적 단계는 `optimize_`,
+    면적 단계는 `optimize_area_`), 상수 `"optimize_step"` 하나로 두 단계를 같이
+    읽으면 면적 단계를 돌린 기록에서 스텝이 하나도 안 잡히고 "조합이 한 번도
+    수락되지 않았다"와 "이 필터가 이름을 놓쳤다"가 똑같이 빈 목록으로 보인다."""
     steps = []
     with open(state.history_path) as f:
         for line in f:
             event = json.loads(line)
-            if event["step"] != "optimize_step":
+            if event["step"] != step_event:
                 continue
             steps.append(
                 {
@@ -248,6 +256,12 @@ def _steps_from_history(state) -> list[dict]:
                     "accepted": event.get("accepted"),
                     "gate": event.get("gate"),
                     "reason": event.get("reason"),
+                    # 조합 스텝(노브 2개 이상을 한 후보로 묶은 시도)에만 `changes`가
+                    # 실린다(optimizer.py:1085-1091, `len(steps) > 1`). 없으면
+                    # 단일 노브 스텝이라는 뜻이라 `None`을 그대로 둔다 - `[]`로
+                    # 접으면 "조합을 시도했는데 변경이 0개"와 "애초에 단일
+                    # 노브였다"가 구별되지 않는다.
+                    "changes": event.get("changes"),
                 }
             )
     return steps
@@ -260,8 +274,16 @@ def run_side(
     ranking: list[dict],
     out_dir: str,
     corner_regime=None,
+    phase: str = "objective",
 ) -> dict:
     """한쪽을 돌리고 기록을 만든다.
+
+    `phase="area"`는 `run_area_optimization`을 부른다 - `optimize:` 선언이
+    필요 없고 노브 순위를 `rank_by_area_gain`으로 스스로 계산하므로, 여기서
+    넘기는 `ranking`(고정 순위)은 목적 단계에서만 쓰이고 면적 단계에서는
+    `run_area_optimization`이 만드는 새 `OptimizerAgents`로 통째로 대체된다
+    (`optimizer.py:2109-2118`) - `agents.propose`/`simulate`/`verify_corners`/
+    `search_strategy`만 그대로 이어받는다.
 
     `record`와 `meta`를 가르는 것이 중요하다. record는 **결정론적이어야 하는**
     모든 것이고, meta는 그렇지 않은 것(벽시계, 경로)이다. 자기 검사는 record만
@@ -310,19 +332,34 @@ def run_side(
     optimizer_module.MAX_OPTIMIZE_STEPS = args.max_steps
     started = time.monotonic()
     try:
-        result = asyncio.run(run_optimization(texts, spec, state, agents))
+        if phase == "area":
+            result = asyncio.run(run_area_optimization(texts, spec, state, agents))
+        else:
+            result = asyncio.run(run_optimization(texts, spec, state, agents))
     finally:
         optimizer_module.MAX_OPTIMIZE_STEPS = previous_budget
     elapsed = time.monotonic() - started
 
-    steps = _steps_from_history(state)
+    # `SearchRun.log_event`가 `f"{phase.label}_{suffix}"`로 스스로 라벨을
+    # 붙인다(optimizer.py:1023) - 목적 단계는 `optimize_step`, 면적 단계는
+    # `optimize_area_step`. 상수 하나로 두 단계를 같이 읽으면 면적 단계
+    # 기록에서 스텝이 통째로 안 잡힌다.
+    step_event = "optimize_area_step" if phase == "area" else "optimize_step"
+    steps = _steps_from_history(state, step_event)
     accepted_nominal = sum(1 for s in steps if s["accepted"])
     nominal_objectives = [s["objective"] for s in steps if s["accepted"]]
+    # 사전 등록의 선행 조건: 조합 스텝(노브 2개 이상)이 이 런에서 실제로 한 번
+    # 이라도 **수락**됐는가. 0이어도 키를 쓴다 - "조합이 한 번도 안 됐다"와
+    # "이 계측이 사라졌다"가 history.jsonl 만으로는 구별되지 않으면 안 된다.
+    compound_steps_accepted = sum(
+        1 for s in steps if s["accepted"] and s.get("changes")
+    )
     final_texts = state.current_netlist_texts()
 
     record = {
         "side": side,
         "strategy": strategy_name,
+        "phase": phase,
         # M9(T19): 이 지점에서 `corner_regime`은 **항상 None**이다 - 위 가드가
         # 그 외의 모든 값을 함수 진입 시점에 거부하고 함수를 빠져나가므로,
         # `else` 분기는 도달 불가능한 코드였다. 죽은 분기가 "이 하니스가
@@ -356,6 +393,7 @@ def run_side(
         "steps_accepted_nominal": accepted_nominal,
         "steps_survived": result["steps_accepted"],
         "steps_rejected": result["steps_rejected"],
+        "compound_steps_accepted": compound_steps_accepted,
         "simulations": meter.as_dict(),
         "steps": steps,
         "final_deck_sha256": {name: _digest(text) for name, text in sorted(final_texts.items())},
@@ -444,6 +482,12 @@ def main(argv=None) -> int:
              "않으므로 argmax가 아니면 시작 전에 거부된다(reject) - "
              "run_side가 cli.py처럼 seed_from_sweep을 거치게 된 뒤에 열린다.",
     )
+    parser.add_argument(
+        "--phase", choices=("objective", "area"), default="objective",
+        help="area 는 run_area_optimization(결정론적 순위, optimize: 불필요). "
+             "탐색 전략 A/B 의 기본 선택이다 - LLM 분산이 0이므로 실행 하나가 "
+             "판정에 쓰일 수 있다.",
+    )
     parser.add_argument("--max-steps", type=int, default=optimizer_module.MAX_OPTIMIZE_STEPS,
                         help="시뮬레이션 예산(탐색 단계 수). 양쪽에 같은 값이 간다.")
     parser.add_argument("--sim-timeout", type=int, default=300)
@@ -464,11 +508,16 @@ def main(argv=None) -> int:
     for name in args.strategy:
         if name not in SEARCH_STRATEGIES:
             parser.error(f"unknown strategy {name!r}; known: {sorted(SEARCH_STRATEGIES)}")
-    if not args.knob:
+    if not args.knob and args.phase == "objective":
         parser.error(
             "--knob을 최소 하나 주어야 한다. 순위를 고정하지 않으면 LLM을 부르게 되고, "
             "그러면 이 하니스가 존재하는 이유가 사라진다"
         )
+    # `--phase area`에서는 `--knob`이 필요 없다 - `run_area_optimization`은
+    # `rank_by_area_gain`으로 순위를 스스로 계산해 `OptimizerAgents`를 통째로
+    # 새로 만들고(`optimizer.py:2109-2118`), 여기서 넘긴 고정 순위는 그 안에서
+    # 아예 읽히지 않는다. 그래도 준 값은 버리지 않고 그대로 이어 준다 - 넣어도
+    # 해가 없고, 목적 단계로 재실행할 때 같은 커맨드라인을 재사용할 수 있다.
     if not args.corner_regime:
         args.corner_regime = [None, None]
     if len(args.corner_regime) != 2:
@@ -514,8 +563,104 @@ def main(argv=None) -> int:
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    a = run_side("a", args.strategy[0], args, args.knob, out_dir, args.corner_regime[0])
-    b = run_side("b", args.strategy[1], args, args.knob, out_dir, args.corner_regime[1])
+    # 코너 경로의 적격성(사전 등록 개정 1, design.md "코너 경로의 적격성"절) -
+    # 대조군(coordinate_descent)이 스텝을 하나도 수락하지 못하면 비교할
+    # 기준선이 없다. 기준선이 자기 가드를 못 지키는 경우(optimize_guard_infeasible)가
+    # 그렇고, 그때는 어떤 전략도 0을 낸다 - 여유분 하한 측정이 P2 에서 정확히
+    # 이렇게 무효가 됐다. void 는 실패가 아니라 "조건이 발생하지 않았다"이다.
+    #
+    # 대조군은 두 --strategy 중 문자 그대로 "coordinate_descent"인 쪽이다
+    # (위치는 무관 - a든 b든). 그 대조군을 **먼저** 돌리고, 0 수락이면 나머지
+    # 쪽은 아예 돌리지 않는다. 어느 쪽도 "coordinate_descent"가 아니면(둘 다
+    # compound_fallback_*인 비교 등) 이 게이트가 세울 기준선 자체가 없으므로
+    # 적용하지 않는다 - **적용하지 않았다는 사실도 기록한다**, 조용히
+    # 건너뛰면 "게이트가 통과했다"와 "게이트가 아예 없다"가 history 만으로는
+    # 구별되지 않는다.
+    control_idx = next(
+        (i for i, s in enumerate(args.strategy) if s == "coordinate_descent"), None
+    )
+
+    def _run(idx: int) -> dict:
+        side = "a" if idx == 0 else "b"
+        return run_side(
+            side, args.strategy[idx], args, args.knob, out_dir,
+            args.corner_regime[idx], phase=args.phase,
+        )
+
+    payloads = {0: None, 1: None}
+    if control_idx is None:
+        eligibility = {
+            "checked": False,
+            "control_strategy": None,
+            "control_side": None,
+            "control_steps_accepted": None,
+            "verdict": "not_applicable",
+            "reason": (
+                "neither --strategy is literally 'coordinate_descent'; there is no "
+                "designated control to establish a baseline against, so the eligibility "
+                "gate does not apply to this pair"
+            ),
+        }
+        payloads[0] = _run(0)
+        payloads[1] = _run(1)
+    else:
+        control_payload = _run(control_idx)
+        payloads[control_idx] = control_payload
+        # record["steps_survived"]는 run_side가 이름만 바꿔 실은
+        # optimizer.run_optimization/run_area_optimization의 원시 결과
+        # result["steps_accepted"]와 같은 값이다 - 코너를 잴 수 있으면 확인
+        # 스윕에서 살아남은 수, 아니면 nominal 수락 수.
+        control_steps = control_payload["record"]["steps_survived"]
+        control_side = "a" if control_idx == 0 else "b"
+        if control_steps == 0:
+            eligibility = {
+                "checked": True,
+                "control_strategy": "coordinate_descent",
+                "control_side": control_side,
+                "control_steps_accepted": 0,
+                "verdict": "void",
+                "reason": (
+                    "control (coordinate_descent) accepted 0 steps on this slot; "
+                    "there is no baseline to compare against"
+                ),
+            }
+        else:
+            eligibility = {
+                "checked": True,
+                "control_strategy": "coordinate_descent",
+                "control_side": control_side,
+                "control_steps_accepted": control_steps,
+                "verdict": "eligible",
+                "reason": None,
+            }
+            other_idx = 1 - control_idx
+            payloads[other_idx] = _run(other_idx)
+
+    a, b = payloads[0], payloads[1]
+
+    if eligibility["verdict"] == "void":
+        # partners>0(또는 짝이 되는 쪽)을 돌리지 않는다 - 비교할 기준선이 없다.
+        comparison = {
+            "spec": (a or b)["record"]["spec"],
+            "phase": args.phase,
+            "step_budget": args.max_steps,
+            "knob_ranking": args.knob,
+            "strategies": args.strategy,
+            "eligibility_check": eligibility,
+            "verdict": "void",
+            "void_reason": eligibility["reason"],
+            "a": a,
+            "b": b,
+        }
+        with open(os.path.join(out_dir, "comparison.json"), "w") as f:
+            json.dump(comparison, f, indent=2, sort_keys=True)
+        print(
+            f"\nVOID: control (coordinate_descent, side {eligibility['control_side']}) "
+            "accepted 0 steps on this slot - there is no baseline to compare against. "
+            f"The other side was not run. wrote {os.path.join(out_dir, 'comparison.json')}"
+        )
+        return 0
+
     print_table(a, b)
 
     identical = _records_match(a["record"], b["record"])
@@ -526,9 +671,11 @@ def main(argv=None) -> int:
 
     comparison = {
         "spec": a["record"]["spec"],
+        "phase": args.phase,
         "step_budget": args.max_steps,
         "knob_ranking": args.knob,
         "strategies": args.strategy,
+        "eligibility_check": eligibility,
         "records_identical": identical,
         "identity_asserted": should_assert,
         "a": a,
