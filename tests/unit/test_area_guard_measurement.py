@@ -78,3 +78,50 @@ def test_tightest_slack_present_but_value_missing_is_also_unjudged():
     )
     assert safe == "unjudged"
     assert reason is not None
+
+
+def test_safe_state_is_blind_to_a_nan_criterion_and_depends_on_verify_instrument():
+    """**void 판정의 알려진 사각을 못박는다.**
+
+    `optimizer._tightest_slack`은 `actual`이 NaN인 기준을 최솟값 경쟁에서
+    뺀다(그 함수의 docstring이 이유를 적는다). 그래서 어떤 기준의 측정이
+    아예 안 나온 기준선은 `overall_pass=False`로 0스텝을 수락하면서도
+    `tightest_slack`은 **다른 기준의 양수 값**을 들고 온다 - 그 조합에서
+    `_safe_state`는 `value < 0.0`을 못 보고 `False`를 돌려준다. 즉 "쟀고
+    안전하지 않았다"는 거짓 주장이 void가 막으려던 문이 아니라 **다른
+    문으로** 나온다.
+
+    이 테스트는 그 결함을 고치는 것이 아니라 **의존을 고정**한다: 오늘
+    발화하지 않는 유일한 이유는 `verify_instrument`가 조합을 돌리기 전에
+    두 스펙의 기준이 전부 측정되는지 확인하고 거절하기 때문이다. 그
+    사전 거절을 느슨하게 하는 사람이 이 테스트를 보고 여기도 같이 고쳐야
+    한다는 것을 알게 하는 것이 목적이다.
+
+    실제 수치로 재현한다: 기준 둘 중 `gain`이 NaN(측정 실패, `pass=False`)
+    이고 `iq`는 200/300으로 여유 +0.333. `_tightest_slack`은 `iq`만 보고
+    +0.333을 돌려주므로, 기준선이 실제로는 깨져 있는데도 `< 0.0`이
+    거짓이다."""
+    import math
+
+    from analogcoder.optimizer import _tightest_slack
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0),
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+    ]
+    # evaluate_criteria가 측정 실패에 쓰는 모양 그대로: actual=NaN, pass=False.
+    baseline_verdict = [
+        {"name": "iq", "actual": 200.0, "pass": True},
+        {"name": "gain", "actual": math.nan, "pass": False},
+    ]
+
+    tightest = _tightest_slack(criteria, baseline_verdict)
+    # NaN 기준이 경쟁에서 빠지므로 최솟값은 통과 중인 기준의 **양수**다.
+    assert tightest == {"criterion": "iq", "value": 100.0 / 300.0}
+
+    safe, reason = _safe_state(accepted=0, tightest_slack=tightest, overall_pass=False)
+
+    # 옳은 답은 "void"다(기준선이 이미 깨져 있었다). 실제로는 False가 나온다.
+    assert safe is False
+    assert reason is None

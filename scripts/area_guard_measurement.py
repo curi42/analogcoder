@@ -262,7 +262,22 @@ def _safe_state(
     수락이 0이지만 착지 덱이 기준선에서부터 통과 중이면(P1의 F1 0.05/0.10/
     0.20처럼 가드가 infeasible이라 아무 스텝도 못 밟은 경우) 이것은 void가
     아니다 - "하한이 너무 엄격해 아무것도 안 했다"는 그 자체로 하한에 대한
-    실측이다. void는 정확히 "재기도 전에 이미 깨져 있었다"는 경우다."""
+    실측이다. void는 정확히 "재기도 전에 이미 깨져 있었다"는 경우다.
+
+    **알려진 사각: void 판정은 NaN 기준을 못 본다.** `optimizer._tightest_slack`
+    은 `actual`이 NaN인 기준을 최솟값 경쟁에서 **뺀다**(그 함수의 docstring이
+    이유를 적는다 - `max()`가 NaN에서 인자 순서에 따라 다른 값을 돌려준다).
+    그래서 어떤 기준의 측정이 아예 안 나온 기준선은 `overall_pass=False`로
+    0스텝을 수락하면서도 `tightest_slack`은 **다른 기준의 양수 값**을 들고
+    온다 - 이 함수는 `value < 0.0`을 못 보고 `bool(overall_pass)` = `False`,
+    즉 "쟀고 안전하지 않았다"는 void가 막으려던 그 거짓 주장을 **다른 문으로**
+    낸다. 오늘 이것이 발화하지 않는 유일한 이유는 `verify_instrument`가
+    조합을 돌리기 전에 두 스펙의 기준이 전부 측정되는지 확인하고 거절하기
+    때문이다 - 즉 이 함수의 정확성이 **다른 함수의 사전 거절에 의존한다**.
+    `test_safe_state_is_blind_to_a_nan_criterion_and_depends_on_verify_instrument`
+    가 그 의존을 못박는다. 고치려면 `_tightest_slack`이 아니라 여기서
+    "판정 항목 중 NaN이 있었는가"를 별도 사실로 받아야 한다 - 그 배선은
+    이 측정의 범위 밖이라 하지 않았고, 대신 의존을 기록한다."""
     if tightest_slack is None or tightest_slack.get("value") is None:
         reason = (
             "no tightest_slack was recorded for this run (area phase did not "

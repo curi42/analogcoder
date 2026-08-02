@@ -120,6 +120,23 @@ directly (see the deterministic-derivation section).
   versions each testbench's netlist independently but always in lockstep —
   `push_netlist_version`/`rollback` are atomic across testbenches, never partially
   applied. See `2026-07-25-psr-verification-design.md`.
+  - **A criterion's operator is validated at load against `ALLOWED_OPERATORS`
+    (`>=`, `>`, `<=`, `<`), and `==` is refused even though `evaluate_criteria`
+    implements it.** Three consumers disagree on what `==` means:
+    `relative_slack` and `baseline_ratio_allowances` fall to the upper-bound
+    branch, `guard_band_violations` skips it. For `vref == 1.2` measuring 1.0,
+    `relative_slack` returns **+0.167** — positive slack on a *failing* criterion,
+    so `_tightest_slack` under-reports it; and `baseline_ratio_allowances` hands it
+    an allowance nothing applies, so the report renders *"0 (every criterion is
+    corner- or ratio-guarded)"* over a criterion with zero guard. Three modules
+    disagreeing is a reason to refuse, not to pick one — the same shape as
+    `render_corner_report` raising on a supply line it cannot rewrite. The same
+    gate closes a typo: before this, `operator: "=~"` loaded fine and surfaced as a
+    `KeyError` from `judge_tools._OPERATORS` in the middle of a 45-corner sweep,
+    and `cli.py`'s bare-`Exception` guard cited that as its third example.
+    (Enumerating exception types is guessing — and that list losing a member is the
+    proof.) Zero shipped specs are affected: all **210** criteria across the 14
+    benchmark specs are `>=` or `<=`.
 - `area_limits.py` — a deterministic gate run before every tuning proposal is
   applied: rejects (with retryable feedback) proposals that grow a component
   beyond a size-tiered limit relative to `netlist_v0`, since there is no PDK here
@@ -312,8 +329,18 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   the four bullets below — measured, and **not** a value.
 - **A margin floor for the area phase was pre-registered, measured over 14
   combinations, and *not adopted* — `AREA_PHASE.margin_floor` stays `None`.** Three
-  rule shapes (F1 fixed relative slack `f`, F2 ratio `r` of the baseline slack, F3
-  corner-measured-where-available) over a locked grid × 2 (deck, grid) pairs.
+  rule shapes were pre-registered (F1 fixed relative slack `f`, F2 ratio `r` of the
+  baseline slack, F3 corner-measured-where-available) but **only two arms were
+  measured**: the locked grid holds F1 and F2 over 2 (deck, grid) pairs, and
+  `rule="f3"` was never run. F3's corner half is what `corner_allowances` already
+  does for *every* rule, and its corner-less half is "whichever of F1/F2 wins" — a
+  choice **rule 3 fired before the measurement could make**. So F3 has no defined
+  meaning today and **`_margin_floor_allowances` raises on it**; it used to resolve
+  it to `f1`, and that choice was arbitrary, not F3's definition. The failure that
+  refusal prevents: the next pre-registration takes F2 `r=0.75` as the winner and
+  wires `MarginFloor("f3", 0.75)`, the old code reads 0.75 as f1's `g`, bandgap
+  demands `vbgout >= 2.1` **and** `<= 0.32`, every criterion is guard-infeasible at
+  baseline, 0 steps are accepted and the run reports a clean `UNCHANGED`.
   **Pre-registration verdict rule 3 fired** — no `(rule, value)` was safe on both
   pairs — so the whole family is rejected and any alternative needs a *new*
   pre-registration; no value was chosen here. The one safe **and** useful point in
@@ -360,6 +387,34 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   value — it means no criterion's slack was computed at all. This is recorded
   **independently of whether a floor is ever adopted**; with rule 3 fired it is the
   *only* observation channel there is.
+  - **`tightest_slack` is the *landed deck's* minimum, not the run's**, and the
+    pre-registered sentence has two clauses that live in two different places. The
+    clause it satisfies is the second ("at the end of the run leave the minimum and
+    its criterion name in the result and the report"); the first ("record every
+    criterion's relative slack **after each accepted step**") is the `{label}_step`
+    event's `criteria_slack`. They diverge in a configuration this repo has already
+    measured: bandgap's objective phase accepts 10 steps, the confirmation sweep
+    fails, bisection lands on v4 — `tightest_slack` describes v4 while v10, which
+    was tighter, exists only in the step events. `criteria_slack` holds **every**
+    criterion (no NaN filtering, unlike `_tightest_slack`, which drops NaN out of a
+    *min* competition), and is `None` on a step that was not accepted — the key is
+    written on every step event so "not accepted" and "the instrumentation is gone"
+    differ.
+- **Nothing recorded that a floor was in force until it did, and `f1` is the
+  reason.** For `f1` the resulting allowances dict is byte-identical to what a
+  declared `guard_band=g` produces, so from `history.jsonl` alone "no floor +
+  `guard_band: 0.2`" and `MarginFloor("f1", 0.2)` were indistinguishable.
+  `{label}_baseline` now carries `margin_floor_rule_requested` and
+  `margin_floor_rule_applied`, **written unconditionally** (`None`/`None` when no
+  floor was supplied) for the same reason `tuning_retries` and `corner_seed` are.
+  **The asymmetry between the two fields is the whole signal**: a floor handed to a
+  corner-capable run is never consulted (measured allowances beat a guess, by
+  design), and that shows up as `_requested` naming the rule while `_applied` is
+  `None`. Without it a follow-up asking "does the floor still help where corners
+  *are* measurable" gets a result identical to no floor and concludes the floor is
+  a no-op at corners, with nothing to contradict it. The rule name is still read in
+  exactly one place — `_margin_floor_allowances` returns it alongside the
+  allowances rather than letting the log site re-read `floor.rule`.
 - **The accept rule deliberately does NOT reuse `verify_post`**: that contract is
   "roll back if regressed", and a good optimization step consumes margin on
   purpose. A step is kept only if every criterion still passes with its guarded

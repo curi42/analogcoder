@@ -2,7 +2,15 @@
 
 측정 2026-08-02. 사전 등록:
 `2026-08-02-area-phase-guard-measurement-design.md` (커밋 `295d309`, 런보다 먼저).
-스크립트: `scripts/area_guard_measurement.py`.
+스크립트: `scripts/area_guard_measurement.py`, **커밋 `a9a1e1f` 시점의 것**
+(런과 같은 커밋). **그 경로의 오늘 내용은 다른 프로그램이다** — 후속
+사전 등록(`2026-08-02-area-phase-margin-floor-design.md`)의 14조합 격자를
+도는 프로그램으로 통째로 바뀌었고, `run_one`이 언제나 `MarginFloor`를
+만들고 `main`이 `GRID` 밖의 규칙을 거절하므로 **하한 없는 모드가 없다**.
+즉 아래의 대조군 런 A는 오늘의 tip에서는 재현되지 않는다 — `a9a1e1f`
+(또는 이 브랜치의 분기점 `cdbc861`)의 파일로 돌려야 한다. 경로를 조용히
+고쳐 쓰지 않고 이렇게 적는 이유는, 아래 표의 숫자가 그 프로그램의
+출력이지 오늘 그 이름을 가진 프로그램의 출력이 아니기 때문이다.
 
 ## 판정: **되돌린다 (REVERT)**
 
