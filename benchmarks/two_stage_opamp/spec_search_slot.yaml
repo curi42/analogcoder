@@ -1,0 +1,92 @@
+# 조합 스텝 탐색(compound-step-search) 슬롯 C 검증 슬롯이다. 튜닝 루프
+# 벤치마크가 아니다 — spec_pvt.yaml(45코너)의 사본이고 phase_margin 임계값
+# 하나만 바꿨다: 60.0 -> 30.0. 기준선 실측 phase_margin_deg == 34.5636을
+# 5도 단위로 내림한 값이며(사전 등록 규칙, 결과를 보고 고치지 않음), 이
+# 기준선이 모든 기준을 통과하게 만드는 것이 유일한 목적이다. 회로·소자·
+# 노브 33개·결합 구조는 출하 스펙과 동일하다. 이 슬롯에서 나온 면적 절감률을
+# 출하 스펙의 성능으로 인용하지 말 것.
+# 배경: docs/superpowers/specs/2026-08-02-compound-step-search-design.md
+circuit_name: two_stage_opamp
+pvt_corners:
+  process: [tt, ss, ff, sf, fs]
+  voltage: [1.62, 1.8, 1.98]
+  temperature: [-40, 27, 125]
+testbenches:
+  - name: ac_loop_gain
+    netlist: netlist.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      set units=degrees
+      ac dec 20 1 100meg
+      meas ac gain_db find vdb(vout) at=1
+      meas ac ugbw_hz when vdb(vout)=0
+      meas ac phase_margin_deg find vp(vout) when vdb(vout)=0
+      .endc
+    criteria:
+      - name: dc_gain
+        measurement: gain_db
+        operator: ">="
+        threshold: 60.0
+        unit: dB
+      - name: unity_gain_bandwidth
+        measurement: ugbw_hz
+        operator: ">="
+        threshold: 1500000.0
+        unit: Hz
+      - name: phase_margin
+        measurement: phase_margin_deg
+        operator: ">="
+        threshold: 30.0
+        unit: deg
+
+  - name: psr_plus
+    netlist: netlist_psr_plus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_plus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_plus
+        measurement: psr_plus_db
+        operator: "<="
+        threshold: -10.0
+        unit: dB
+
+  - name: psr_minus
+    netlist: netlist_psr_minus.cir
+    analyses: ["ac"]
+    control_block: |
+      .control
+      ac dec 20 1 100meg
+      meas ac psr_minus_db find vdb(vout) at=1
+      .endc
+    criteria:
+      - name: psr_minus
+        measurement: psr_minus_db
+        operator: "<="
+        threshold: 0.0
+        unit: dB
+
+  - name: settling_time
+    netlist: netlist_settling.cir
+    analyses: ["tran"]
+    control_block: |
+      .control
+      tran 1n 6u
+      meas tran t_hi_last WHEN v(vout)=0.70398 CROSS=LAST
+      meas tran t_lo_last WHEN v(vout)=0.69698 CROSS=LAST
+      .endc
+    criteria:
+      - name: settling_time_hi
+        measurement: t_hi_last
+        operator: "<="
+        threshold: 0.0000028
+        unit: s
+      - name: settling_time_lo
+        measurement: t_lo_last
+        operator: "<="
+        threshold: 0.0000028
+        unit: s
