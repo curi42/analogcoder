@@ -2,8 +2,9 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from analogcoder.agents.backend import AgentExecutionError
-from analogcoder.area import total_area
+from analogcoder.area import DEFAULT_AREA_MODEL, total_area
 from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
+from analogcoder.area_ranking import rank_by_area_gain
 from analogcoder.judge_tools import (
     corner_allowances,
     evaluate_criteria,
@@ -25,6 +26,65 @@ from analogcoder.structure_view import render_netlist, render_structure, select_
 
 MAX_OPTIMIZE_STEPS = 20
 STEP_RATIO = 0.9
+
+
+class _AreaObjective:
+    """목적이 **파생 면적**이라는 표식.
+
+    문자열이 아닌 이유가 이 클래스의 전부다: 목적 이름은 측정값 딕셔너리의
+    키이므로 문자열 표식은 언젠가 같은 이름의 진짜 measure와 부딪힌다."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "area"
+
+
+AREA_OBJECTIVE = _AreaObjective()
+
+
+def _objective_value(
+    objective: "str | _AreaObjective", measurements: dict, derived_area: float | None
+) -> float | None:
+    """목적값 하나를 고른다. 면적 표식이면 파생값, 이름이면 측정값이다."""
+    if objective is AREA_OBJECTIVE:
+        return derived_area
+    return measurements.get(objective)
+
+
+@dataclass(frozen=True)
+class PhaseConfig:
+    """최적화 단계 하나의 설정. **분기가 아니라 데이터다.**
+
+    단계가 둘이 되는 순간 `if 면적단계:`가 오라클·수락·이벤트 세 곳에
+    흩어지고, 셋 중 하나를 고치지 않으면 조용히 갈라진다. 이 저장소가
+    compose.py가 netlist.py의 규칙을 손으로 베껴 양방향으로 갈라진 것으로
+    이미 겪은 모양이다."""
+
+    # 문자열이면 측정값 이름, AREA_OBJECTIVE면 파생 면적.
+    objective: "str | _AreaObjective"
+    # None이면 예산 검사를 하지 않는다.
+    area_budget: float | None
+    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다.
+    guard_band: float | None
+    # 이벤트 이름 접두사. 기존 optimize_*를 읽는 쪽이 새 단계의 이벤트를
+    # 오늘의 것으로 오독하면 안 된다.
+    label: str
+
+
+def phase_from_spec(optimize) -> PhaseConfig:
+    """오늘의 전류 단계를 데이터로. 흐르는 값이 한 글자도 다르지 않다."""
+    return PhaseConfig(
+        objective=optimize.objective,
+        area_budget=optimize.area_budget,
+        guard_band=optimize.guard_band,
+        label="optimize",
+    )
+
+
+AREA_PHASE = PhaseConfig(
+    objective=AREA_OBJECTIVE, area_budget=None, guard_band=None, label="optimize_area"
+)
 
 
 @dataclass
@@ -247,6 +307,7 @@ def _result(
     guard_infeasible: list[str] | None = None,
     area_coverage: dict | None = None,
     final_criteria: list[dict] | None = None,
+    unguarded_criteria: list[str] | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -300,6 +361,26 @@ def _result(
         # 그때 cli.py는 메인 루프의 판정을 그대로 둔다.
         "final_criteria": final_criteria,
         "final_netlist_paths": state.current_netlist_paths(),
+        # 여유분 없이(guard_band_violations가 이름 부재를 0.0으로 읽는 채로)
+        # 판정된 기준의 이름. `{label}_baseline` 이벤트에만 있던 사실을 여기로
+        # 끌어온다 - history.jsonl만 읽는 소비자는 있지만 result.json/report.md만
+        # 읽는 소비자는 이 위험을 볼 방법이 없었다. 계획 문서("스펙에 없던 결정
+        # 하나")가 "보고서는 무방비 기준의 개수를 적는다"고 값을 명시했는데
+        # 그 값이 코드 어디에도 없었던 것이 최종 리뷰의 Critical이다.
+        #
+        # **`None`을 `[]`로 접지 않는다 - 여기서는 guard_infeasible과 같은
+        # 관례를 쓰면 안 된다.** guard_infeasible은 report.py가 `if
+        # area.get("guard_infeasible"):`로 진실성 검사만 하므로 `[]`와 `None`이
+        # 렌더링에서 똑같이 "아무것도 안 그림"이 된다 - 무해한 붕괴다. 이 필드는
+        # 다르다: `_unguarded_summary`는 **빈 리스트에도 긍정 문장**("모든 기준이
+        # 방비됨")을 그리도록 설계됐다 - 그것이 Critical 수정의 핵심이었다.
+        # `None`을 `[]`로 접으면 "allowances가 아예 없어서 잴 수 없었다"(이
+        # 단계가 `_search`에 들어가기도 전에, 또는 도중에 터진 경우 -
+        # `run_optimization`/`run_area_optimization`의 except 핸들러, REFUSED
+        # 경로)와 "쟀고 전부 방비됐다"가 같은 긍정 문장으로 렌더된다. 그 문장은
+        # 거짓이다: 어떤 기준도 어떤 allowance와도 비교되지 않았다. `0`과
+        # `unknown`은 이 저장소에서 한 칸을 나눠 쓰지 않는다.
+        "unguarded_criteria": list(unguarded_criteria) if unguarded_criteria is not None else None,
     }
 
 
@@ -330,7 +411,8 @@ def _rollback_to(state, canonical_name: str, index: int) -> None:
 
 
 def _bisect_last_passing(
-    state, agents: OptimizerAgents, canonical_name: str, anchor_index: int, anchor_sweep: dict
+    state, agents: OptimizerAgents, canonical_name: str, anchor_index: int, anchor_sweep: dict,
+    label: str,
 ) -> tuple[int, dict]:
     """앵커와 현재 사이에서 코너를 통과하는 **마지막** 버전을 찾아 거기 착지한다.
 
@@ -350,7 +432,7 @@ def _bisect_last_passing(
     while hi - lo > 1:
         mid = (lo + hi) // 2
         sweep, failure = _run_sweep(agents.verify_corners, _texts_at(state, mid))
-        state.log_event("optimize_bisect_probe", _sweep_event(sweep, failure, version=mid))
+        state.log_event(f"{label}_bisect_probe", _sweep_event(sweep, failure, version=mid))
         if sweep is not None and sweep.get("overall_pass"):
             lo = mid
             passing[lo] = sweep
@@ -502,7 +584,15 @@ def accept_step(
         # 붙은 채로 멈추면 코너와 모델 변동에서 무너진다.
         return False, "; ".join(evaluation.violations)
     if evaluation.objective is None:
-        return False, f"objective {objective_name!r} is not among the measurements"
+        # "측정값에 없다"는 이름 있는 목적(전류 단계)에만 참이다 - 면적 단계의
+        # 목적은 파생값이라 애초에 measurements를 보지 않는다
+        # (`_objective_value`). 이 함수는 문자열이 된 objective_name만 받으므로
+        # 어느 쪽인지 안에서 가를 수 없다 - 두 경우 모두에서 참인 문장으로
+        # 남긴다.
+        return False, (
+            f"objective {objective_name!r} could not be evaluated for this "
+            f"candidate (no value among the measurements, and no derivable value)"
+        )
     if evaluation.objective >= best_objective:
         return False, (
             f"objective {evaluation.objective:g} is not below the current best {best_objective:g}"
@@ -527,6 +617,7 @@ class SearchOracle:
         baseline_components: dict,
         area_before: float,
         allowances: dict[str, float],
+        phase: PhaseConfig,
     ) -> None:
         self._spec = spec
         self._state = state
@@ -535,6 +626,7 @@ class SearchOracle:
         self._baseline_components = baseline_components
         self._area_before = area_before
         self._allowances = allowances
+        self._phase = phase
         self._simulations = 0
 
     @property
@@ -618,13 +710,14 @@ class SearchOracle:
         # 루프를 감당 가능하게 만드는 전부다 - 예산 초과는 시뮬레이션 앞에서
         # 걸러진다.
         evaluation.area = total_area(new_texts[self._canonical_name]).area
-        within, budget_reason = area_within_budget(
-            evaluation.area, self._area_before, self._spec.optimize.area_budget
-        )
-        if not within:
-            evaluation.blocked = budget_reason
-            evaluation.blocked_by = "area_budget"
-            return evaluation
+        if self._phase.area_budget is not None:
+            within, budget_reason = area_within_budget(
+                evaluation.area, self._area_before, self._phase.area_budget
+            )
+            if not within:
+                evaluation.blocked = budget_reason
+                evaluation.blocked_by = "area_budget"
+                return evaluation
 
         self._simulations += 1
         step_sim, sim_failure = await _run_simulation(self._agents.simulate, new_texts, self._spec)
@@ -643,7 +736,9 @@ class SearchOracle:
         evaluation.violations = guard_band_violations(
             evaluation.measurements, self._spec.all_criteria, self._allowances
         )
-        evaluation.objective = evaluation.measurements.get(self._spec.optimize.objective)
+        evaluation.objective = _objective_value(
+            self._phase.objective, evaluation.measurements, evaluation.area
+        )
         return evaluation
 
 
@@ -679,6 +774,7 @@ class SearchRun:
         objective_before: float,
         records: dict,
         max_steps: int,
+        phase: PhaseConfig,
     ) -> None:
         self.knobs = list(knobs)
         self._records = records
@@ -694,6 +790,7 @@ class SearchRun:
         self._oracle = oracle
         self._canonical_name = canonical_name
         self._max_steps = max_steps
+        self._phase = phase
         self._steps = 0
 
     # 아래 넷은 **읽기 전용**이다. 전략이 대입할 수 있으면 "제안만 한다"는
@@ -754,15 +851,12 @@ class SearchRun:
         둘 다 그냥 optimize_step이 멈추는 모양이라 구별되지 않았다 - 그래서
         자기 이벤트를 가진다."""
         if self._steps >= self._max_steps:
-            self._state.log_event(
-                "optimize_budget_exhausted",
-                {
-                    "steps": self._steps,
-                    "limit": self._max_steps,
-                    "refdes": knob.refdes,
-                    "param": knob.param,
-                },
-            )
+            self._state.log_event(f"{self._phase.label}_budget_exhausted", {
+                "steps": self._steps,
+                "limit": self._max_steps,
+                "refdes": knob.refdes,
+                "param": knob.param,
+            })
             return False
         self._steps += 1
         return True
@@ -818,7 +912,7 @@ class SearchRun:
         수락을 뒤집는 권한과 같고, 그것을 주면 이 분리가 무의미해진다."""
         evaluation = await self._oracle.evaluate(steps)
         accepted, reason = accept_step(
-            evaluation, self._best_objective, self._spec.optimize.objective
+            evaluation, self._best_objective, str(self._phase.objective)
         )
 
         head = steps[0]
@@ -840,7 +934,7 @@ class SearchRun:
             # 탐색기가 붙었을 때, 이벤트의 스칼라 필드만 보면 나머지 변경이
             # 통째로 안 보이므로 목록을 함께 남긴다.
             event["changes"] = evaluation.changes
-        self._state.log_event("optimize_step", event)
+        self._state.log_event(f"{self._phase.label}_step", event)
 
         if accepted:
             self._accepted += 1
@@ -900,7 +994,7 @@ class SearchRun:
         self._rejected += 1
 
     def _reject(self, event: dict, code: str) -> None:
-        self._state.log_event("optimize_step", event)
+        self._state.log_event(f"{self._phase.label}_step", event)
         self._count_rejection(code)
 
 
@@ -959,6 +1053,7 @@ async def _knob_ranking(
     baseline_verdict: dict,
     allowances: dict[str, float],
     objective_name: str,
+    label: str,
 ) -> list[dict]:
     """노브 순위. 주입된 것이 있으면 그것, 없으면 에이전트를 부른다.
 
@@ -969,15 +1064,12 @@ async def _knob_ranking(
     남긴다 - 남기지 않으면 "고정 순위로 돈 실행"과 "에이전트가 마침 같은
     순위를 낸 실행"이 history.jsonl에서 같은 모양이 된다."""
     if agents.knob_ranking is not None:
-        state.log_event(
-            "optimize_proposal",
-            {
-                "objective": objective_name,
-                "source": "fixed",
-                "candidates": list(agents.knob_ranking),
-                "overall_reasoning": "fixed knob ranking supplied by the caller (no agent call)",
-            },
-        )
+        state.log_event(f"{label}_proposal", {
+            "objective": objective_name,
+            "source": "fixed",
+            "candidates": list(agents.knob_ranking),
+            "overall_reasoning": "fixed knob ranking supplied by the caller (no agent call)",
+        })
         return list(agents.knob_ranking)
 
     structure = derive_structure(start_text, spec.circuit_name)
@@ -992,9 +1084,7 @@ async def _knob_ranking(
         for entry in baseline_verdict["criteria"]
     ]
     proposal = await agents.propose(structure_view, margins, objective_name, netlist_view)
-    state.log_event(
-        "optimize_proposal", {"objective": objective_name, "source": "agent", **proposal}
-    )
+    state.log_event(f"{label}_proposal", {"objective": objective_name, "source": "agent", **proposal})
     return list(proposal.get("candidates", []))
 
 
@@ -1008,6 +1098,7 @@ async def _search(
     objective_before: float,
     area_before: float,
     allowances: dict[str, float],
+    phase: PhaseConfig,
 ) -> dict:
     """탐색을 **조립**한다. 어떤 후보를 시도할지는 여기서 정하지 않는다.
 
@@ -1029,7 +1120,7 @@ async def _search(
     이분 탐색이 중간 버전에 착지했을 때, 마지막 버전이 아니라 착지한 버전의
     수치를 보고해야 하기 때문이다. 기준 판정(criteria)도 같은 이유로 여기
     들어간다 - 리포트가 설명해야 하는 것은 돌려주는 덱이다."""
-    objective_name = spec.optimize.objective
+    objective_name = str(phase.objective)
     anchor_index = _version_index(state, canonical_name)
     baseline_verdict = evaluate_criteria(baseline_measurements, spec.all_criteria)
     records = {
@@ -1045,10 +1136,10 @@ async def _search(
     baseline_components = index_baseline_components(start_text)
 
     ranking = await _knob_ranking(
-        spec, state, agents, start_text, baseline_verdict, allowances, objective_name
+        spec, state, agents, start_text, baseline_verdict, allowances, objective_name, phase.label
     )
     oracle = SearchOracle(
-        spec, state, agents, canonical_name, baseline_components, area_before, allowances
+        spec, state, agents, canonical_name, baseline_components, area_before, allowances, phase
     )
     run = SearchRun(
         spec,
@@ -1061,6 +1152,7 @@ async def _search(
         # 모듈 전역을 **여기서** 읽는다 - 테스트가 monkeypatch로 낮춰 예산
         # 소진 경로를 고정한다. 클래스 기본값으로 굳히면 그 경로가 사라진다.
         MAX_OPTIMIZE_STEPS,
+        phase,
     )
     strategy = agents.search_strategy or coordinate_descent
     await strategy(run)
@@ -1073,7 +1165,13 @@ async def _search(
     }
 
 
-async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents) -> dict:
+async def run_optimization(
+    netlist_texts: dict[str, str],
+    spec,
+    state,
+    agents: OptimizerAgents,
+    phase: "PhaseConfig | None" = None,
+) -> dict:
     """최적화 단계의 공개 진입점. 어떤 실패도 결과를 크래시로 바꾸지 않는다.
 
     _run_simulation과 _run_sweep은 각자 예외를 삼키지만, 이 모듈의 **유일한
@@ -1099,10 +1197,18 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
     뒤에야 결과를 돌려준다 - "최적화는 시작보다 나쁜 결과를 내지 않는다"."""
     progress: dict = {}
     try:
-        return await _optimize(netlist_texts, spec, state, agents, progress)
+        return await _optimize(netlist_texts, spec, state, agents, progress, phase)
     except (AgentExecutionError, ValueError, OSError) as exc:
         reason = f"{type(exc).__name__}: {exc}"
-        state.log_event("optimize_failed", {"reason": reason})
+        # _optimize가 phase를 내부에서 resolve했을 수도 있는 지점(spec.optimize
+        # 로부터)에서 터졌을 수 있으므로, 여기서도 같은 규칙으로 label을 다시
+        # 구한다 - 그러지 않으면 면적 단계의 실패가 "optimize_failed"라는 전류
+        # 단계 이름으로 잘못 남는다.
+        label = (
+            phase.label if phase is not None
+            else (phase_from_spec(spec.optimize).label if spec.optimize is not None else "optimize")
+        )
+        state.log_event(f"{label}_failed", {"reason": reason})
         if progress.get("safe_index") is not None:
             _rollback_to(state, spec.canonical.name, progress["safe_index"])
         area_before = progress.get("area_before", 0.0)
@@ -1113,7 +1219,8 @@ async def run_optimization(netlist_texts: dict[str, str], spec, state, agents: O
 
 
 async def _optimize(
-    netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict
+    netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict,
+    phase: "PhaseConfig | None",
 ) -> dict:
     """이미 모든 기준을 통과한 회로의 남은 마진을 목적값에 쓰는 결정론적 탐색.
 
@@ -1139,38 +1246,73 @@ async def _optimize(
     start_text = netlist_texts[canonical_name]
     start_area = total_area(start_text)
     area_before = start_area.area
+
+    if phase is None:
+        # 명시적 phase가 없으면 spec.optimize에서 오늘의 전류 단계를 만든다 -
+        # spec.optimize도 없으면 정말 할 일이 없다는 뜻이라 그때만 SKIPPED다.
+        # 면적 단계는 언제나 phase를 명시적으로 들고 오므로 여기를 타지 않는다.
+        #
+        # **area_coverage를 계산하기 전에 phase를 정한다.** budget_enforced가
+        # phase.area_budget을 읽어야 "예산이 있었지만 안 걸렸다"와 "예산이
+        # 아예 없다"를 가를 수 있다 - phase 없이 area_before > 0 만으로 정하면
+        # AREA_PHASE(area_budget=None)에서도 area_before가 양수라는 이유만으로
+        # "예산이 걸렸다"고 말하게 된다. 그 구분이 이 필드가 존재하는 이유라고
+        # 아래 area_coverage 주석이 말한다.
+        if spec.optimize is None:
+            state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
+            return _result(
+                "SKIPPED", state, None, None, area_before, area_before,
+                area_coverage={
+                    "counted": start_area.counted,
+                    "skipped": start_area.skipped,
+                    "budget_enforced": False,
+                    "reason": "no optimize phase ran (spec declares no optimize block)",
+                },
+            )
+        phase = phase_from_spec(spec.optimize)
+
     # 면적 예산이 실제로 걸리는지를 여기서 한 번 정하고, 그 사실을 이력과
     # 결과 양쪽에 싣는다. AreaTotal이 counted/skipped를 드러내는 이유가 정확히
     # 이것인데(docstring), 지금까지 이 두 값을 읽는 곳이 자기 테스트 말고는
-    # 없었다. area_before가 0이면 아래의 `area_before > 0` 조건 때문에 예산
-    # 비교가 통째로 꺼지는데, 그것이 실제로 도달하는 경우다: 래퍼 셀
-    # 덱에서는 인스턴스마다 wn이 달라 build_param_envs가 그 이름을 버리고
-    # (tests/unit/test_area_total.py가 `counted == 0, skipped == 2`로 고정),
-    # 그러면 해소되는 소자가 하나도 없다.
+    # 없었다. area_before가 0이면 예산 비교가 통째로 꺼지는데, 그것이 실제로
+    # 도달하는 경우다: 래퍼 셀 덱에서는 인스턴스마다 wn이 달라
+    # build_param_envs가 그 이름을 버리고(tests/unit/test_area_total.py가
+    # `counted == 0, skipped == 2`로 고정), 그러면 해소되는 소자가 하나도
+    # 없다. **area_before > 0이어도 phase.area_budget이 None이면 마찬가지로
+    # 꺼진다** - `area_within_budget`은 `self._phase.area_budget is not None`일
+    # 때만 불린다(SearchOracle.evaluate). AREA_PHASE가 정확히 이 경우다: 목적
+    # 자체가 면적이라 accept_step의 "목적이 내려가야 한다"는 요구가 이미 면적을
+    # 단조 감소시키므로 별도 비율 상한을 켜 둬도 구조적으로 발화할 수 없다.
     #
     # 이 저장소에서 게이트가 조용히 무력화된 것이 세 번이고 세 번 다 실행
     # 로그에 보이지 않았다. 네 번째가 되지 않게 사실을 적는다.
-    area_coverage = {
-        "counted": start_area.counted,
-        "skipped": start_area.skipped,
-        "budget_enforced": area_before > 0,
-        "reason": None if area_before > 0 else (
+    if area_before <= 0:
+        budget_enforced = False
+        area_reason = (
             f"the area budget is not enforced: no device's w/l/m could be resolved in "
             f"{canonical_name} ({start_area.counted} counted, {start_area.skipped} skipped), "
             f"so the starting area is 0 and every candidate's area ratio is undefined"
-        ),
+        )
+    elif phase.area_budget is None:
+        budget_enforced = False
+        area_reason = (
+            f"the area budget is not enforced: phase {phase.label!r} declares no area "
+            f"budget (phase.area_budget is None)"
+        )
+    else:
+        budget_enforced = True
+        area_reason = None
+
+    area_coverage = {
+        "counted": start_area.counted,
+        "skipped": start_area.skipped,
+        "budget_enforced": budget_enforced,
+        "reason": area_reason,
     }
     progress["area_before"] = area_before
     progress["area_coverage"] = area_coverage
 
-    if spec.optimize is None:
-        state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
-        return _result(
-            "SKIPPED", state, None, None, area_before, area_before,
-            area_coverage=area_coverage,
-        )
-
-    objective_name = spec.optimize.objective
+    objective_name = str(phase.objective)
 
     # state가 인자와 같은 덱을 들고 있는지 맞춘다. 루프는 매 단계 state에서
     # 현재 텍스트를 다시 읽고 거절 시 state.rollback()으로 되돌리므로, 둘이
@@ -1183,37 +1325,63 @@ async def _optimize(
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
-    state.log_event(
-        "optimize_baseline",
-        {
+
+    def _unguarded(allowances: dict[str, float]) -> list[str]:
+        """이 allowances로 판정될 때 여유분이 아예 없는 기준의 이름.
+
+        guard_band_violations가 없는 이름을 `allowances.get(name, 0.0)`으로
+        읽는 것과 정확히 같은 기준이어야 한다 - 여기서 다른 기준을 쓰면
+        "무방비"라는 이름표가 실제로 판정에 쓰인 여유분과 어긋난다.
+        `_baseline_event`와 `_result`가 이 하나의 함수를 공유하는 이유가
+        그것이다."""
+        return [c.name for c in spec.all_criteria if c.name not in allowances]
+
+    def _baseline_event(allowances: dict[str, float]) -> dict:
+        """`{label}_baseline` 페이로드. unguarded_criteria는 그 호출 시점까지
+        **실제로 확정된** allowances에서 계산한다 - 상수가 아니다.
+
+        이 함수를 세 지점(목적값 미확보/진입 스윕 실패/정상 경로)에서 각각
+        다른 allowances로 부른다: 각각 {}, ratio, ratio+corner_allowances다.
+        상수 하나(예: 스펙의 전체 기준 이름)를 박아 넣으면 실행마다 같은 값이
+        나와 "이 로그가 아무것도 안 할 때 어떻게 보이는가"에 답할 수 없고,
+        코너 대응 실행에서는 진입 스윕이 대부분의 기준을 실측 여유분으로
+        덮으므로 그 상수는 과대 보고가 아니라 **틀린** 이름표가 된다 -
+        "무방비"라고 말하면서 실은 방비돼 있다. 이름이 없으면
+        guard_band_violations가 그 이름을 여유분 0.0으로 읽는다 - 그것이
+        "무방비"의 정의다."""
+        return {
             "objective": objective_name,
             "area_before": area_before,
             "area_counted": area_coverage["counted"],
             "area_skipped": area_coverage["skipped"],
             "area_budget_enforced": area_coverage["budget_enforced"],
             "area_reason": area_coverage["reason"],
+            "unguarded_criteria": _unguarded(allowances),
             **(sim_result or {"failure": sim_failure}),
-        },
-    )
+        }
+
     baseline_measurements = sim_result["measurements"] if sim_result else {}
-    objective_before = baseline_measurements.get(objective_name)
+    objective_before = _objective_value(phase.objective, baseline_measurements, area_before)
 
     if objective_before is None:
         # 목적값을 못 재면(또는 기준선 시뮬레이션 자체가 실패하면) 개선 여부를
-        # 판정할 수 없다. 통과한 설계를 그대로 둔다.
-        state.log_event(
-            "optimize_step",
-            {
-                "refdes": None, "param": None, "before": None, "after": None,
-                "objective": None, "area": area_before, "accepted": False,
-                "gate": None,
-                "reason": sim_failure
-                or f"objective {objective_name!r} is not among the measurements",
-            },
-        )
+        # 판정할 수 없다. 통과한 설계를 그대로 둔다. allowances는 아직 하나도
+        # (비율도 코너도) 계산되지 않았으므로, 이 시점에 정직하게 말할 수 있는
+        # 것은 "전 기준이 무방비"뿐이다.
+        state.log_event(f"{phase.label}_baseline", _baseline_event({}))
+        state.log_event(f"{phase.label}_step", {
+            "refdes": None, "param": None, "before": None, "after": None,
+            "objective": None, "area": area_before, "accepted": False,
+            "gate": None,
+            "reason": sim_failure
+            or (
+                f"objective {objective_name!r} could not be evaluated at the "
+                f"baseline (no value among the measurements, and no derivable value)"
+            ),
+        })
         return _result(
             "UNCHANGED", state, None, None, area_before, area_before,
-            area_coverage=area_coverage,
+            area_coverage=area_coverage, unguarded_criteria=_unguarded({}),
         )
 
     # 코너를 잴 수단이 있는가. 스펙에 코너가 없거나 스윕 콜러블이 없으면 코너
@@ -1223,6 +1391,14 @@ async def _optimize(
     corner_capable = spec.pvt_corners is not None and agents.verify_corners is not None
     anchor_index = _version_index(state, canonical_name)
     entry_sweep = None
+    # None이면 비율 폴백이 없다 - 면적 단계처럼 선언 없이 도는 phase는 없는
+    # 숫자를 지어내지 않는다. 전류 단계는 언제나 guard_band를 들고 있으므로
+    # 이 삼항이 흐르는 값을 바꾸지 않는다.
+    ratio = (
+        ratio_allowances(spec.all_criteria, phase.guard_band)
+        if phase.guard_band is not None
+        else {}
+    )
 
     if corner_capable:
         # 진입 스윕. 추가 비용이 아니라 **앵커**다: "실패하면 시작점으로
@@ -1230,16 +1406,18 @@ async def _optimize(
         entry_sweep, entry_failure = _run_sweep(
             agents.verify_corners, state.current_netlist_texts()
         )
-        state.log_event(
-            "optimize_entry_sweep", _sweep_event(entry_sweep, entry_failure, version=anchor_index)
-        )
+        state.log_event(f"{phase.label}_entry_sweep",
+                         _sweep_event(entry_sweep, entry_failure, version=anchor_index))
         if entry_sweep is None or not entry_sweep.get("overall_pass"):
             # 코너를 못 버티는 설계에서 마진을 더 깎을 이유가 없다. 되돌아갈
-            # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다.
+            # 안전한 지점이 아예 없으므로 한 단계도 밟지 않는다. corner_allowances는
+            # 돌지 않았으므로 이 시점에 정직하게 아는 여유분은 ratio뿐이다.
+            state.log_event(f"{phase.label}_baseline", _baseline_event(ratio))
             return _result(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,
                 corner_failure=entry_failure, area_coverage=area_coverage,
+                unguarded_criteria=_unguarded(ratio),
             )
         # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
         # 읽는다. reference는 measurement로, 스윕은 기준 이름으로 색인되므로
@@ -1270,11 +1448,16 @@ async def _optimize(
         # 추측이 구멍을 막는다. 고칠 자리는 여기(이음매)이지 Task 3의 생략
         # 규칙이 아니다.
         allowances = {
-            **ratio_allowances(spec.all_criteria, spec.optimize.guard_band),
+            **ratio,
             **corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria),
         }
     else:
-        allowances = ratio_allowances(spec.all_criteria, spec.optimize.guard_band)
+        allowances = ratio
+
+    # allowances가 이 실행이 실제로 쓸 최종값으로 확정되는 지점이 여기다 -
+    # 코너 대응이면 실측이 섞이고, 아니면 비율뿐이다. baseline 이벤트를 더
+    # 일찍 남기면 아직 모르는 것을 안다고 말하게 되므로 여기서 남긴다.
+    state.log_event(f"{phase.label}_baseline", _baseline_event(allowances))
 
     # **기준선이 자기 가드밴드를 지키는가.** 지키지 못하면 어떤 후보도 수락될
     # 수 없다: 수락 규칙이 매 단계 이 같은 검사를 돌리기 때문이다.
@@ -1298,19 +1481,16 @@ async def _optimize(
     )
     # 조건 없이 남긴다. 위반이 있을 때만 남기면 "검사했고 문제없었다"와
     # "검사 자체가 사라졌다"가 history.jsonl에서 같은 모양이 된다.
-    state.log_event(
-        "optimize_guard_infeasible",
-        {
-            "infeasible": bool(guard_infeasible),
-            "violations": guard_infeasible,
-            "allowances": allowances,
-            "measured_allowances": corner_capable,
-        },
-    )
+    state.log_event(f"{phase.label}_guard_infeasible", {
+        "infeasible": bool(guard_infeasible),
+        "violations": guard_infeasible,
+        "allowances": allowances,
+        "measured_allowances": corner_capable,
+    })
 
     outcome = await _search(
         spec, state, agents, canonical_name, start_text, baseline_measurements,
-        objective_before, area_before, allowances,
+        objective_before, area_before, allowances, phase,
     )
     accepted = outcome["accepted"]
     rejected = outcome["rejected"]
@@ -1333,6 +1513,9 @@ async def _optimize(
             rejected_by_reason=by_reason, pvt_sweep=sweep,
             corner_failure=corner_failure, guard_infeasible=guard_infeasible,
             area_coverage=area_coverage, final_criteria=record.get("criteria"),
+            # 이 실행이 실제로 판정에 쓴 allowances에서 잰다 - 진입 스윕 이후로
+            # 고정된 값이므로 탐색 결과가 어떤 버전에 착지하든 같다.
+            unguarded_criteria=_unguarded(allowances),
         )
 
     if not corner_capable:
@@ -1350,9 +1533,8 @@ async def _optimize(
     confirm_sweep, confirm_failure = _run_sweep(
         agents.verify_corners, state.current_netlist_texts()
     )
-    state.log_event(
-        "optimize_confirm_sweep", _sweep_event(confirm_sweep, confirm_failure, version=end_index)
-    )
+    state.log_event(f"{phase.label}_confirm_sweep",
+                     _sweep_event(confirm_sweep, confirm_failure, version=end_index))
     if confirm_sweep is not None and confirm_sweep.get("overall_pass"):
         return _final("OPTIMIZED", end_index, accepted, rejected, confirm_sweep)
 
@@ -1360,14 +1542,12 @@ async def _optimize(
     # 이미 구간 안에 있고, 통과하는 마지막 지점을 이분 탐색으로 찾는 편이
     # 상한이 있다. 최악이어도 앵커에 착지하므로 시작보다 나빠질 수 없다.
     landed, landed_sweep = _bisect_last_passing(
-        state, agents, canonical_name, anchor_index, entry_sweep
+        state, agents, canonical_name, anchor_index, entry_sweep, phase.label
     )
     survived = landed - anchor_index
-    state.log_event(
-        "optimize_bisect_result",
-        {"version": landed, "anchor": anchor_index, "end": end_index,
-         "steps_kept": survived, "steps_walked_back": accepted - survived},
-    )
+    state.log_event(f"{phase.label}_bisect_result",
+                     {"version": landed, "anchor": anchor_index, "end": end_index,
+                      "steps_kept": survived, "steps_walked_back": accepted - survived})
     # 착지가 앵커면 남은 것이 없다 - 시작 설계를 그대로 돌려준다. 보고하는
     # 수락 수는 **살아남은** 단계 수다: 코너에서 되돌린 단계를 수락으로 세면
     # 결과가 돌려주는 넷리스트를 설명하지 못한다.
@@ -1390,3 +1570,149 @@ async def _optimize(
 # 이 줄이 없으면 SEARCH_STRATEGIES에 `mads`가 없고, scripts/search_ab.py가
 # 이 표만 읽으므로 A/B에서 전략 이름이 조용히 사라진다.
 import analogcoder.mads  # noqa: E402,F401
+
+
+def _area_change(refdes: str, param: str, current: float, integer: bool) -> dict | None:
+    """한 스텝 줄인 변경 dict. 순위 계산에 주입되는 유일한 통로다.
+
+    `_next_value`/`_format_value`를 그대로 쓴다 - 순위가 가정하는 스텝과
+    탐색이 실제로 밟는 스텝이 같아야 한다."""
+    target = _next_value(current, integer, "decrease")
+    if target is None:
+        return None
+    return {
+        "refdes": refdes,
+        "param": param,
+        "old_value": _format_value(current, integer),
+        "new_value": _format_value(target, integer),
+    }
+
+
+def _area_knob_state(
+    netlist_text: str, baseline_components: dict, refdes: str, param: str
+) -> KnobState | None:
+    """면적 순위가 노브 하나를 읽는 법. `SearchOracle.knob_state`와 같은
+    게이트 순서를 쓰지만, `state.current_netlist_texts()`가 아니라 **이
+    함수가 받은 텍스트 하나만** 읽는다.
+
+    면적 단계가 순위를 매길 때 재는 덱과 값을 읽는 덱이 갈라지면 안 된다 -
+    `_optimize`가 탐색을 시작하기 전에 `state.current_netlist_texts() !=
+    netlist_texts`를 확인해 맞추는 이유가 정확히 이것이다. 면적 순위는 그
+    맞춤보다 먼저 도므로, 노브의 현재 값은 인자로 받은 텍스트에서 직접
+    읽어야 한다. state의 텍스트에서 읽으면 순위와 값이 서로 다른 덱을
+    설명하게 되고, 그 어긋남은 조용하다: rank_by_area_gain은
+    apply_changes/refdes 해석의 실패만 unknown으로 삼킬 뿐, 값이 그른 채로
+    성공한 계산은 걸러내지 않는다."""
+    gate, _ = _gate_addressing(netlist_text, {"refdes": refdes, "param": param})
+    if gate is not None:
+        return None
+    component = baseline_components.get(refdes)
+    token = _deck_token(component, param) if component is not None else None
+    if token is None:
+        return None
+    value = _current_value(component, token)
+    if value is None:
+        return None
+    return KnobState(token=token, value=value, integer=is_count_param(component, token))
+
+
+async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agents) -> dict:
+    """면적 최소화 단계. **선언이 필요 없고 LLM을 부르지 않는다.**
+
+    `run_optimization`을 그대로 쓰되 둘을 바꾼다: 단계 설정을 `AREA_PHASE`로
+    주고, 계산한 노브 순위를 `OptimizerAgents.knob_ranking`에 **주입**한다.
+    주입된 순위가 있으면 `_knob_ranking`이 에이전트를 부르지 않으므로 LLM을
+    빼기 위한 새 배선이 필요 없다.
+
+    `counted == 0`에서 REFUSED를 내는 것은 그것이 UNCHANGED와 다른 사실이기
+    때문이다 - "쟀는데 못 줄였다"와 "잴 수 없었다"를 합치면 면적 모델이 이
+    덱에서 아무것도 못 읽는다는 것을 아무도 모른다.
+
+    준비 구간(구조 유도, 노브 값 읽기, 순위 계산) 전체를 `run_optimization`의
+    호출 **앞에** 두면서도 같은 예외 계약 아래 둔다 - "최적화에는 FAIL이
+    없다"는 이 모듈 전체의 약속이고, `run_optimization`은 자기 안에서 터진
+    실패만 잡는다. 이 준비 구간에서 예외가 새어 나가면 이미 PASS한 실행이
+    result.json도 report.md도 없이 트레이스백으로 끝난다 - 이 저장소가 이미
+    기록한 실패 모양이다. REFUSED도 나머지 결과와 같은 모양(`_result`)으로
+    돌려준다 - 그러지 않으면 `steps_accepted`/`final_netlist_paths`를 읽는
+    소비자가 조용히 기본값이나 빈 값을 받는다."""
+    canonical_name = spec.canonical.name
+    start_text = netlist_texts[canonical_name]
+    area_before = 0.0
+
+    try:
+        base = DEFAULT_AREA_MODEL(start_text)
+        area_before = base.area
+        if base.counted == 0:
+            reason = (
+                f"area model resolved no device on this deck "
+                f"(counted={base.counted}, skipped={base.skipped})"
+            )
+            state.log_event(
+                "optimize_area_refused",
+                {"reason": reason, "counted": base.counted, "skipped": base.skipped},
+            )
+            result = _result("REFUSED", state, None, None, base.area, base.area, failure=reason)
+            # 브리프가 정한 이름을 대체가 아니라 추가로 남긴다 - "reason"을
+            # 읽는 기존 소비자와 "failure"를 읽는 나머지 결과 소비자 둘 다
+            # 맞아야 한다.
+            result["reason"] = reason
+            return result
+
+        structure = derive_structure(start_text, spec.circuit_name)
+        baseline_components = index_baseline_components(start_text)
+        candidates = []
+        for entry in structure.tunable:
+            knob_state = _area_knob_state(
+                start_text, baseline_components, entry.refdes, entry.param
+            )
+            if knob_state is None:
+                continue
+            # entry.param이 아니라 knob_state.token을 쓴다 - 덱에 실제로 적힌
+            # 철자다(_deck_token 참고). 오늘은 둘이 같지만, 대소문자가 섞인
+            # 덱에서는 token 쪽이 apply_changes가 실제로 찾을 수 있는 이름이다.
+            candidates.append(
+                (entry.refdes, knob_state.token, knob_state.value, knob_state.integer)
+            )
+
+        ranking = rank_by_area_gain(start_text, candidates, _area_change)
+        state.log_event(
+            "optimize_area_ranking",
+            {
+                "ranked": [
+                    {"refdes": e.refdes, "param": e.param, "gain": e.gain} for e in ranking.entries
+                ],
+                "zero_gain": ranking.zero_gain,
+                "unknown": ranking.unknown,
+                "counted": base.counted,
+                "skipped": base.skipped,
+                "area_before": base.area,
+                # unguarded_criteria는 여기 없다 - 스펙만의 상수라 실행마다
+                # 똑같은 값을 냈고("이 로그가 아무것도 안 할 때 어떻게 보이는가"에
+                # 답할 수 없다), 코너 대응 실행에서는 진입 스윕이 실측 여유분으로
+                # 대부분의 기준을 덮으므로 "이 기준은 무방비"라는 주장 자체가
+                # 틀린 이름표였다. 진짜 사실은 allowances가 실제로 확정되는
+                # `_optimize`의 `{label}_baseline` 이벤트에만 있다 - 두 단계
+                # 모두에서 남는다.
+            },
+        )
+
+        area_agents = OptimizerAgents(
+            propose=agents.propose,
+            simulate=agents.simulate,
+            verify_corners=agents.verify_corners,
+            search_strategy=agents.search_strategy,
+            knob_ranking=[
+                {"refdes": e.refdes, "param": e.param, "direction": "decrease"}
+                for e in ranking.entries
+            ],
+        )
+    except (AgentExecutionError, ValueError, OSError) as exc:
+        # run_optimization의 예외 처리기(:1171-1188 부근)와 같은 계약이다:
+        # 이 단계에도 FAIL이 없다. 여기서 잡는 것은 run_optimization에 들어가기
+        # **전**의 구간이므로, 안 잡으면 그 계약이 여기서 뚫린다.
+        reason = f"{type(exc).__name__}: {exc}"
+        state.log_event("optimize_area_failed", {"reason": reason})
+        return _result("UNCHANGED", state, None, None, area_before, area_before, failure=reason)
+
+    return await run_optimization(netlist_texts, spec, state, area_agents, phase=AREA_PHASE)

@@ -332,9 +332,10 @@ AREA_PHASE = PhaseConfig(
 )
 ```
 
-- [ ] **Step 4: 여섯 자리를 배선한다**
+- [ ] **Step 4: 일곱 자리를 배선한다**
 
-각각 오늘과 **같은 값**이 흐르므로 동작이 바뀌지 않는다.
+1~5·7은 오늘과 **같은 값**이 흐르므로 동작이 바뀌지 않는다. 6(이벤트 접두)도
+전류 단계에서는 문자열이 동일하다.
 
 1. `SearchOracle.__init__`에 `phase: PhaseConfig`를 **마지막 인자로** 더하고 `self._phase = phase`.
 2. 오라클의 예산 검사를 감싼다:
@@ -359,7 +360,38 @@ AREA_PHASE = PhaseConfig(
            )
    ```
    그리고 기존의 `{**ratio_allowances(...), **corner_allowances(...)}` 자리에 `ratio`를 쓴다.
-6. `run_optimization(netlist_texts, spec, state, agents, phase: PhaseConfig | None = None)`:
+6. **이벤트 이름에 `phase.label`을 접두로 붙인다.** 이것이 `label`이 존재하는
+   이유이며, 붙이지 않으면 `label`은 정의만 되고 아무도 안 읽는 죽은 필드가 된다.
+   더 나쁘게는, **면적 단계와 전류 단계가 한 실행에서 같은 이름의 이벤트를 쓰게
+   되어** `history.jsonl`에서 구별할 수 없다. 대상은 `optimizer.py`의 `optimize_`로
+   시작하는 이벤트 **10개**다:
+   ```
+   optimize_baseline   optimize_proposal   optimize_step        optimize_failed
+   optimize_entry_sweep   optimize_confirm_sweep   optimize_bisect_probe
+   optimize_bisect_result   optimize_budget_exhausted   optimize_guard_infeasible
+   ```
+   각 자리를 `state.log_event(f"{label}_baseline", ...)` 꼴로 바꾼다. 전류 단계는
+   `label="optimize"`이므로 **문자열이 한 글자도 달라지지 않는다**(전역 제약
+   "기존 이벤트 이름을 바꾸지 않는다"가 이렇게 지켜진다). 면적 단계는
+   `optimize_area_baseline` 등이 된다.
+
+   `optimize_skipped`는 **접두를 붙이지 않는다.** 그것은 단계가 정해지기 **전에**
+   나오는 이벤트이고(선언이 없어 아무 단계도 안 돈다는 뜻), 붙일 `label`이 없다.
+
+   `_bisect_last_passing`처럼 `PhaseConfig` 전체가 필요 없는 자유 함수에는
+   `label: str`만 넘긴다. `_optimize`에는 `phase`를 넘긴다.
+
+   확인 방법:
+   ```bash
+   grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
+   ```
+   기대: **13**. 이름은 10개이지만 `optimize_step`은 3곳, `optimize_proposal`은
+   2곳에서 발화하므로 **호출 사이트 수는 13**이다(이름 수와 사이트 수를 혼동하지
+   말 것). 그리고 기존 테스트가 `optimize_step` 등을 이름으로 찾고 있으므로,
+   **그 테스트들이 전부 그대로 통과해야 한다** — 하나라도 깨지면 전류 단계의
+   이름이 바뀐 것이다.
+
+7. `run_optimization(netlist_texts, spec, state, agents, phase: PhaseConfig | None = None)`:
    ```python
        if phase is None:
            if spec.optimize is None:
@@ -369,15 +401,47 @@ AREA_PHASE = PhaseConfig(
    ```
    **조기 반환이 `phase is None`일 때만 일어나야 한다.** 명시적 `phase`가 오면 `spec.optimize`를 보지 않는다.
 
-- [ ] **Step 5: 통과와 회귀 없음을 확인한다**
+- [ ] **Step 5: 이벤트 이름이 두 단계에서 갈리는지 테스트로 핀한다**
+
+```python
+@pytest.mark.asyncio
+async def test_the_two_phases_do_not_share_event_names(tmp_path):
+    """한 실행에 두 단계가 있으므로 이벤트 이름이 갈려야 한다.
+
+    갈리지 않으면 history.jsonl 에서 어느 단계의 optimize_step 인지 알 수
+    없고, 이 저장소의 측정 스크립트들이 두 단계를 하나로 읽는다. label 이
+    존재하는 이유가 이것이며, 쓰이지 않으면 label 은 죽은 필드다."""
+    from analogcoder.optimizer import AREA_PHASE, run_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([200.0, 190.0, 180.0])
+
+    await run_optimization({"tb": DECK}, _spec(), state, agents)             # 전류 단계
+    await run_optimization({"tb": DECK}, _spec(), state, agents, phase=AREA_PHASE)
+
+    names = {
+        json.loads(line)["step"]
+        for line in open(state.history_path, encoding="utf-8")
+    }
+    # 전류 단계의 이름은 한 글자도 바뀌지 않았다.
+    assert "optimize_baseline" in names
+    # 면적 단계는 자기 이름을 쓴다.
+    assert "optimize_area_baseline" in names
+```
+
+- [ ] **Step 6: 통과와 회귀 없음을 확인한다**
 
 ```bash
 .venv/bin/python -m pytest tests/unit/test_optimizer_area_phase.py -v
 .venv/bin/python -m pytest -m "not slow" -q
+grep -c 'log_event(f"{label}\|log_event(f"{phase.label}\|log_event(f"{self._phase.label}' src/analogcoder/optimizer.py
 ```
-기대: **기존 optimizer 테스트가 하나도 깨지지 않는다.** 깨지면 리팩터가 동작을 바꾼 것이다.
+기대: **기존 optimizer 테스트가 하나도 깨지지 않는다**(깨지면 전류 단계의 이벤트 이름이 바뀐 것이다), 그리고 접두 적용이 13곳(이름 10개).
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add src/analogcoder/optimizer.py tests/unit/
@@ -1138,10 +1202,74 @@ EOF
 
 ## 측정된 기준선 (Task 6에서 채운다)
 
-| 스펙 | 면적 before | 면적 after | 감소율 | 수락/거절 | zero_gain | unknown | 소요 |
-|---|---|---|---|---|---|---|---|
-| `benchmarks/bandgap/spec.yaml` | | | | | | | |
-| `benchmarks/two_stage_opamp/spec.yaml` | | | | | | | |
+`tests/unit/test_optimizer_area_phase_ngspice.py`로 실측 (2026-08-02, 로컬 ngspice,
+`.venv/bin/python -m pytest tests/unit/test_optimizer_area_phase_ngspice.py -v -s`).
+`unguarded_criteria` 열은 컨트롤러 추가 지시 C — `_optimize`가 남기는
+`optimize_area_baseline` 이벤트의 `unguarded_criteria` 길이 / 스펙의 전체 기준 수.
+
+| 스펙 | 면적 before | 면적 after | 감소율 | 수락/거절 | zero_gain | unknown | unguarded_criteria | 소요 |
+|---|---|---|---|---|---|---|---|---|
+| `benchmarks/bandgap/spec.yaml` | 1.10546e-08 | 8.93292e-09 | 19.19% | 16/4 (steps_accepted/steps_rejected) | 1 (`BGR_CORE.Xq8.m`) | 0 | 22/22 | 123.5s (21 sims, 5 testbenches/step) |
+| `benchmarks/two_stage_opamp/spec.yaml` | 2.38037e-10 | 2.38037e-10 | 0.00% (UNCHANGED) | 0/20 | 7 (`Lfb.value`, `Cin.value`, `Cload.value`, `OPAMP2STAGE.Rdeg.value`, `OPAMP2STAGE.Rstart.value`, `OPAMP2STAGE.Xcc.mf`, `OPAMP2STAGE.Xca.mf`) | 0 | 7/7 | 24.1s (21 sims, 4 testbenches/step) |
+
+예상과 다른 점: bandgap은 예상대로 `unguarded_criteria`가 22/22(전부)였지만,
+**두 스펙 모두 status가 정확히 예측되지 않았다** — bandgap은 OPTIMIZED로
+19.19% 줄었고(83개 소자 중 82개가 면적 이득을 갖고, `BGR_CORE.Xq8.m`만
+zero_gain), two_stage_opamp는 20스텝을 전부 시도하고도 UNCHANGED로 끝났다.
+zero_gain 7개 전부가 면적 모델이 w/l/m으로 세지 않는 값 하나짜리 소자
+(`Lfb`/`Cin`/`Cload`의 `value`, `Rdeg`/`Rstart`의 `value`, `Xcc`/`Xca`의
+`mf`)라 순위에 오를 후보 자체가 애초에 `counted=13`짜리 소자 목록에서
+갈 곳이 적었다는 뜻이다.
+
+**거절 사유를 직접 읽으면 두 스펙 모두 무방비 가드(여유분 0)로 거절된
+스텝이 하나도 없다.** `optimize_area_step`의 `reason`을 모두 확인했다 —
+bandgap의 4건(`BUF_N.Xcc`/`BUF_P.Xcc`의 `L`/`W`)과 two_stage_opamp의
+20건 전부가 `"criteria no longer pass: one or more criteria failed"`이고,
+`accept_step`(optimizer.py:557-560)에서 이것은 `evaluation.violations`
+(가드 위반, unguarded_criteria가 여유분 0으로 만드는 그 검사)보다 **먼저**
+검사되는 `overall_pass`가 그냥 False였다는 뜻이다 — 즉 이 실행에서는
+무방비 가드가 한 번도 실제로 발화하지 않았다. 22/22와 7/7이라는
+`unguarded_criteria` 수는 "안전이 느슨해진 위험이 이만큼 존재한다"는
+사실이지 "이번 거절이 그 위험 때문이었다"는 사실이 아니다 — 이 표를
+읽는 2단계 구현자가 후자로 오독하지 않도록 남긴다. 2단계가 "게이트
+강등 + 대안 3개"를 붙여야 할 이유는 여전히 유효하다: 순위 1위 소자를
+줄이면 곧바로 기준이 깨지는 스텝이 이렇게 많다는 것 자체가, 대안 없이
+1위만 시도하는 오늘의 탐색이 얕다는 증거다.
+
+**정정 (2026-08-02, 전체 브랜치 리뷰).** 위 문단의 결론 — "무방비 가드가
+한 번도 실제로 발화하지 않았다" — 은 **뒤집혔다.** 지우지 않고 정정으로
+남긴다: 원래 추론이 무엇을 놓쳤는지가 다음에 같은 질문을 다시 던질 사람에게
+필요하기 때문이다.
+
+원래 추론은 **거절**만 읽었다: "24건 전부가 `overall_pass` 자체가 깨진
+경우이니 무방비 가드는 발화하지 않았다"는 것. 그런데 여유분 0(=무방비)일 때
+`guard_band_violations`(`judge_tools.py:74-88`)의 `limit`은 `threshold -
+0.0 = threshold`가 되고, 이것은 `accept_step`(`optimizer.py:559-564`)이 그
+한 줄 앞에서 이미 검사한 `overall_pass`와 **산술적으로 같은 술어**다. 즉
+무방비 가드는 **거절에는 구조적으로 나타날 수 없고 수락에만 나타난다** -
+거절 경로를 읽는 것은 이 위험이 원리적으로 보이지 않는 자리를 읽는 것이었다.
+
+실제 사례는 수락 쪽에 있었다: `benchmarks/bandgap/spec.yaml`에서 이 실행이
+**수락한** 16스텝 동안
+
+```
+buf0_phase_margin   104.39° → 81.89°   (>= 80.0°)   relative slack 0.305 → 0.024
+buf1_phase_margin   101.56° → 82.99°   (>= 80.0°)   relative slack 0.269 → 0.037
+```
+
+로 마진이 드레인됐다 - 둘 다 통과는 유지했지만(그래서 `overall_pass`는 계속
+True였다) 코너 없는 스펙이라 아무도 이 드리프트를 다시 확인하지 않았고,
+실행은 PASS로 끝났다. 이것이 "위험의 크기는 쟀고 사례는 못 쟀다"던 자리의
+그 사례다.
+
+교훈: 무방비 가드처럼 "통과 판정 자체와 같은 술어가 되는" 종류의 가드는,
+그 가드가 실제로 무언가를 걸러냈는지를 **거절 로그에서 찾으면 안 된다** -
+정의상 걸러낼 수 없는 자리에서 찾는 것이기 때문이다. 대신 그 가드 없이는
+수락되지 않았을 **수락**을 찾아야 한다.
+
+이 정정이 Critical 수정(`unguarded_criteria`를 `result.json`/`report.md`로
+끌어오는 것)의 근거다 - history.jsonl 한 곳에만 있던 사실이 실행 하나만
+보고 드러나야 위 발견이 다음 실행에서는 코드를 읽지 않고도 보인다.
 
 이 표가 **2단계 계획의 입력**이다.
 

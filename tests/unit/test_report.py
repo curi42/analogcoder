@@ -967,3 +967,196 @@ def test_a_result_without_the_key_draws_no_section(tmp_path):
     path = write_report_md(_dir(tmp_path, "d"), _result())
 
     assert "## Tuning attempts" not in open(path).read()
+
+
+# --- Task 5: 면적 최소화 단계가 리포트에도 그려져야 한다 ----------------------
+#
+# 브리프의 원래 테스트 본문은 `iterations_used`/`final_netlist_paths`가 없는
+# 맨 dict를 바로 `write_report_md`에 넘겼다 - 실제로 돌려 보면 의도한
+# `AssertionError: assert '면적 최소화' in ...`가 아니라 `KeyError:
+# 'iterations_used'`로 죽는다(write_report_md가 그 두 키를 무조건 읽는다).
+# 이 파일의 기존 관례(`_result`/`_dir` 헬퍼)를 따라 필수 키를 채워 넣는다 -
+# 아래는 그 관례대로 고친 버전이다.
+
+
+def test_the_report_draws_the_area_phase_including_when_it_changed_nothing(tmp_path):
+    """아무것도 못 줄인 실행에서도 절이 나와야 한다.
+
+    안 나오면 "면적 단계가 아무것도 못 했다"와 "면적 단계가 없다"가 보고서에서
+    같은 모양이 된다. 이 저장소가 코너 스윕에서 이미 겪은 실수다.
+
+    수락/거절 카운트는 진짜 키 이름(`steps_accepted`/`steps_rejected` -
+    `optimizer._result`가 실제로 찍는 이름)으로 채우고 **렌더된 숫자까지**
+    읽는다. 틀린 키 이름(`accepted`/`rejected`)을 썼던 원래 버전은
+    `status`만 확인하는 단언으로는 안 잡혔다 - `.get(..., 0)`이 조용히 0을
+    돌려주고, 마침 이 테스트가 기대하던 값과도 우연히 안 겹쳐서 처음
+    발견됐지, 대부분의 실행에서는 진짜 0과 구별되지 않는다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "UNCHANGED", "steps_accepted": 2, "steps_rejected": 3,
+            "area_before": 41.0, "area_after": 41.0,
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_unchanged"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "면적 최소화" in md
+    assert "UNCHANGED" in md
+    assert "수락 2건 / 거절 3건" in md
+
+
+def test_the_report_says_when_the_area_phase_was_refused(tmp_path):
+    """REFUSED는 UNCHANGED와 다른 문장으로 나와야 한다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "REFUSED",
+            "reason": "area model resolved no device on this deck (counted=0, skipped=2)",
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_refused"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "REFUSED" in md and "counted=0" in md
+
+
+def test_the_report_distinguishes_a_crashed_area_phase_from_a_clean_no_op(tmp_path):
+    """`status="UNCHANGED"`는 두 다른 사실을 가릴 수 있다: "돌았고 줄일 것이
+    없었다"와 "이 단계 자체가 터져서 아무것도 못 쟀다"(`run_area_optimization`의
+    준비 구간이 `AgentExecutionError`/`ValueError`/`OSError`로 접히거나,
+    `_optimize`의 기준선 시뮬레이션 자체가 실패한 경우 - 둘 다 status는
+    UNCHANGED로 남는다. REFUSED와는 다른 경로다). 리포트가 그 차이를 아는
+    유일한 자리이므로, `failure`가 있을 때만 나오는 문장이 있어야 한다.
+
+    두 렌더를 `failure` 유무만 다르게 만들고 비교한다 - "그 절이 있다"만
+    보는 단언은 아무것도 못 잡는다. `failure` 값 자체가 어느 쪽에만
+    나타나는지를 잰다."""
+    # `unguarded_criteria`를 실제 모양대로 채운다 - `optimizer._result`는 이
+    # 키를 절대 생략하지 않는다(끝까지 쟀으면 리스트, 못 쟀으면 `None`, 둘 다
+    # 실제로 실린다). 이전 버전은 두 dict 모두에서 이 키를 아예 뺐고, 그러면
+    # `.get()`이 조용히 `None`을 돌려줘 "쟀고 비었다"와 "못 쟀다"가 report.py
+    # 안에서 우연히 같은 렌더(무렌더)로 붕괴했다 - production이 내지 않는
+    # 모양을 검사하고 있었다.
+    clean = {
+        "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
+        "area_before": 41.0, "area_after": 41.0, "unguarded_criteria": [],
+    }
+    crashed = {**clean, "failure": "AgentExecutionError: boom", "unguarded_criteria": None}
+
+    clean_path = write_report_md(
+        _dir(tmp_path, "area_clean_noop"), _result(status="PASS", area_optimization=clean)
+    )
+    crashed_path = write_report_md(
+        _dir(tmp_path, "area_crashed"), _result(status="PASS", area_optimization=crashed)
+    )
+    clean_md = open(clean_path, encoding="utf-8").read()
+    crashed_md = open(crashed_path, encoding="utf-8").read()
+
+    assert "AgentExecutionError: boom" not in clean_md
+    assert "AgentExecutionError: boom" in crashed_md
+
+
+@pytest.mark.asyncio
+async def test_unguarded_criteria_s_three_states_render_three_different_lines(
+    tmp_path, monkeypatch
+):
+    """`unguarded_criteria`는 세 다른 사실을 가질 수 있다: 계산됐고 이름이
+    있다 / 계산됐고 비어 있다(모든 기준이 방비됨) / **계산되지 못했다**(이
+    단계가 준비 구간에서 죽어 allowances 자체가 존재한 적이 없다). 세 번째를
+    손으로 만든 dict로 흉내 내면 딱 이 결함을 반복한다 - 그래서 실제 코드
+    경로(`run_area_optimization`의 준비 구간을 강제로 터뜨린다)로 만든다.
+
+    `_result`가 `None`을 `[]`로 접었다면 세 번째는 두 번째와 같은 렌더가
+    되어 "모든 기준이 방비됨"이라는 거짓 문장을 낸다 - 그 회귀를 이 테스트가
+    잡는다."""
+    import analogcoder.optimizer as optimizer_mod
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    def boom(*args, **kwargs):
+        raise ValueError("boom in derive_structure")
+
+    monkeypatch.setattr(optimizer_mod, "derive_structure", boom)
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path / "crash_state"), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    crashed = await run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+    # 준비 구간이 실제로 죽었고, unguarded_criteria는 실제로 None이다 - 이
+    # 단언이 없으면 아래 렌더 비교가 fixture 오류를 놓칠 수 있다.
+    assert crashed["failure"] is not None
+    assert crashed["unguarded_criteria"] is None
+
+    with_names = {**crashed, "failure": None, "unguarded_criteria": ["gain", "phase_margin"]}
+    empty = {**crashed, "failure": None, "unguarded_criteria": []}
+
+    def _unguarded_line(area_optimization, dirname):
+        path = write_report_md(
+            _dir(tmp_path, dirname), _result(status="PASS", area_optimization=area_optimization)
+        )
+        text = open(path, encoding="utf-8").read()
+        return next(line for line in text.splitlines() if "무방비 기준" in line)
+
+    named_line = _unguarded_line(with_names, "u_named")
+    empty_line = _unguarded_line(empty, "u_empty")
+    crashed_line = _unguarded_line(crashed, "u_crashed")
+
+    assert len({named_line, empty_line, crashed_line}) == 3
+    assert "gain" in named_line and "phase_margin" in named_line
+    assert "every criterion is corner- or ratio-guarded" in empty_line
+    assert "every criterion is corner- or ratio-guarded" not in crashed_line
+    # 크래시를 "0"으로 읽으면 안 된다 - 아무 기준도 어떤 allowance와도
+    # 비교되지 않았다.
+    assert "- 무방비 기준(여유분 0으로 판정됨): 0" not in crashed_line
+    assert "끝까지 가지 못해" in crashed_line
+
+
+def test_the_report_renders_the_area_phase_s_corner_failure_and_guard_infeasibility(tmp_path):
+    """`corner_failure`/`guard_infeasible`은 튜닝 단계처럼 이 단계에서도 실제로
+    채워질 수 있다 - 코너 확인 자체가 죽을 수 있고, 이 단계는 `guard_band=None`
+    (`AREA_PHASE`)이라 비율 폴백이 없어 코너로 못 잰 기준은 여유분 0.0으로
+    읽힌다(`guard_band_violations`). 렌더하지 않으면 이 두 사실은 result.json을
+    열지 않는 한 어디에도 보이지 않는다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
+            "area_before": 41.0, "area_after": 41.0,
+            "corner_failure": "corner sweep raised RuntimeError: ngspice died",
+            "guard_infeasible": ["iq_ua: measurement 'iq_ua' is missing"],
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_corner_guard"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "ngspice died" in md
+    assert "iq_ua" in md
+
+
+def test_a_run_without_an_area_phase_gets_no_area_section(tmp_path):
+    """키의 부재는 "이 실행에 면적 단계가 없었다"이고, 그것은 값이 아니다."""
+    path = write_report_md(_dir(tmp_path, "area_absent"), _result(status="PASS"))
+    assert "면적 최소화" not in open(path, encoding="utf-8").read()
+
+
+def test_the_provenance_names_the_area_phase_when_only_it_moved_the_deck(tmp_path):
+    """전류 단계가 없는 스펙에서도 표는 면적 단계의 덱을 설명해야 한다.
+
+    `evaluate_criteria`라는 낱말은 네 출처 전부에 들어 있으므로 그것을 검사하는
+    것은 아무것도 고정하지 못한다. 고정할 것은 **어느 단계를 지목하는가**다."""
+    base = _result(status="PASS")
+    only_area = write_report_md(
+        _dir(tmp_path, "provenance_area_only"),
+        {**base, "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]}},
+    )
+    both = write_report_md(
+        _dir(tmp_path, "provenance_both"),
+        {
+            **base,
+            "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
+            "optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
+        },
+    )
+    assert "area phase landed on" in open(only_area, encoding="utf-8").read()
+    # 전류 단계가 뒤에 돌므로 그쪽이 이긴다.
+    both_md = open(both, encoding="utf-8").read()
+    assert "optimization phase landed on" in both_md
+    assert "area phase landed on" not in both_md

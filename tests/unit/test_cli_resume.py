@@ -615,6 +615,10 @@ async def test_a_run_without_the_flag_adds_exactly_one_result_key(tmp_path):
         "iterations_used",
         "final_criteria",
         "topology_swaps",
+        # 재개와는 무관한 키다 - 면적 최소화 단계(`c786554`)가 선언 없이
+        # PASS마다 무조건 돌면서 남기는 자기 결과다. 재개가 더한 것은 여전히
+        # resumed_from 하나뿐이라는 이 테스트의 요지는 바뀌지 않았다.
+        "area_optimization",
         "optimization",
         "corner_reduction",
         "resumed_from",

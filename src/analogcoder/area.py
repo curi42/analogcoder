@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Protocol
 
 from analogcoder.area_limits import annotate_resolved_params, multiplicity, resolved_token
 from analogcoder.netlist import Component, parse_netlist
@@ -59,3 +60,17 @@ def total_area(netlist_text: str) -> AreaTotal:
         counted += 1
 
     return AreaTotal(area=area, counted=counted, skipped=skipped)
+
+
+class AreaModel(Protocol):
+    """덱 하나의 총 면적을 내는 것. **회사 이식 시 교체되는 경계다.**
+
+    지금 저장소에는 PDK가 없어 기본 구현이 `w x l x m` 파생 근사이고, 그
+    근사는 서브회로 **정의**를 N번 인스턴스화해도 1번만 센다. PDK 유도
+    모델은 거의 확실히 다르게 세므로, **모델이 바뀌면 면적 단계의 결과가
+    바뀐다** - 이 경계를 넘는 것은 함수 하나가 아니라 그 사실이다."""
+
+    def __call__(self, netlist_text: str) -> AreaTotal: ...
+
+
+DEFAULT_AREA_MODEL: AreaModel = total_area
