@@ -25,6 +25,7 @@ from pathlib import Path
 
 from analogcoder.area import total_area
 from analogcoder.json_io import json_safe
+from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_area_optimization
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.simulators.cache import CachingSimulator
@@ -60,7 +61,23 @@ def _relative_slack(criterion, actual: float | None) -> float | None:
 
 
 def _texts(spec) -> dict[str, str]:
-    return {tb.name: Path(tb.netlist_path).read_text(encoding="utf-8") for tb in spec.testbenches}
+    """덱 텍스트를 **재배치 가능한** 형태로 읽는다.
+
+    `resolve_includes` 를 빼면 상대 `.include` 가 미해결로 남고, 텍스트를 다른
+    디렉터리에 쓰는 순간 ngspice 가 모델을 못 찾는다. 증상은 조용하다 - 측정값이
+    비고, `_run_simulation` 이 그것을 삼키고, 모든 후보가 "기준 불통과"로 거절되고,
+    단계는 `UNCHANGED` 로 깨끗하게 끝난다. CLAUDE.md 가
+    `scripts/dc_solution_uniqueness.py` 에서 기록한 다섯 번째 실패가 정확히
+    이것이고("모든 행이 진짜 대조군과 같은 문구로 void 로 돌아왔다"), 이 스크립트도
+    첫 시도에서 그대로 밟았다.
+    """
+    return {
+        tb.name: resolve_includes(
+            Path(tb.netlist_path).read_text(encoding="utf-8"),
+            str(Path(tb.netlist_path).parent),
+        )
+        for tb in spec.testbenches
+    }
 
 
 def main() -> int:
@@ -82,16 +99,41 @@ def main() -> int:
     start_texts = _texts(spec_a)
     state.push_netlist_version(start_texts)
 
-    backend = CachingSimulator(NgspiceBackend())
+    backend = CachingSimulator(NgspiceBackend(timeout=180))
+    sim_dir = out_dir / "sim"
+    sim_dir.mkdir(parents=True, exist_ok=True)
 
     async def simulate(netlist_texts, spec_arg):
+        # `SimulatorBackend.run` 은 **경로와 dict** 를 받는다(텍스트와 control
+        # block 문자열이 아니다). 첫 시도에서 텍스트를 넘겼더니 `open()` 이
+        # 던졌고, `_run_simulation` 이 bare Exception 을 삼켜 모든 후보가
+        # "시뮬레이션 실패"로 보였다 - 20 건 전부 거절, 1.3 초, exit 0,
+        # status=UNCHANGED. 이 단계의 "FAIL 이 없다" 계약이 고장난 계측기를
+        # 깨끗한 결과로 바꿔 놓는다. `tests/unit/test_optimizer_area_phase_ngspice.py`
+        # 의 배선이 정답이고, 이 함수는 그것과 같은 모양이어야 한다.
         measurements: dict = {}
-        warnings: list = []
         for tb in spec_arg.testbenches:
-            raw = backend.run(netlist_texts[tb.name], tb.control_block)
-            measurements.update(raw.measurements)
-            warnings.extend(raw.warnings)
-        return {"measurements": measurements, "status": "success", "warnings": warnings}
+            path = sim_dir / f"{tb.name}.cir"
+            path.write_text(netlist_texts[tb.name], encoding="utf-8")
+            measurements.update(
+                backend.run(str(path), {"control_block": tb.control_block}).measurements
+            )
+        return {"measurements": measurements}
+
+    # --- 계측기 검증. 재기 **전에** 한다 -----------------------------------
+    # 첫 시도가 이 검증 없이 돌아 VOID 를 냈고, 그 VOID 는 "조건이 발생하지
+    # 않았다"가 아니라 "계측기가 죽었다"였다. 둘을 같은 칸에 넣으면 고장난
+    # 측정이 무효한 측정처럼 보인다. 기준선 시뮬레이션이 기준이 요구하는
+    # 측정값을 실제로 내놓는지 먼저 확인하고, 아니면 **재지 않고 멈춘다**.
+    baseline = await_run(simulate(start_texts, spec_a))
+    wanted = {c.measurement for c in spec_a.all_criteria}
+    got = {k for k, v in baseline["measurements"].items() if v is not None}
+    if not wanted <= got:
+        print("REFUSED: 기준선 시뮬레이션이 기준이 요구하는 측정값을 내지 못한다")
+        print(f"  요구 {len(wanted)}개 중 없는 것: {sorted(wanted - got)}")
+        print("  이것은 회로의 사실이 아니라 계측기의 고장이다 - 재지 않는다")
+        return 2
+    print(f"[계측기] 기준선에서 요구 측정값 {len(wanted)}개 전부 확인")
 
     # --- 런 A: 코너 없는 스펙에서 면적 단계 ---------------------------------
     t0 = time.time()
