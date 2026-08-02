@@ -89,31 +89,63 @@ async def test_an_explicit_phase_is_not_skipped_when_the_spec_declares_no_optimi
 
 
 @pytest.mark.asyncio
-async def test_the_two_phases_do_not_share_event_names(tmp_path):
-    """한 실행에 두 단계가 있으므로 이벤트 이름이 갈려야 한다.
+async def test_the_two_phases_emit_disjoint_event_name_sets(tmp_path):
+    """이벤트 이름 접두사가 **열 개 전부**에 실제로 걸려 있는지.
 
-    갈리지 않으면 history.jsonl 에서 어느 단계의 optimize_step 인지 알 수
-    없고, 이 저장소의 측정 스크립트들이 두 단계를 하나로 읽는다. label 이
-    존재하는 이유가 이것이며, 쓰이지 않으면 label 은 죽은 필드다."""
+    이전 버전은 `optimize_baseline`/`optimize_area_baseline` 딱 두 이름만
+    봤다 - 10개 중 1개다. `scripts/search_ab.py:238`이 실제로 거르는 이름은
+    `optimize_step`인데, `SearchRun.attempt`/`_reject`의
+    `f"{self._phase.label}_step"`이 리터럴 `"optimize_step"`으로 회귀해도
+    (`optimize_baseline`은 여전히 옳으므로) 이 가드는 계속 초록으로 남는다 -
+    조용히 무력한 게이트의 정확히 이 저장소가 겪은 모양이다.
+
+    그래서 이름 하나씩 고정하는 대신 두 단계가 낸 이벤트 **이름의 집합이
+    서로소인지**를 직접 본다 - 어느 한 이름이든 겹치면 그 이름의 이벤트는
+    history.jsonl에서 두 단계 사이에 구별 불가능해지고, 그것이 정확히
+    `search_ab.py`가 두 단계를 하나로 읽는 방식이다.
+
+    `optimize_skipped`/`optimize_area_refused`/`optimize_area_failed`는
+    라벨을 안 쓰는 **의도된** 예외다: 전자는 `spec.optimize is None`일 때만
+    나오고(이 스펙은 선언이 있으므로 어느 쪽 실행에도 나오지 않는다), 후자
+    둘은 `run_area_optimization`의 준비 구간(구조 유도·순위 계산)이 `phase`
+    객체를 만들기 **전**에 죽는 자리라서 애초에 라벨을 참조할 수 없다 -
+    이 테스트는 `run_optimization`을 직접 부르므로(원래 테스트와 같은 경로)
+    그 준비 구간 자체를 지나지 않는다."""
     from analogcoder.optimizer import AREA_PHASE, run_optimization
     from analogcoder.state import RunState
     from tests.unit.test_optimizer import DECK, _agents, _spec
 
-    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
-    state.push_netlist_version({"tb": DECK})
-    agents, _ = _agents([200.0, 190.0, 180.0])
+    objective_state = RunState(run_dir=str(tmp_path / "objective"), testbench_names=["tb"])
+    objective_state.push_netlist_version({"tb": DECK})
+    objective_agents, _ = _agents([200.0, 190.0, 180.0])
+    await run_optimization({"tb": DECK}, _spec(), objective_state, objective_agents)
 
-    await run_optimization({"tb": DECK}, _spec(), state, agents)             # 전류 단계
-    await run_optimization({"tb": DECK}, _spec(), state, agents, phase=AREA_PHASE)
+    area_state = RunState(run_dir=str(tmp_path / "area"), testbench_names=["tb"])
+    area_state.push_netlist_version({"tb": DECK})
+    area_agents, _ = _agents([200.0, 190.0, 180.0])
+    await run_optimization(
+        {"tb": DECK}, _spec(), area_state, area_agents, phase=AREA_PHASE
+    )
 
-    names = {
+    objective_names = {
         json.loads(line)["step"]
-        for line in open(state.history_path, encoding="utf-8")
+        for line in open(objective_state.history_path, encoding="utf-8")
     }
-    # 전류 단계의 이름은 한 글자도 바뀌지 않았다.
-    assert "optimize_baseline" in names
-    # 면적 단계는 자기 이름을 쓴다.
-    assert "optimize_area_baseline" in names
+    area_names = {
+        json.loads(line)["step"]
+        for line in open(area_state.history_path, encoding="utf-8")
+    }
+
+    # 둘 다 실제로 여러 종류의 이벤트를 냈는지 먼저 본다 - 빈 집합끼리는
+    # 언제나 서로소이므로, 아무것도 로그하지 않는 회귀에서도 통과하는
+    # 단언이 되면 안 된다. 오늘은 baseline/proposal/guard_infeasible/step
+    # 네 종류가 최소로 나온다.
+    assert len(objective_names) >= 3
+    assert len(area_names) >= 3
+    assert objective_names & area_names == set()
+    # 각자 자기 라벨의 이름을 쓰는지도 직접 본다.
+    assert "optimize_baseline" in objective_names
+    assert "optimize_area_baseline" in area_names
 
 
 UNRESOLVABLE_DECK = (

@@ -3,6 +3,31 @@ import os
 from analogcoder.corner_selection import raw_label
 from analogcoder.json_io import dump as json_dump
 
+# `unguarded_criteria`를 이름까지 적을지 개수만 적을지 가르는 문턱. 실측
+# (2026-08-02, benchmarks/bandgap: 22/22, two_stage_opamp: 7/7)에서 큰 쪽을
+# 전부 적으면 절 하나가 이름 목록으로 뒤덮이고, 작은 쪽은 이름 자체가
+# 정보다. 10은 그 둘을 가르는 값이면서, 그 이상이면 "거의 다 무방비"라는
+# 사실 자체가 어느 기준인지보다 중요해지는 지점이라는 판단이다.
+_UNGUARDED_NAME_LIMIT = 10
+
+
+def _unguarded_summary(names: list | None) -> str | None:
+    """`unguarded_criteria`를 사람이 읽을 문장 하나로. `None`이면 이 결과가
+    그 필드를 낸 코드 경로를 안 지났다는 뜻이므로(REFUSED 등, 그 절이
+    이 지점에 닿기 전에 이미 반환한다) 아무것도 그리지 않는다 - 빈 리스트와
+    `None`은 여전히 다른 사실이지만, `optimizer._result`가 이미 `None`을
+    `[]`로 접어 낸다는 것은 알고 있어야 한다(가드밴드 미실행 필드
+    `guard_infeasible`과 같은 관례). 그래서 이 함수가 보는 `[]`는 "계산했고
+    전부 방비됨"과 "이 단계 자체가 크래시해서 검색을 시작도 못 함"을 둘 다
+    가리킬 수 있다 - 후자는 바로 옆의 `failure` 줄이 구분한다."""
+    if names is None:
+        return None
+    if not names:
+        return "0 (every criterion is corner- or ratio-guarded)"
+    if len(names) <= _UNGUARDED_NAME_LIMIT:
+        return f"{len(names)} ({', '.join(names)})"
+    return f"{len(names)} (too many to list here - see result.json)"
+
 
 def write_result_json(run_dir: str, result: dict) -> str:
     # `json_io.dump`는 비유한 float를 문자열 표지로 정규화한 뒤
@@ -50,13 +75,22 @@ def _area_optimization_lines(area: dict | None) -> list[str]:
     여유분 0.0으로 읽혀(`guard_band_violations`) 오히려 튜닝 단계보다 더
     쉽게 infeasible해진다.
 
-    `area_coverage`는 **의도적으로 생략한다** - 이 함수가 REFUSED로 먼저
-    걸러내는 조건(`DEFAULT_AREA_MODEL(start_text).counted == 0`)과
-    `_optimize`가 `area_coverage["reason"]`을 채우는 조건이 **같은 텍스트에
-    같은 함수**(`total_area`)를 두 번 돌려 얻는 같은 값이므로, REFUSED가
-    아닌 경로에 도달했다면 `area_coverage["reason"]`은 항상 None이다 - 이
-    단계는 이 필드를 채울 수 없고, 채울 수 없는 필드를 그리면 늘 같은 문장을
-    찍는 절이 된다."""
+    `area_coverage`는 **의도적으로 생략한다** - 그러나 이것이 안전하다는 것은
+    증명되지 않았다. 실제 술어는 이렇다: 이 함수가 REFUSED로 먼저 걸러내는
+    조건은 `DEFAULT_AREA_MODEL(start_text).counted == 0`이고,
+    `_optimize`가 `area_coverage["reason"]`을 채우는 조건은
+    `area_before > 0`(그리고 이 태스크 이후로는 `phase.area_budget is
+    None`도) - **`counted`와 `area`는 같은 함수가 내는 다른 값이라 서로
+    치환할 수 없다.** 모든 소자가 `w=0`으로 해소되는 덱은 `counted > 0`인데
+    `area == 0.0`이라 REFUSED는 피하면서도 `reason`이 채워지는 경우가
+    생긴다 - 오늘 이 경로에 닿는 벤치마크는 없지만, "counted가 area의
+    대리"라는 전제 자체가 항상 참인 것은 아니다. 게다가 `AREA_PHASE`는
+    구조적으로 예산을 선언하지 않으므로(`area_budget=None`) `area_before >
+    0`인 정상 실행에서는 `reason`이 이제 거의 항상 채워진다 - 그래도 이
+    절이 그 문장을 그리지 않는 것은 여전히 의도된 생략이다(무엇을
+    "예산이 걸렸다/안 걸렸다"로 부르는지의 정의일 뿐, 이 단계가 실제로
+    무엇을 줄였는지에 대해서는 아무것도 말하지 않는다) - 다만 "증명됐다"고
+    부를 수는 없다는 것이 이 문단의 요점이다."""
     if area is None:
         return []
     lines = ["", "## 면적 최소화", "", f"**Status:** {area['status']}", ""]
@@ -70,6 +104,23 @@ def _area_optimization_lines(area: dict | None) -> list[str]:
     lines.append(
         f"- 수락 {area.get('steps_accepted', 0)}건 / 거절 {area.get('steps_rejected', 0)}건"
     )
+    # 형제 절(_optimization_lines)이 그리는 것을 이 절만 빠뜨리고 있었다 -
+    # 코너를 선언한 스펙에서는 이 단계도 진입/확인/이분 탐색 스윕을 돌리고
+    # `_result`가 corner_confirmed를 채우는데, 렌더링하지 않으면 읽는 쪽이
+    # 이 단계가 착지한 덱이 실제로 코너를 통과했는지 result.json 없이는 알
+    # 방법이 없다("결과는 자기가 낸 덱을 설명해야 한다").
+    lines.append(f"- 코너 확인: {area.get('corner_confirmed')}")
+    # 계획("스펙에 없던 결정 하나")이 값을 명시한 자리: 이 단계는 비율
+    # 가드가 없어(`AREA_PHASE.guard_band is None`) 실측 코너 여유분이 없는
+    # 기준은 여유분 0으로만 판정된다 - "무방비"다. 실측(2026-08-02,
+    # benchmarks/bandgap.spec.yaml)에서 이 무방비 상태로 16스텝이
+    # **수락**됐고(19.19% 면적 감소), 그중 `buf0_phase_margin`은 상대
+    # 여유가 0.305 -> 0.024로 줄었다 - 그 스펙은 코너를 선언하지 않으므로
+    # 아무도 그 드리프트를 다시 확인하지 않는다. 어느 기준이 그 상태로
+    # 판정됐는지가 실행 하나(이 리포트)만 보고 드러나야 한다.
+    unguarded = _unguarded_summary(area.get("unguarded_criteria"))
+    if unguarded is not None:
+        lines.append(f"- 무방비 기준(여유분 0으로 판정됨): {unguarded}")
     if area.get("corner_failure"):
         lines.append(f"- 코너 확인이 돌지 못했다: {area['corner_failure']}")
     if area.get("failure"):
@@ -94,7 +145,16 @@ def _optimization_lines(optimization: dict | None) -> list[str]:
     "Final criteria"만 있던 리포트는 최적화가 넷리스트를 바꿔도 그 사실을 한
     줄도 말하지 않았다. 이 단계에는 FAIL 결말이 없으므로 실행은 여전히 PASS로
     끝나고, 그래서 리포트가 말하지 않으면 최적화가 통째로 죽은 것을 아무도
-    모른다 - failure를 함께 적는 이유다."""
+    모른다 - failure를 함께 적는 이유다.
+
+    `unguarded_criteria`도 면적 절과 같은 문장으로 적는다. 이 단계는 언제나
+    `guard_band`를 스펙에서 들고 있으므로(`OptimizeSpec.guard_band`는 기본값이
+    없다) `ratio_allowances`가 **모든** 기준 이름을 채우고, 그 결과 이
+    리스트는 정상적으로는 언제나 비어 있다 - 그 빈 리스트 자체가 "가드가
+    작동하고 있다"는 증거다. 면적 절에서만 값이 있고 여기서 늘 0이라는
+    대비가, 면적 단계의 안전 완화가 정말 그 단계에 국한된 것임을 보여준다.
+    빈 리스트를 그리지 않으면 "가드가 확인됐다"와 "이 필드가 없다"가 같은
+    침묵이 된다."""
     if not optimization:
         return []
 
@@ -129,6 +189,9 @@ def _optimization_lines(optimization: dict | None) -> list[str]:
     coverage = optimization.get("area_coverage") or {}
     if coverage.get("reason"):
         lines.append(f"**Area budget:** {coverage['reason']}")
+    unguarded = _unguarded_summary(optimization.get("unguarded_criteria"))
+    if unguarded is not None:
+        lines.append(f"**Unguarded criteria (judged with zero margin):** {unguarded}")
 
     return lines
 
@@ -458,7 +521,7 @@ def _final_criteria_provenance(result: dict) -> str:
         # 표와 서로 다른 회로를 나란히 적는 것이 된다.
         judged_by = "`evaluate_criteria`, on the netlist version the area phase landed on"
     else:
-        # 판정자는 이제 세 경우 모두 `evaluate_criteria`다(LLM judge 제거).
+        # 판정자는 이제 네 경우 모두 `evaluate_criteria`다(LLM judge 제거).
         # 그래도 문장을 합치지 않는다 - **어느 덱을** 판정했는지가 다르고,
         # 그것이 이 줄이 존재하는 이유다.
         judged_by = "`evaluate_criteria`, on the deck the tuning loop returned"

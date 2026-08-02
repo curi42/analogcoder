@@ -268,13 +268,42 @@ whether a candidate topology earns a place in `TOPOLOGY_LIBRARY`.
 
 ### The optimization phase
 
-`optimizer.py` / `agents/optimizer.py` / `area.py` — a second phase after the loop
-returns PASS and before the final PVT sweep, spending the spec's remaining margin
-on the objective declared in `spec.yaml`'s `optimize:` block.
+`optimizer.py` / `agents/optimizer.py` / `area.py` — **two phases** run after the
+loop returns PASS and before the final PVT sweep, spending the spec's remaining
+margin. The **area phase** (`run_area_optimization`, `PhaseConfig` `AREA_PHASE`)
+runs first, on **every spec** — it requires no `optimize:` declaration and calls no
+LLM. The **objective phase** (`run_optimization`, `phase_from_spec`) runs second,
+only when `spec.yaml` declares an `optimize:` block, spending remaining margin on
+the objective that block names. Both share `_optimize`/`_result`/`accept_step`
+through the `PhaseConfig` data (`objective`/`area_budget`/`guard_band`/`label`);
+`report.py`'s `_area_optimization_lines` and `_optimization_lines` render one
+section each (Korean `## 면적 최소화` / English `## Optimization`).
 
-- The agent only **ranks knobs**: `OPTIMIZER_SCHEMA` structurally forbids a value,
-  and a deterministic search decides how far to move each one (`×0.9` per step for
-  a geometry, `±1` for a count) and measures the result.
+- **The area phase has no agent at all — that is its headline property.**
+  `rank_by_area_gain` (`area_ranking.py`) orders every tunable knob by the
+  deterministic area a one-step shrink would give up, and
+  `run_area_optimization` injects that fixed ranking into
+  `OptimizerAgents.knob_ranking` so `_knob_ranking` never calls `agents.propose`.
+  `test_the_area_phase_calls_no_agent_at_all` pins it by making `propose` raise.
+- On the **objective phase**, the agent only **ranks knobs**: `OPTIMIZER_SCHEMA`
+  structurally forbids a value, and a deterministic search decides how far to move
+  each one (`×0.9` per step for a geometry, `±1` for a count) and measures the
+  result.
+- **Measured on real ngspice runs (2026-08-02).** `benchmarks/bandgap/spec.yaml`:
+  19.19% area reduction (1.10546e-08 → 8.93292e-09), 16 steps accepted / 4
+  rejected, ~123.5s. `benchmarks/two_stage_opamp/spec.yaml`: UNCHANGED, 0 accepted
+  / 20 rejected (every top-ranked candidate immediately broke a criterion), ~24.1s.
+  Bandgap's accepted steps drained real margin: `buf0_phase_margin` 104.39° →
+  81.89° (relative slack 0.305 → 0.024), `buf1_phase_margin` 101.56° → 82.99°
+  (0.269 → 0.037) — against a spec that declares no `pvt_corners`, so nothing
+  downstream re-checks it. **This is a cost that was invisible before the
+  `unguarded_criteria` plumbing described below, not a defect being introduced
+  now**: the area phase has no ratio guard band (`AREA_PHASE.guard_band is None`),
+  and an unguarded criterion can only ever surface in an **acceptance**, never a
+  rejection — with allowance `0.0`, `guard_band_violations`' limit collapses to the
+  exact predicate `accept_step` already checked one line earlier as `overall_pass`.
+  Scanning rejections for this risk, as this feature's own first measurement did,
+  is structurally blind to it.
 - **The accept rule deliberately does NOT reuse `verify_post`**: that contract is
   "roll back if regressed", and a good optimization step consumes margin on
   purpose. A step is kept only if every criterion still passes with its guarded
@@ -341,11 +370,19 @@ on the objective declared in `spec.yaml`'s `optimize:` block.
   `benchmarks/inverting_amp` the top-level `Rin`/`Rf`/`Eopamp` **are** the circuit.
   It is handled where a judgement call belongs: a paragraph in
   `OPTIMIZER_SYSTEM_PROMPT`.
-- **Area is derived, the objective is measured.** `area.total_area` sums
-  `w × l × m` over resolvable devices (`m` multiplies area, `nf` does not), so an
-  over-budget candidate is discarded before it spends a simulation. Two things it
-  is not: it sums over subckt **definitions**, so a definition instantiated N times
-  is counted once (`structure.blocks[path].instance_count` is what a weighted
+- **Area is derived, the objective is measured — except on the area phase, where
+  the objective *is* the derived area.** `_objective_value` returns `derived_area`
+  when `phase.objective is AREA_OBJECTIVE` (`optimizer.py:46-52`), which is also
+  why `AREA_PHASE.area_budget` is structurally `None`: `accept_step`'s "objective
+  must fall" requirement already makes area monotonically decrease on that phase,
+  so a separate ratio ceiling could never bind — turning one on would be a check
+  that cannot fail, the same shape this repo already forbids elsewhere. On the
+  **objective phase** the distinction in this bullet's title holds as written:
+  `area.total_area` sums `w × l × m` over resolvable devices (`m` multiplies area,
+  `nf` does not), so an over-budget candidate is discarded before it spends a
+  simulation. Two things it is not: it sums over subckt **definitions**, so a
+  definition instantiated N times is counted once
+  (`structure.blocks[path].instance_count` is what a weighted
   version would read); and the budget compares `area / area_before`, so
   **`area_before == 0` disables it entirely** — reachable on a wrapper-cell deck
   where `build_param_envs` drops every disagreed name (`test_area_total.py` pins
@@ -364,15 +401,20 @@ on the objective declared in `spec.yaml`'s `optimize:` block.
   (`dc_gain` 71.09 → **3.14 dB** at `fs/1.98/125.0`). The
   silence-means-did-not-run rule applies to the **key's absence**, never to the
   value.
-- **"Final criteria" must say what it measured.** Three provenances are possible:
+- **"Final criteria" must say what it measured.** Four provenances are possible:
   the mid loop on one unrendered deck point; the mid loop on the worst value across
-  the reduced corner set; or the version bisection landed on (because `cli.py`
-  overwrites the key). The heading carries both axes, derived from
-  `corner_reduction.active` and `optimization.final_criteria`. **Since the LLM
-  `judge` was removed all three are judged by `evaluate_criteria`, so the "who
+  the reduced corner set; the version the **area phase** landed on
+  (`result["area_optimization"]["final_criteria"]`, wired to the top-level key at
+  `cli.py:910-911`); or the version the **objective phase** bisection landed on
+  (`cli.py:945-946` overwrites the key last, so when both phases moved the deck the
+  objective phase wins — it runs after the area phase). The heading carries both
+  axes, derived from `corner_reduction.active` and `optimization.final_criteria`
+  **plus `area_optimization.final_criteria`** (`report.py`'s
+  `_final_criteria_provenance`, added when the area phase shipped). **Since the LLM
+  `judge` was removed all four are judged by `evaluate_criteria`, so the "who
   judged" axis no longer discriminates and the *deck* axis is the whole signal** —
   a test asserting only that the heading names `evaluate_criteria` passes on all
-  three and pins nothing. A `worst_case_corners` entry whose `value` is
+  four and pins nothing. A `worst_case_corners` entry whose `value` is
   `None` is **not an argmax** — it is `missing_corners[0]` — so the report says "no
   measurement at corner X".
 - **`result.json` and `history.jsonl` were not RFC 8259 JSON, and the danger was

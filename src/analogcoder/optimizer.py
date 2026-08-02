@@ -307,6 +307,7 @@ def _result(
     guard_infeasible: list[str] | None = None,
     area_coverage: dict | None = None,
     final_criteria: list[dict] | None = None,
+    unguarded_criteria: list[str] | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -360,6 +361,15 @@ def _result(
         # 그때 cli.py는 메인 루프의 판정을 그대로 둔다.
         "final_criteria": final_criteria,
         "final_netlist_paths": state.current_netlist_paths(),
+        # 여유분 없이(guard_band_violations가 이름 부재를 0.0으로 읽는 채로)
+        # 판정된 기준의 이름. `{label}_baseline` 이벤트에만 있던 사실을 여기로
+        # 끌어온다 - history.jsonl만 읽는 소비자는 있지만 result.json/report.md만
+        # 읽는 소비자는 이 위험을 볼 방법이 없었다. 계획 문서("스펙에 없던 결정
+        # 하나")가 "보고서는 무방비 기준의 개수를 적는다"고 값을 명시했는데
+        # 그 값이 코드 어디에도 없었던 것이 최종 리뷰의 Critical이다.
+        # 빈 리스트(계산했고 전부 방비됨)와 None(allowances 자체가 아직 정해지지
+        # 않은 경로 - SKIPPED/REFUSED/예외)은 다른 사실이라 후자만 []로 접는다.
+        "unguarded_criteria": list(unguarded_criteria) if unguarded_criteria is not None else [],
     }
 
 
@@ -563,7 +573,15 @@ def accept_step(
         # 붙은 채로 멈추면 코너와 모델 변동에서 무너진다.
         return False, "; ".join(evaluation.violations)
     if evaluation.objective is None:
-        return False, f"objective {objective_name!r} is not among the measurements"
+        # "측정값에 없다"는 이름 있는 목적(전류 단계)에만 참이다 - 면적 단계의
+        # 목적은 파생값이라 애초에 measurements를 보지 않는다
+        # (`_objective_value`). 이 함수는 문자열이 된 objective_name만 받으므로
+        # 어느 쪽인지 안에서 가를 수 없다 - 두 경우 모두에서 참인 문장으로
+        # 남긴다.
+        return False, (
+            f"objective {objective_name!r} could not be evaluated for this "
+            f"candidate (no value among the measurements, and no derivable value)"
+        )
     if evaluation.objective >= best_objective:
         return False, (
             f"objective {evaluation.objective:g} is not below the current best {best_objective:g}"
@@ -1217,41 +1235,71 @@ async def _optimize(
     start_text = netlist_texts[canonical_name]
     start_area = total_area(start_text)
     area_before = start_area.area
-    # 면적 예산이 실제로 걸리는지를 여기서 한 번 정하고, 그 사실을 이력과
-    # 결과 양쪽에 싣는다. AreaTotal이 counted/skipped를 드러내는 이유가 정확히
-    # 이것인데(docstring), 지금까지 이 두 값을 읽는 곳이 자기 테스트 말고는
-    # 없었다. area_before가 0이면 아래의 `area_before > 0` 조건 때문에 예산
-    # 비교가 통째로 꺼지는데, 그것이 실제로 도달하는 경우다: 래퍼 셀
-    # 덱에서는 인스턴스마다 wn이 달라 build_param_envs가 그 이름을 버리고
-    # (tests/unit/test_area_total.py가 `counted == 0, skipped == 2`로 고정),
-    # 그러면 해소되는 소자가 하나도 없다.
-    #
-    # 이 저장소에서 게이트가 조용히 무력화된 것이 세 번이고 세 번 다 실행
-    # 로그에 보이지 않았다. 네 번째가 되지 않게 사실을 적는다.
-    area_coverage = {
-        "counted": start_area.counted,
-        "skipped": start_area.skipped,
-        "budget_enforced": area_before > 0,
-        "reason": None if area_before > 0 else (
-            f"the area budget is not enforced: no device's w/l/m could be resolved in "
-            f"{canonical_name} ({start_area.counted} counted, {start_area.skipped} skipped), "
-            f"so the starting area is 0 and every candidate's area ratio is undefined"
-        ),
-    }
-    progress["area_before"] = area_before
-    progress["area_coverage"] = area_coverage
 
     if phase is None:
         # 명시적 phase가 없으면 spec.optimize에서 오늘의 전류 단계를 만든다 -
         # spec.optimize도 없으면 정말 할 일이 없다는 뜻이라 그때만 SKIPPED다.
         # 면적 단계는 언제나 phase를 명시적으로 들고 오므로 여기를 타지 않는다.
+        #
+        # **area_coverage를 계산하기 전에 phase를 정한다.** budget_enforced가
+        # phase.area_budget을 읽어야 "예산이 있었지만 안 걸렸다"와 "예산이
+        # 아예 없다"를 가를 수 있다 - phase 없이 area_before > 0 만으로 정하면
+        # AREA_PHASE(area_budget=None)에서도 area_before가 양수라는 이유만으로
+        # "예산이 걸렸다"고 말하게 된다. 그 구분이 이 필드가 존재하는 이유라고
+        # 아래 area_coverage 주석이 말한다.
         if spec.optimize is None:
             state.log_event("optimize_skipped", {"reason": "spec declares no optimize block"})
             return _result(
                 "SKIPPED", state, None, None, area_before, area_before,
-                area_coverage=area_coverage,
+                area_coverage={
+                    "counted": start_area.counted,
+                    "skipped": start_area.skipped,
+                    "budget_enforced": False,
+                    "reason": "no optimize phase ran (spec declares no optimize block)",
+                },
             )
         phase = phase_from_spec(spec.optimize)
+
+    # 면적 예산이 실제로 걸리는지를 여기서 한 번 정하고, 그 사실을 이력과
+    # 결과 양쪽에 싣는다. AreaTotal이 counted/skipped를 드러내는 이유가 정확히
+    # 이것인데(docstring), 지금까지 이 두 값을 읽는 곳이 자기 테스트 말고는
+    # 없었다. area_before가 0이면 예산 비교가 통째로 꺼지는데, 그것이 실제로
+    # 도달하는 경우다: 래퍼 셀 덱에서는 인스턴스마다 wn이 달라
+    # build_param_envs가 그 이름을 버리고(tests/unit/test_area_total.py가
+    # `counted == 0, skipped == 2`로 고정), 그러면 해소되는 소자가 하나도
+    # 없다. **area_before > 0이어도 phase.area_budget이 None이면 마찬가지로
+    # 꺼진다** - `area_within_budget`은 `self._phase.area_budget is not None`일
+    # 때만 불린다(SearchOracle.evaluate). AREA_PHASE가 정확히 이 경우다: 목적
+    # 자체가 면적이라 accept_step의 "목적이 내려가야 한다"는 요구가 이미 면적을
+    # 단조 감소시키므로 별도 비율 상한을 켜 둬도 구조적으로 발화할 수 없다.
+    #
+    # 이 저장소에서 게이트가 조용히 무력화된 것이 세 번이고 세 번 다 실행
+    # 로그에 보이지 않았다. 네 번째가 되지 않게 사실을 적는다.
+    if area_before <= 0:
+        budget_enforced = False
+        area_reason = (
+            f"the area budget is not enforced: no device's w/l/m could be resolved in "
+            f"{canonical_name} ({start_area.counted} counted, {start_area.skipped} skipped), "
+            f"so the starting area is 0 and every candidate's area ratio is undefined"
+        )
+    elif phase.area_budget is None:
+        budget_enforced = False
+        area_reason = (
+            f"the area budget is not enforced: phase {phase.label!r} declares no area "
+            f"budget (phase.area_budget is None)"
+        )
+    else:
+        budget_enforced = True
+        area_reason = None
+
+    area_coverage = {
+        "counted": start_area.counted,
+        "skipped": start_area.skipped,
+        "budget_enforced": budget_enforced,
+        "reason": area_reason,
+    }
+    progress["area_before"] = area_before
+    progress["area_coverage"] = area_coverage
 
     objective_name = str(phase.objective)
 
@@ -1266,6 +1314,16 @@ async def _optimize(
 
     # 기준선 측정. 목적값도 에어리어도 여기서 고정된다.
     sim_result, sim_failure = await _run_simulation(agents.simulate, netlist_texts, spec)
+
+    def _unguarded(allowances: dict[str, float]) -> list[str]:
+        """이 allowances로 판정될 때 여유분이 아예 없는 기준의 이름.
+
+        guard_band_violations가 없는 이름을 `allowances.get(name, 0.0)`으로
+        읽는 것과 정확히 같은 기준이어야 한다 - 여기서 다른 기준을 쓰면
+        "무방비"라는 이름표가 실제로 판정에 쓰인 여유분과 어긋난다.
+        `_baseline_event`와 `_result`가 이 하나의 함수를 공유하는 이유가
+        그것이다."""
+        return [c.name for c in spec.all_criteria if c.name not in allowances]
 
     def _baseline_event(allowances: dict[str, float]) -> dict:
         """`{label}_baseline` 페이로드. unguarded_criteria는 그 호출 시점까지
@@ -1287,9 +1345,7 @@ async def _optimize(
             "area_skipped": area_coverage["skipped"],
             "area_budget_enforced": area_coverage["budget_enforced"],
             "area_reason": area_coverage["reason"],
-            "unguarded_criteria": [
-                c.name for c in spec.all_criteria if c.name not in allowances
-            ],
+            "unguarded_criteria": _unguarded(allowances),
             **(sim_result or {"failure": sim_failure}),
         }
 
@@ -1307,11 +1363,14 @@ async def _optimize(
             "objective": None, "area": area_before, "accepted": False,
             "gate": None,
             "reason": sim_failure
-            or f"objective {objective_name!r} is not among the measurements",
+            or (
+                f"objective {objective_name!r} could not be evaluated at the "
+                f"baseline (no value among the measurements, and no derivable value)"
+            ),
         })
         return _result(
             "UNCHANGED", state, None, None, area_before, area_before,
-            area_coverage=area_coverage,
+            area_coverage=area_coverage, unguarded_criteria=_unguarded({}),
         )
 
     # 코너를 잴 수단이 있는가. 스펙에 코너가 없거나 스윕 콜러블이 없으면 코너
@@ -1347,6 +1406,7 @@ async def _optimize(
                 "UNCHANGED", state, objective_before, objective_before,
                 area_before, area_before, pvt_sweep=entry_sweep,
                 corner_failure=entry_failure, area_coverage=area_coverage,
+                unguarded_criteria=_unguarded(ratio),
             )
         # 균일한 비율(추측) 대신 이미 값을 치른 스윕에서 기준별 실측 여유분을
         # 읽는다. reference는 measurement로, 스윕은 기준 이름으로 색인되므로
@@ -1442,6 +1502,9 @@ async def _optimize(
             rejected_by_reason=by_reason, pvt_sweep=sweep,
             corner_failure=corner_failure, guard_infeasible=guard_infeasible,
             area_coverage=area_coverage, final_criteria=record.get("criteria"),
+            # 이 실행이 실제로 판정에 쓴 allowances에서 잰다 - 진입 스윕 이후로
+            # 고정된 값이므로 탐색 결과가 어떤 버전에 착지하든 같다.
+            unguarded_criteria=_unguarded(allowances),
         )
 
     if not corner_capable:
