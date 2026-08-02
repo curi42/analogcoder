@@ -116,13 +116,16 @@ import statistics
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "src"))
 
+from analogcoder.area_limits import index_baseline_components  # noqa: E402
+from analogcoder.area_ranking import rank_by_area_gain  # noqa: E402
 from analogcoder.curation import COMPARISON_REL_TOLERANCE  # noqa: E402
 from analogcoder.netlist import apply_changes, parse_netlist, parse_spice_value, resolve_includes  # noqa: E402
+from analogcoder.optimizer import _area_change, _area_knob_state  # noqa: E402
 from analogcoder.simulators.cache import CachingSimulator  # noqa: E402
 from analogcoder.simulators.ngspice import NgspiceBackend  # noqa: E402
 from analogcoder.simulators.parallel import default_workers, map_points  # noqa: E402
@@ -167,9 +170,92 @@ BIAS_GENERATOR_REFDES = {
 MAX_TOTAL_SIMS = 8000
 MAX_WALL_SECONDS = 40 * 60
 
+
+@dataclass(frozen=True)
+class DeckProfile:
+    """어느 덱을 어떻게 재는가. **기본 프로파일은 T17이 실제로 돌린 설정 그대로다.**
+
+    이 데이터클래스가 생긴 이유는 T18b(밴드갭 결합 선행 조건 측정)가 같은
+    지표 공식을 써야 하기 때문이다 - 공식을 복사하면 두 결과가 비교 불가능해지고,
+    이 저장소는 그 실패(`compose.py`가 `netlist.py`의 include 규칙을 손으로
+    베껴 양방향으로 갈라진 것)를 이미 치렀다. 그래서 `_interaction`/`_beats`/
+    `_pair_grid`/`_levels_for`/`SCALES_*`/임계값은 **한 벌만** 존재하고,
+    덱마다 다른 것(스펙 경로, 측정값 이름, 바이스테이블 완화책, 노브 출처)만
+    여기로 뺐다.
+
+    `nodeset_line`/`degn_probe`가 `None`인 프로파일에서는 **바이스테이블 확인이
+    돌지 않는다**. "확인했고 깨끗했다"와 "확인하지 않았다"는 다른 사실이므로
+    산출물의 `bistability_validity.checked`가 그것을 명시한다."""
+
+    key: str
+    spec_path: str
+    circuit_name: str
+    # None이면 spec.canonical(= testbenches[0])을 쓴다.
+    testbench_name: str | None
+    measurements: tuple[str, ...]
+    # 바이스테이블 완화책. None이면 덱에 아무것도 주입하지 않는다.
+    nodeset_line: str | None
+    degn_probe: str | None
+    degn_state_a_threshold: float | None
+    bias_generator_refdes: frozenset
+    # "tunable_index": 덱의 tunable 인덱스 전체(T17).
+    # "area_ranking": optimizer.run_area_optimization이 실제로 쓰는 면적 이득
+    #                 순위(T18b) - 그 단계가 건드리는 노브만 재는 것이 질문이다.
+    knob_source: str
+    top_knobs: int | None
+    # 헤드라인 사례(있으면 산출물에 별도 확인 칸을 만든다).
+    headline_pair: tuple[str, str] | None
+    headline_measurement: str | None
+
+
+TWO_STAGE_PROFILE = DeckProfile(
+    key="two_stage_opamp",
+    spec_path=SPEC_PATH,
+    circuit_name=CIRCUIT_NAME,
+    testbench_name=TESTBENCH_NAME,
+    measurements=MEASUREMENTS,
+    nodeset_line=NODESET_LINE,
+    degn_probe=DEGN_PROBE,
+    degn_state_a_threshold=DEGN_STATE_A_THRESHOLD,
+    bias_generator_refdes=frozenset(BIAS_GENERATOR_REFDES),
+    knob_source="tunable_index",
+    top_knobs=None,
+    headline_pair=("OPAMP2STAGE.X5.L", "OPAMP2STAGE.X7.L"),
+    headline_measurement="ugbw_hz",
+)
+
+# T18b. 밴드갭에는 바이스테이블 완화책이 **없다** - 이 덱이 그 오염을 갖지
+# 않는다는 것은 `scripts/dc_solution_uniqueness.py`가 이미 쟀다(바이어스 체인
+# 초기 추정을 다섯 방향으로, 소자 크기 네 가지, 테스트벤치 덱 네 개에 걸쳐
+# 밀었고 여섯 프로브가 매번 동일했다). 그래도 **이 실행에서 확인한 것은
+# 아니므로**, 산출물은 "확인 안 함"을 명시한다.
+BANDGAP_PROFILE = DeckProfile(
+    key="bandgap",
+    spec_path=os.path.join(REPO, "benchmarks", "bandgap", "spec.yaml"),
+    circuit_name="bandgap",
+    testbench_name=None,  # spec.canonical
+    measurements=("vbgout_v", "vbg0_v", "vbg1_v", "iq_ua", "tc_ppm_per_c"),
+    nodeset_line=None,
+    degn_probe=None,
+    degn_state_a_threshold=None,
+    bias_generator_refdes=frozenset(),
+    knob_source="area_ranking",
+    top_knobs=12,
+    headline_pair=None,
+    headline_measurement=None,
+)
+
+PROFILES = {p.key: p for p in (TWO_STAGE_PROFILE, BANDGAP_PROFILE)}
+
 DEFAULT_OUT_JSON = os.path.join(
     REPO, "docs", "superpowers", "specs", "2026-07-30-knob-coupling-scan.json"
 )
+OUT_JSON_BY_DECK = {
+    "two_stage_opamp": DEFAULT_OUT_JSON,
+    "bandgap": os.path.join(
+        REPO, "docs", "superpowers", "specs", "2026-08-02-bandgap-coupling-precondition.json"
+    ),
+}
 _SCRATCH = "/private/tmp/claude-501/-Users-sunbeom-orca-projects-analogcoder/e49ad585-6ed0-4f42-8349-b144ea9e75bd/scratchpad"
 DEFAULT_LOG = os.path.join(
     _SCRATCH if os.path.isdir(_SCRATCH) else tempfile.gettempdir(),
@@ -215,9 +301,12 @@ def _find_component(parsed, scoped_refdes: str):
     return candidates[0] if len(candidates) == 1 else None
 
 
-def build_knobs(base_text: str) -> tuple[list[Knob], list[str]]:
+def build_knobs(
+    base_text: str, profile: "DeckProfile" = None
+) -> tuple[list[Knob], list[str]]:
     """덱의 tunable 인덱스 전체를 Knob으로. 값이 안 파싱되면 건너뛰고 이름을 모은다."""
-    structure = derive_structure(base_text, CIRCUIT_NAME)
+    profile = profile or TWO_STAGE_PROFILE
+    structure = derive_structure(base_text, profile.circuit_name)
     parsed = parse_netlist(base_text)
     knobs, skipped = [], []
     for entry in structure.tunable:
@@ -244,6 +333,81 @@ def build_knobs(base_text: str) -> tuple[list[Knob], list[str]]:
             )
         )
     return knobs, skipped
+
+
+def build_knobs_from_area_ranking(
+    rank_text: str, profile: "DeckProfile"
+) -> tuple[list[Knob], list[str], dict]:
+    """면적 단계가 **실제로 건드리는** 노브를, 그 단계가 쓰는 코드로 순위 매긴다.
+
+    `optimizer.run_area_optimization`의 준비 구간을 그대로 재현한다:
+    `derive_structure` → `_area_knob_state`(주소 지정 게이트 + 덱 철자 토큰) →
+    `rank_by_area_gain(text, candidates, _area_change)`. 순위 공식이나 스텝
+    규칙을 여기 복제하지 않는다 - 복제하면 이 측정이 "면적 단계가 만지는
+    노브"가 아니라 "이 스크립트가 만진다고 생각하는 노브"를 재게 된다.
+
+    `rank_text`는 `run_area_optimization`이 읽는 것과 같은 **덱 파일 원문**이다
+    (`state.current_netlist_texts()`가 파일을 그대로 읽는다). include 절대경로화는
+    시뮬레이션용 텍스트에만 필요하고, 순위에는 영향이 없다 - `resolve_includes`는
+    `.include` 경로만 다시 쓸 뿐 본문을 인라인하지 않는다."""
+    parsed = parse_netlist(rank_text)
+    structure = derive_structure(rank_text, profile.circuit_name)
+    baseline_components = index_baseline_components(rank_text)
+    candidates = []
+    for entry in structure.tunable:
+        knob_state = _area_knob_state(
+            rank_text, baseline_components, entry.refdes, entry.param
+        )
+        if knob_state is None:
+            continue
+        candidates.append(
+            (entry.refdes, knob_state.token, knob_state.value, knob_state.integer)
+        )
+    ranking = rank_by_area_gain(rank_text, candidates, _area_change)
+
+    integer_by_label = {f"{r}.{p}": integer for r, p, _v, integer in candidates}
+    knobs, skipped = [], []
+    selected = ranking.entries
+    if profile.top_knobs is not None:
+        selected = selected[: profile.top_knobs]
+    for entry in selected:
+        label = f"{entry.refdes}.{entry.param}"
+        comp = _find_component(parsed, entry.refdes)
+        raw = None
+        if comp is not None:
+            raw = comp.value if entry.param == "value" else comp.params.get(entry.param)
+        baseline = None
+        if raw is not None:
+            try:
+                baseline = parse_spice_value(raw)
+            except ValueError:
+                baseline = None
+        if comp is None or raw is None or baseline is None:
+            skipped.append(label)
+            continue
+        knobs.append(
+            Knob(
+                refdes=entry.refdes,
+                param=entry.param,
+                baseline_raw=raw,
+                baseline=baseline,
+                is_integer=integer_by_label.get(label, entry.param.lower() in INTEGER_PARAMS),
+            )
+        )
+    record = {
+        "source": "optimizer.run_area_optimization 준비 구간 재현 "
+                  "(derive_structure → _area_knob_state → rank_by_area_gain(_area_change))",
+        "n_tunable": len(structure.tunable),
+        "n_candidates": len(candidates),
+        "ranked_all": [
+            {"refdes": e.refdes, "param": e.param, "gain": e.gain} for e in ranking.entries
+        ],
+        "zero_gain": ranking.zero_gain,
+        "unknown": ranking.unknown,
+        "top_knobs_requested": profile.top_knobs,
+        "top_knobs_used": [f"{e.refdes}.{e.param}" for e in selected],
+    }
+    return knobs, skipped, record
 
 
 def _levels_for(knob: Knob, scales: tuple[float, ...]) -> tuple[list[float], list[float]]:
@@ -280,32 +444,50 @@ def _insert_before_end(text: str, line: str) -> str:
     return "\n".join(lines[:end_at] + [line] + lines[end_at:]) + "\n"
 
 
-def build_control_block(base_control_block: str) -> str:
+def build_control_block(base_control_block: str, profile: "DeckProfile" = None) -> str:
     """degn 프로브를 다른 측정값과 **같은** 컨트롤 블록에 넣는다(별도 실행 금지).
 
     `op`을 `ac` 분석보다 먼저 돌리고 그 직후에 print해야 print가 op의 동작점을
-    읽는다 - ac 다음에 두면 현재 plot이 ac로 바뀌어 다른 것을 읽는다."""
+    읽는다 - ac 다음에 두면 현재 plot이 ac로 바뀌어 다른 것을 읽는다.
+
+    **프로파일에 프로브가 없으면 컨트롤 블록을 손대지 않고 그대로 돌려준다.**
+    이것이 중요한 이유: ngspice는 `print` 한 줄에 이름이 하나라도 틀리면
+    **줄 전체를 버린다**(`CLAUDE.md`가 종료코드 0짜리 조용한 실패 다섯 중
+    하나로 기록한 것). 밴드갭 덱에는 `xdut.degn`이 없으므로 이 주입을 그대로
+    가져가면 측정이 멀쩡해 보이면서 틀린다."""
+    profile = profile or TWO_STAGE_PROFILE
+    if profile.degn_probe is None:
+        return base_control_block
     lines = base_control_block.splitlines()
     idx = next(i for i, ln in enumerate(lines) if ln.strip().lower() == ".control")
-    injected = ["op", f"print {DEGN_PROBE}"]
+    injected = ["op", f"print {profile.degn_probe}"]
     return "\n".join(lines[: idx + 1] + injected + lines[idx + 1 :]) + "\n"
 
 
 _DEGN_RE = re.compile(re.escape(DEGN_PROBE) + r"\s*=\s*([-+0-9.eE]+)")
 
 
-def _extract_degn(raw_log: str) -> float | None:
+def _extract_degn(raw_log: str, probe: str | None = DEGN_PROBE) -> float | None:
     """raw_log에서 degn 값을 뽑는다. `.nodeset` 줄은 걸러낸다 - 안 그러면 내가
-    넣은 초기 추정값을 측정값으로 잘못 읽을 수 있다(이 저장소가 이미 밟은 함정)."""
+    넣은 초기 추정값을 측정값으로 잘못 읽을 수 있다(이 저장소가 이미 밟은 함정).
+
+    `probe`가 None이면 이 덱에는 프로브가 없다 - **읽지 않았다**는 뜻의 None을
+    낸다(0.0이 아니다)."""
+    if probe is None:
+        return None
     filtered = "\n".join(
         ln for ln in raw_log.splitlines() if not ln.strip().lower().startswith(".nodeset")
     )
-    m = _DEGN_RE.search(filtered)
+    pattern = _DEGN_RE if probe == DEGN_PROBE else re.compile(
+        re.escape(probe) + r"\s*=\s*([-+0-9.eE]+)"
+    )
+    m = pattern.search(filtered)
     return float(m.group(1)) if m else None
 
 
 def _grid_text(base_text: str, knob_a: Knob, val_a: float, is_base_a: bool,
-                knob_b: Knob, val_b: float, is_base_b: bool) -> str:
+                knob_b: Knob, val_b: float, is_base_b: bool,
+                profile: "DeckProfile" = None) -> str:
     changes = []
     if not is_base_a:
         changes.append({"refdes": knob_a.refdes, "param": knob_a.param,
@@ -313,11 +495,17 @@ def _grid_text(base_text: str, knob_a: Knob, val_a: float, is_base_a: bool,
     if not is_base_b:
         changes.append({"refdes": knob_b.refdes, "param": knob_b.param,
                          "new_value": _fmt_value(val_b, knob_b.is_integer)})
+    profile = profile or TWO_STAGE_PROFILE
     modified = apply_changes(base_text, changes) if changes else base_text
-    return _insert_before_end(modified, NODESET_LINE)
+    # 프로파일에 완화책이 없으면 덱에 아무것도 넣지 않는다. `.nodeset`이
+    # 이름 짓는 노드(`xdut.nbias`/`xdut.pbias`)는 밴드갭 덱에 존재하지 않는다.
+    if profile.nodeset_line is None:
+        return modified
+    return _insert_before_end(modified, profile.nodeset_line)
 
 
-def _simulate_text(text: str, control_block: str, backend) -> dict:
+def _simulate_text(text: str, control_block: str, backend, profile: "DeckProfile" = None) -> dict:
+    profile = profile or TWO_STAGE_PROFILE
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "deck.cir")
         with open(path, "w") as f:
@@ -326,7 +514,7 @@ def _simulate_text(text: str, control_block: str, backend) -> dict:
     return {
         "status": result.status,
         "measurements": dict(result.measurements),
-        "degn": _extract_degn(result.raw_log),
+        "degn": _extract_degn(result.raw_log, profile.degn_probe),
     }
 
 
@@ -342,11 +530,13 @@ class PairGrid:
 
 
 def _collect_texts_for_pairs(
-    knobs: list[Knob], pairs: list[tuple[int, int]], scales: tuple[float, ...], base_text: str
+    knobs: list[Knob], pairs: list[tuple[int, int]], scales: tuple[float, ...], base_text: str,
+    profile: "DeckProfile" = None,
 ) -> tuple[dict, dict]:
     """`pairs`(knobs 인덱스 쌍)의 전체 격자에 필요한 유일한 덱 텍스트 집합과,
     각 노브의 (레벨, 기준 인덱스, 버려진 scale)을 낸다. 텍스트로 중복을
     제거하므로 "출하값 고정" 축은 파트너가 몇 개든 한 번만 계산된다."""
+    profile = profile or TWO_STAGE_PROFILE
     level_cache: dict[int, tuple[list[float], int, list[float]]] = {}
 
     def levels_of(i: int):
@@ -362,26 +552,33 @@ def _collect_texts_for_pairs(
         lb, bb, _ = levels_of(j)
         for ia, va in enumerate(la):
             for ib, vb in enumerate(lb):
-                text = _grid_text(base_text, knobs[i], va, ia == ba, knobs[j], vb, ib == bb)
+                text = _grid_text(base_text, knobs[i], va, ia == ba, knobs[j], vb, ib == bb,
+                                  profile)
                 unique_texts.add(text)
     return unique_texts, level_cache
 
 
-def _run_texts(unique_texts: set[str], control_block: str, backend, max_workers=None) -> dict:
+def _run_texts(unique_texts: set[str], control_block: str, backend, max_workers=None,
+               profile: "DeckProfile" = None) -> dict:
+    profile = profile or TWO_STAGE_PROFILE
     items = [(t, t) for t in unique_texts]
-    return map_points(lambda t: _simulate_text(t, control_block, backend), items, max_workers)
+    return map_points(
+        lambda t: _simulate_text(t, control_block, backend, profile), items, max_workers
+    )
 
 
-def _pair_grid(knobs, i, j, level_cache, base_text, results_by_text) -> PairGrid:
+def _pair_grid(knobs, i, j, level_cache, base_text, results_by_text,
+               profile: "DeckProfile" = None) -> PairGrid:
+    profile = profile or TWO_STAGE_PROFILE
     la, ba, _ = level_cache[i]
     lb, bb, _ = level_cache[j]
     values = {}
     for ia, va in enumerate(la):
         for ib, vb in enumerate(lb):
-            text = _grid_text(base_text, knobs[i], va, ia == ba, knobs[j], vb, ib == bb)
+            text = _grid_text(base_text, knobs[i], va, ia == ba, knobs[j], vb, ib == bb, profile)
             r = results_by_text.get(text)
             entry = {"degn": None}
-            for name in MEASUREMENTS:
+            for name in profile.measurements:
                 entry[name] = r["measurements"].get(name) if r else None
             if r is not None:
                 entry["degn"] = r["degn"]
@@ -422,24 +619,38 @@ def _interaction(grid: PairGrid, name: str, ia0: int, ia1: int, ib0: int, ib1: i
     return I, I / denom
 
 
-def _degn_deviations(grid: PairGrid) -> int:
+def _degn_deviations(grid: PairGrid, profile: "DeckProfile" = None) -> int:
+    """이탈 점 수. 프로파일에 임계값이 없으면 **확인 자체를 하지 않은 것**이라
+    0을 낸다 - 그리고 그 0을 "깨끗함"으로 읽으면 안 되기 때문에 산출물은
+    `bistability_validity.checked=False`로 별도로 말한다."""
+    profile = profile or TWO_STAGE_PROFILE
+    if profile.degn_state_a_threshold is None:
+        return 0
     return sum(
         1
         for entry in grid.values.values()
-        if entry["degn"] is not None and entry["degn"] > DEGN_STATE_A_THRESHOLD
+        if entry["degn"] is not None and entry["degn"] > profile.degn_state_a_threshold
     )
 
 
-def _touches_bias_generator(knob_a: Knob, knob_b: Knob) -> bool:
-    return knob_a.refdes in BIAS_GENERATOR_REFDES or knob_b.refdes in BIAS_GENERATOR_REFDES
+def _touches_bias_generator(knob_a: Knob, knob_b: Knob, profile: "DeckProfile" = None) -> bool:
+    profile = profile or TWO_STAGE_PROFILE
+    return (
+        knob_a.refdes in profile.bias_generator_refdes
+        or knob_b.refdes in profile.bias_generator_refdes
+    )
 
 
-def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
+def stage1(knobs, base_text, control_block, backend, log, max_workers=None,
+           profile: "DeckProfile" = None):
+    profile = profile or TWO_STAGE_PROFILE
     n = len(knobs)
     pairs = list(itertools.combinations(range(n), 2))
     log(f"1단계: 노브 {n}개, 쌍 {len(pairs)}개, 스케일 {SCALES_STAGE1}")
 
-    unique_texts, level_cache = _collect_texts_for_pairs(knobs, pairs, SCALES_STAGE1, base_text)
+    unique_texts, level_cache = _collect_texts_for_pairs(
+        knobs, pairs, SCALES_STAGE1, base_text, profile
+    )
     log(f"1단계: 유일 덱 텍스트 {len(unique_texts)}개 "
         f"(전수 격자점이었다면 최대 {len(pairs) * 9}개)")
 
@@ -448,7 +659,7 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
         return None
 
     t0 = time.monotonic()
-    results_by_text = _run_texts(unique_texts, control_block, backend, max_workers)
+    results_by_text = _run_texts(unique_texts, control_block, backend, max_workers, profile)
     elapsed = time.monotonic() - t0
     log(f"1단계: 시뮬레이션 {len(unique_texts)}개 완료, {elapsed:.1f}s "
         f"(캐시: {backend.stats()})")
@@ -466,16 +677,16 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
     degn_dev_bias = 0
     degn_dev_non_bias = 0
     for i, j in pairs:
-        grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text)
-        dev = _degn_deviations(grid)
+        grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text, profile)
+        dev = _degn_deviations(grid, profile)
         degn_dev_total += dev
-        touches_bias = _touches_bias_generator(knobs[i], knobs[j])
+        touches_bias = _touches_bias_generator(knobs[i], knobs[j], profile)
         if touches_bias:
             degn_dev_bias += dev
         else:
             degn_dev_non_bias += dev
         per_measurement = {}
-        for name in MEASUREMENTS:
+        for name in profile.measurements:
             beats, single_max = _beats(grid, name)
             ia0, ia1 = 0, len(grid.levels_a) - 1
             ib0, ib1 = 0, len(grid.levels_b) - 1
@@ -512,7 +723,8 @@ def stage1(knobs, base_text, control_block, backend, log, max_workers=None):
 
 
 def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_workers=None,
-           already_computed: set | None = None, sims_budget_remaining: int | None = None):
+           already_computed: set | None = None, sims_budget_remaining: int | None = None,
+           profile: "DeckProfile" = None):
     """1단계에서 결합으로 나온 (쌍,측정값)의 쌍들만, 7x7로 확인한다.
 
     `already_computed`(1단계가 실제로 돌린 덱 텍스트 집합)와 `sims_budget_remaining`은
@@ -521,13 +733,16 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
     **새** 시뮬레이션은 그 차집합뿐이다. `backend`(같은 프로세스의 같은
     CachingSimulator 인스턴스)가 그 재사용을 실제로 수행한다 - 여기서는 예산을
     넘는지 판단하기 위해 미리 세어 볼 뿐이다."""
+    profile = profile or TWO_STAGE_PROFILE
     idx_by_label = {k.label: n for n, k in enumerate(knobs)}
     pair_indices = sorted({
         tuple(sorted((idx_by_label[a], idx_by_label[b]))) for a, b in candidate_pairs
     })
     log(f"2단계: 확인 대상 쌍 {len(pair_indices)}개, 스케일 {SCALES_STAGE2}")
 
-    unique_texts, level_cache = _collect_texts_for_pairs(knobs, pair_indices, SCALES_STAGE2, base_text)
+    unique_texts, level_cache = _collect_texts_for_pairs(
+        knobs, pair_indices, SCALES_STAGE2, base_text, profile
+    )
     already_computed = already_computed or set()
     new_texts = unique_texts - already_computed
     log(f"2단계: 유일 덱 텍스트 {len(unique_texts)}개 (1단계와 겹쳐 재사용 가능한 것 "
@@ -551,7 +766,7 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
         }
 
     t0 = time.monotonic()
-    results_by_text = _run_texts(unique_texts, control_block, backend, max_workers)
+    results_by_text = _run_texts(unique_texts, control_block, backend, max_workers, profile)
     elapsed = time.monotonic() - t0
     stats = backend.stats()
     log(f"2단계: 시뮬레이션 배치 완료, {elapsed:.1f}s (누적 캐시: {stats})")
@@ -567,9 +782,9 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
     degn_dev_bias = 0
     degn_dev_non_bias = 0
     for i, j in pair_indices:
-        grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text)
-        dev = _degn_deviations(grid)
-        touches_bias = _touches_bias_generator(knobs[i], knobs[j])
+        grid = _pair_grid(knobs, i, j, level_cache, base_text, results_by_text, profile)
+        dev = _degn_deviations(grid, profile)
+        touches_bias = _touches_bias_generator(knobs[i], knobs[j], profile)
         degn_dev_total += dev
         if touches_bias:
             degn_dev_bias += dev
@@ -581,7 +796,7 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
             "void": dev > 0,
         }
         na, nb = len(grid.levels_a), len(grid.levels_b)
-        for name in MEASUREMENTS:
+        for name in profile.measurements:
             rels = []
             for ia0, ia1 in itertools.combinations(range(na), 2):
                 for ib0, ib1 in itertools.combinations(range(nb), 2):
@@ -621,8 +836,22 @@ def stage2(knobs, candidate_pairs, base_text, control_block, backend, log, max_w
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=DEFAULT_OUT_JSON)
+    parser.add_argument("--out", default=None)
     parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument(
+        "--deck", choices=sorted(PROFILES), default="two_stage_opamp",
+        help=(
+            "어느 덱을 잴 것인가. 기본값 two_stage_opamp는 T17이 실제로 돌린 설정 "
+            "그대로다(플래그를 하나도 주지 않으면 T17의 재현 실행이 된다). "
+            "bandgap은 T18b - 면적 단계가 실제로 만지는 노브(면적 이득 순위 상위 "
+            "12개)만 재고, 바이스테이블 완화책은 붙지 않는다."
+        ),
+    )
+    parser.add_argument(
+        "--top-knobs", type=int, default=None,
+        help="면적 순위 상위 N개만 쓴다(knob_source=area_ranking인 덱에서만). "
+             "기본값은 프로파일이 정한다.",
+    )
     parser.add_argument(
         "--stage2-max-pairs", type=int, default=None,
         help=(
@@ -635,18 +864,39 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    spec = load_spec(SPEC_PATH)
-    tb = next(t for t in spec.testbenches if t.name == TESTBENCH_NAME)
-    base_text = resolve_includes(open(tb.netlist_path).read(), os.path.dirname(tb.netlist_path))
-    control_block = build_control_block(tb.control_block)
+    profile = PROFILES[args.deck]
+    if args.top_knobs is not None:
+        profile = replace(profile, top_knobs=args.top_knobs)
+    out_path = args.out or OUT_JSON_BY_DECK[profile.key]
 
-    knobs, skipped = build_knobs(base_text)
-    _log(f"tunable 인덱스: {len(knobs) + len(skipped)}개, 건너뜀 {len(skipped)}개 {skipped}")
+    spec = load_spec(profile.spec_path)
+    if profile.testbench_name is None:
+        tb = spec.canonical
+    else:
+        tb = next(t for t in spec.testbenches if t.name == profile.testbench_name)
+    # 순위는 `run_area_optimization`이 읽는 것과 같은 **파일 원문**에서 매기고,
+    # 시뮬레이션은 include를 절대경로화한 텍스트로 돈다. resolve_includes는
+    # 본문을 인라인하지 않고 경로만 다시 쓰므로 tunable 인덱스는 둘이 같다.
+    rank_text = open(tb.netlist_path).read()
+    base_text = resolve_includes(rank_text, os.path.dirname(tb.netlist_path))
+    control_block = build_control_block(tb.control_block, profile)
+
+    knob_ranking_record = None
+    if profile.knob_source == "area_ranking":
+        knobs, skipped, knob_ranking_record = build_knobs_from_area_ranking(rank_text, profile)
+        _log(f"면적 이득 순위: tunable {knob_ranking_record['n_tunable']}개 중 "
+             f"후보 {knob_ranking_record['n_candidates']}개, 순위 "
+             f"{len(knob_ranking_record['ranked_all'])}개, 상위 {len(knobs)}개 사용")
+        _log(f"상위 노브: {[k.label for k in knobs]}")
+    else:
+        knobs, skipped = build_knobs(base_text, profile)
+        _log(f"tunable 인덱스: {len(knobs) + len(skipped)}개, 건너뜀 {len(skipped)}개 {skipped}")
+    _log(f"덱: {profile.key}, 테스트벤치: {tb.name}, 측정값: {list(profile.measurements)}")
     _log(f"워커 수: {args.max_workers or default_workers()}")
 
     backend = CachingSimulator(NgspiceBackend())
 
-    s1 = stage1(knobs, base_text, control_block, backend, _log, args.max_workers)
+    s1 = stage1(knobs, base_text, control_block, backend, _log, args.max_workers, profile)
     if s1 is None:
         _log("1단계가 상한 초과로 중단됐다 - 결과 없이 종료")
         return 1
@@ -682,6 +932,7 @@ def main() -> int:
             s2 = stage2(
                 knobs, candidate_pairs, base_text, control_block, backend, _log, args.max_workers,
                 already_computed=s1["unique_texts"], sims_budget_remaining=budget_remaining,
+                profile=profile,
             )
 
     s2_new_sims = 0 if s2 is None else s2.get("new_sims", s2.get("unique_sims", 0))
@@ -716,33 +967,38 @@ def main() -> int:
     valid_confirmed_pairs = [[a, b] for a, b in confirmed_pairs if not _pair_void(a, b)]
     void_confirmed_pairs = [[a, b] for a, b in confirmed_pairs if _pair_void(a, b)]
 
-    HEADLINE_PAIR = ("OPAMP2STAGE.X5.L", "OPAMP2STAGE.X7.L")
-    HEADLINE_MEASUREMENT = "ugbw_hz"
-    headline_in_s1 = HEADLINE_PAIR in s1["pairs"]
-    headline_void = _pair_void(*HEADLINE_PAIR) if headline_in_s1 else None
-    headline_confirmed = list(HEADLINE_PAIR) in confirmed_pairs
-    headline_check = {
-        "pair": list(HEADLINE_PAIR),
-        "measurement": HEADLINE_MEASUREMENT,
-        "confirmed": headline_confirmed,
-        "void": headline_void,
-        "valid_and_confirmed": bool(headline_confirmed and headline_void is False),
-    }
-    _log(f"헤드라인 사례 {HEADLINE_PAIR} 확인={headline_confirmed} 무효={headline_void}")
+    headline_check = None
+    if profile.headline_pair is not None:
+        HEADLINE_PAIR = profile.headline_pair
+        HEADLINE_MEASUREMENT = profile.headline_measurement
+        headline_in_s1 = HEADLINE_PAIR in s1["pairs"]
+        headline_void = _pair_void(*HEADLINE_PAIR) if headline_in_s1 else None
+        headline_confirmed = list(HEADLINE_PAIR) in confirmed_pairs
+        headline_check = {
+            "pair": list(HEADLINE_PAIR),
+            "measurement": HEADLINE_MEASUREMENT,
+            "confirmed": headline_confirmed,
+            "void": headline_void,
+            "valid_and_confirmed": bool(headline_confirmed and headline_void is False),
+        }
+        _log(f"헤드라인 사례 {HEADLINE_PAIR} 확인={headline_confirmed} 무효={headline_void}")
 
     out = {
-        "spec": os.path.relpath(SPEC_PATH, REPO),
-        "testbench": TESTBENCH_NAME,
-        "measurements": list(MEASUREMENTS),
+        "deck": profile.key,
+        "spec": os.path.relpath(profile.spec_path, REPO),
+        "testbench": tb.name,
+        "measurements": list(profile.measurements),
         "tolerance": COMPARISON_REL_TOLERANCE,
         "knobs": {
             "total_tunable": len(knobs) + len(skipped),
             "used": [k.label for k in knobs],
             "skipped_unparseable": skipped,
         },
-        "nodeset": NODESET_LINE,
-        "degn_state_a_threshold": DEGN_STATE_A_THRESHOLD,
-        "bias_generator_refdes": sorted(BIAS_GENERATOR_REFDES),
+        "nodeset": profile.nodeset_line,
+        "degn_state_a_threshold": profile.degn_state_a_threshold,
+        "bias_generator_refdes": sorted(profile.bias_generator_refdes),
+        "knob_source": profile.knob_source,
+        "area_gain_ranking": knob_ranking_record,
         "stage1": {
             "scales": list(SCALES_STAGE1),
             "n_pairs": len(s1["pairs"]),
@@ -789,6 +1045,19 @@ def main() -> int:
         # 분해는 stage1/stage2의 degn_deviation_points_* 필드에 **진단으로만**
         # 남아 있고, 여기서는 쓰지 않는다.
         "bistability_validity": {
+            # **이 실행에서 바이스테이블 확인이 돌았는가.** "확인했고 깨끗했다"와
+            # "확인하지 않았다"는 다른 사실이고, 이 필드가 그 둘을 가른다.
+            # False일 때 degn_deviation_points가 0인 것은 "이탈이 없었다"가
+            # 아니라 "재지 않았다"는 뜻이다.
+            "checked": profile.degn_probe is not None,
+            "not_checked_reason": None if profile.degn_probe is not None else (
+                f"덱 '{profile.key}'에는 바이스테이블 완화책도 상태 프로브도 붙지 않았다. "
+                "이 덱이 그 오염을 갖지 않는다는 근거는 별도 측정에 있다"
+                "(scripts/dc_solution_uniqueness.py: 바이어스 체인 초기 추정을 다섯 "
+                "방향으로, 소자 크기 네 가지, 테스트벤치 덱 네 개에 걸쳐 밀었고 여섯 "
+                "프로브가 매번 동일했다). **그러나 이번 실행에서 확인한 것은 아니다.** "
+                "degn_deviation_points=0은 '이탈 없음'이 아니라 '재지 않음'이다."
+            ),
             "rule": "이탈 점(v(xdut.degn) > degn_state_a_threshold)을 하나라도 가진 "
                     "쌍은 무효, 0인 쌍은 유효 - 사전 등록 문장을 그대로 적용한다.",
             "confirmed_pairs_total": len(confirmed_pairs),
@@ -819,6 +1088,16 @@ def main() -> int:
             "후보가 정해진 뒤 별도로 한다.",
             "정수 노브(mf)는 반올림 후 1 미만인 scale이 버려지므로 그 축의 '낮은 끝'이 "
             "출하값 자체가 되는 경우가 있다 - knobs.dropped_scales_stage1로 남는다.",
+            "결합은 (덱 x 테스트벤치 x 측정값)의 성질이다. 여기서 잰 것은 "
+            f"'{tb.name}' 테스트벤치 하나이므로, 이 결과는 같은 덱의 다른 "
+            "테스트벤치를 대변하지 않는다.",
+        ] + ([] if profile.degn_probe is not None else [
+            f"**이 실행에서 바이스테이블 확인은 돌지 않았다**(덱 '{profile.key}'에 프로브도 "
+            "완화책도 붙지 않았다). degn_deviation_points=0은 '이탈 없음'이 아니라 "
+            "'재지 않음'이다 - bistability_validity.checked 참조. 이 덱이 오염되지 "
+            "않았다는 근거는 scripts/dc_solution_uniqueness.py의 별도 측정이고, "
+            "그 측정도 다섯 방향 탐침이지 유일성의 증명은 아니다.",
+        ]) + ([
             ".nodeset 완화책이 모든 격자점에서 상태 A를 유지한다는 보장은 없다 - 그래서 "
             "매 점에서(1단계·2단계 모두) degn을 확인한다. 사전 등록의 문자 그대로의 "
             "규칙은 '이탈 점을 가진 쌍은 무효, 0인 쌍은 유효'이고(`bistability_validity`), "
@@ -833,6 +1112,7 @@ def main() -> int:
             "'솔버가 상태 B에 착지했다'를 구별할 수 없다 - 이 가설을 확인하려면 그 쌍의 "
             "동작점이 상태 B와 일치하는지(모든 바이어스 노드 비교) 또는 매끄러운 추세를 "
             "따르는지 별도로 확인해야 한다.",
+        ] if profile.degn_probe is not None else []) + [
             "1단계는 스크리닝이지 판정이 아니다 - 528쌍 중 다수가 결합으로 나오는 것은 "
             "L/W가 분리된 tunable 노브인 이 덱에서는 놀랍지 않다(같은 트랜지스터의 L과 "
             "W는 W/L 비를 통해 물리적으로 결합돼 있다). 사전 등록이 이 경우를 "
@@ -848,10 +1128,10 @@ def main() -> int:
             dropped_summary[knob.label] = dropped
     out["knobs"]["dropped_scales_stage1"] = dropped_summary
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w") as f:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
-    _log(f"결과를 {args.out}에 썼다")
+    _log(f"결과를 {out_path}에 썼다")
     _log(f"결합 후보(1단계) {len(candidate_pairs)}개, 확정(2단계) {len(confirmed_pairs)}개, "
          f"그중 유효(무이탈) {len(valid_confirmed_pairs)}개 / 무효(이탈 있음) "
          f"{len(void_confirmed_pairs)}개")
