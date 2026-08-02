@@ -22,10 +22,41 @@ def write_result_json(run_dir: str, result: dict) -> str:
 
 
 def _area_optimization_lines(area: dict | None) -> list[str]:
-    """면적 최소화 절. **아무것도 못 줄인 실행에서도 그린다.**
+    """면적 최소화 절. **아무것도 못 줄인 실행에서도, 이 단계 자체가 터져서
+    접힌 실행에서도 그린다.**
 
     안 그리면 "못 줄였다"와 "이 단계가 없다"가 보고서에서 같은 모양이 된다 -
-    코너 스윕에서 이미 겪은 실수다. 키 자체가 없을 때만 침묵한다."""
+    코너 스윕에서 이미 겪은 실수다. 키 자체가 없을 때만 침묵한다.
+
+    수락/거절 카운트의 진짜 이름은 `steps_accepted`/`steps_rejected`다
+    (`optimizer._result`가 매 status에서 찍는 16개 키 중 이 둘 - `accepted`/
+    `rejected`는 존재한 적이 없다). 틀린 이름으로 읽으면 `dict.get(..., 0)`이
+    조용히 0을 돌려주는데, 그 값이 실제로 0인 경우(REFUSED가 아닌 매 경로에서
+    관찰된 값)와 구별되지 않는다 - 항상 0/0을 그리는 절은 이 저장소가 세는
+    결함류다.
+
+    `status`가 REFUSED가 아니어도 `failure`가 실릴 수 있다
+    (`run_area_optimization`의 준비 구간이 `AgentExecutionError`/`ValueError`/
+    `OSError`로 터진 경우, 그리고 `_optimize`의 기준선 시뮬레이션 자체가
+    실패한 경우 - 둘 다 `status="UNCHANGED"`로 접힌다). 이 필드를 안 읽으면
+    "돌았고 줄일 것이 없었다"와 "터져서 아무것도 못 쟀다"가 리포트에서 같은
+    문장이 된다 - 리포트가 그 차이를 아는 유일한 자리다
+    (`_optimization_lines`가 튜닝 단계에 대해 같은 이유로 이미 하는 것과
+    같다).
+
+    `corner_failure`/`guard_infeasible`도 함께 적는다 - 둘 다 이 단계에서
+    실제로 채워질 수 있다: 코너 확인 자체가 죽을 수 있고, 이 단계는
+    `guard_band=None`이라 비율 폴백이 없어(`AREA_PHASE`) 코너로 못 잰 기준은
+    여유분 0.0으로 읽혀(`guard_band_violations`) 오히려 튜닝 단계보다 더
+    쉽게 infeasible해진다.
+
+    `area_coverage`는 **의도적으로 생략한다** - 이 함수가 REFUSED로 먼저
+    걸러내는 조건(`DEFAULT_AREA_MODEL(start_text).counted == 0`)과
+    `_optimize`가 `area_coverage["reason"]`을 채우는 조건이 **같은 텍스트에
+    같은 함수**(`total_area`)를 두 번 돌려 얻는 같은 값이므로, REFUSED가
+    아닌 경로에 도달했다면 `area_coverage["reason"]`은 항상 None이다 - 이
+    단계는 이 필드를 채울 수 없고, 채울 수 없는 필드를 그리면 늘 같은 문장을
+    찍는 절이 된다."""
     if area is None:
         return []
     lines = ["", "## 면적 최소화", "", f"**Status:** {area['status']}", ""]
@@ -36,7 +67,20 @@ def _area_optimization_lines(area: dict | None) -> list[str]:
     if before is not None and after is not None:
         pct = (1.0 - after / before) * 100.0 if before else 0.0
         lines.append(f"- 면적: {before:g} → {after:g} ({pct:.2f}% 감소)")
-    lines.append(f"- 수락 {area.get('accepted', 0)}건 / 거절 {area.get('rejected', 0)}건")
+    lines.append(
+        f"- 수락 {area.get('steps_accepted', 0)}건 / 거절 {area.get('steps_rejected', 0)}건"
+    )
+    if area.get("corner_failure"):
+        lines.append(f"- 코너 확인이 돌지 못했다: {area['corner_failure']}")
+    if area.get("failure"):
+        # 이 단계가 터져서 접힌 경우 - REFUSED와는 다른 사실이다. status만
+        # 보면 "돌았고 줄일 것이 없었다"와 구별되지 않는다.
+        lines.append(f"- 이 단계가 실행되지 못했다: {area['failure']}")
+    if area.get("guard_infeasible"):
+        lines.append(
+            "- 기준선이 이미 가드밴드를 벗어난 기준이 있다(어떤 후보도 수락될 수 없다): "
+            + "; ".join(area["guard_infeasible"])
+        )
     lines.append("")
     return lines
 

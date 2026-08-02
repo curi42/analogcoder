@@ -983,11 +983,18 @@ def test_the_report_draws_the_area_phase_including_when_it_changed_nothing(tmp_p
     """아무것도 못 줄인 실행에서도 절이 나와야 한다.
 
     안 나오면 "면적 단계가 아무것도 못 했다"와 "면적 단계가 없다"가 보고서에서
-    같은 모양이 된다. 이 저장소가 코너 스윕에서 이미 겪은 실수다."""
+    같은 모양이 된다. 이 저장소가 코너 스윕에서 이미 겪은 실수다.
+
+    수락/거절 카운트는 진짜 키 이름(`steps_accepted`/`steps_rejected` -
+    `optimizer._result`가 실제로 찍는 이름)으로 채우고 **렌더된 숫자까지**
+    읽는다. 틀린 키 이름(`accepted`/`rejected`)을 썼던 원래 버전은
+    `status`만 확인하는 단언으로는 안 잡혔다 - `.get(..., 0)`이 조용히 0을
+    돌려주고, 마침 이 테스트가 기대하던 값과도 우연히 안 겹쳐서 처음
+    발견됐지, 대부분의 실행에서는 진짜 0과 구별되지 않는다."""
     result = _result(
         status="PASS",
         area_optimization={
-            "status": "UNCHANGED", "accepted": 0, "rejected": 3,
+            "status": "UNCHANGED", "steps_accepted": 2, "steps_rejected": 3,
             "area_before": 41.0, "area_after": 41.0,
         },
     )
@@ -995,6 +1002,7 @@ def test_the_report_draws_the_area_phase_including_when_it_changed_nothing(tmp_p
     md = open(path, encoding="utf-8").read()
     assert "면적 최소화" in md
     assert "UNCHANGED" in md
+    assert "수락 2건 / 거절 3건" in md
 
 
 def test_the_report_says_when_the_area_phase_was_refused(tmp_path):
@@ -1009,6 +1017,57 @@ def test_the_report_says_when_the_area_phase_was_refused(tmp_path):
     path = write_report_md(_dir(tmp_path, "area_refused"), result)
     md = open(path, encoding="utf-8").read()
     assert "REFUSED" in md and "counted=0" in md
+
+
+def test_the_report_distinguishes_a_crashed_area_phase_from_a_clean_no_op(tmp_path):
+    """`status="UNCHANGED"`는 두 다른 사실을 가릴 수 있다: "돌았고 줄일 것이
+    없었다"와 "이 단계 자체가 터져서 아무것도 못 쟀다"(`run_area_optimization`의
+    준비 구간이 `AgentExecutionError`/`ValueError`/`OSError`로 접히거나,
+    `_optimize`의 기준선 시뮬레이션 자체가 실패한 경우 - 둘 다 status는
+    UNCHANGED로 남는다. REFUSED와는 다른 경로다). 리포트가 그 차이를 아는
+    유일한 자리이므로, `failure`가 있을 때만 나오는 문장이 있어야 한다.
+
+    두 렌더를 `failure` 유무만 다르게 만들고 비교한다 - "그 절이 있다"만
+    보는 단언은 아무것도 못 잡는다. `failure` 값 자체가 어느 쪽에만
+    나타나는지를 잰다."""
+    clean = {
+        "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
+        "area_before": 41.0, "area_after": 41.0,
+    }
+    crashed = {**clean, "failure": "AgentExecutionError: boom"}
+
+    clean_path = write_report_md(
+        _dir(tmp_path, "area_clean_noop"), _result(status="PASS", area_optimization=clean)
+    )
+    crashed_path = write_report_md(
+        _dir(tmp_path, "area_crashed"), _result(status="PASS", area_optimization=crashed)
+    )
+    clean_md = open(clean_path, encoding="utf-8").read()
+    crashed_md = open(crashed_path, encoding="utf-8").read()
+
+    assert "AgentExecutionError: boom" not in clean_md
+    assert "AgentExecutionError: boom" in crashed_md
+
+
+def test_the_report_renders_the_area_phase_s_corner_failure_and_guard_infeasibility(tmp_path):
+    """`corner_failure`/`guard_infeasible`은 튜닝 단계처럼 이 단계에서도 실제로
+    채워질 수 있다 - 코너 확인 자체가 죽을 수 있고, 이 단계는 `guard_band=None`
+    (`AREA_PHASE`)이라 비율 폴백이 없어 코너로 못 잰 기준은 여유분 0.0으로
+    읽힌다(`guard_band_violations`). 렌더하지 않으면 이 두 사실은 result.json을
+    열지 않는 한 어디에도 보이지 않는다."""
+    result = _result(
+        status="PASS",
+        area_optimization={
+            "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
+            "area_before": 41.0, "area_after": 41.0,
+            "corner_failure": "corner sweep raised RuntimeError: ngspice died",
+            "guard_infeasible": ["iq_ua: measurement 'iq_ua' is missing"],
+        },
+    )
+    path = write_report_md(_dir(tmp_path, "area_corner_guard"), result)
+    md = open(path, encoding="utf-8").read()
+    assert "ngspice died" in md
+    assert "iq_ua" in md
 
 
 def test_a_run_without_an_area_phase_gets_no_area_section(tmp_path):
