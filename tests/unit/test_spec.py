@@ -774,3 +774,43 @@ def test_the_four_implemented_operators_load(operator):
     ])
 
     assert criteria[0].operator == operator
+
+
+def test_allowed_operators_is_exactly_what_judge_tools_classifies():
+    """**`ALLOWED_OPERATORS`가 옳은 것은 이 불변식 덕분이고, 지금까지 그것을
+    붙잡는 것이 아무것도 없었다.**
+
+    `spec.py`의 허용 집합과 `judge_tools`의 방향 분류(`_LOWER_BOUND` ∪
+    `_UPPER_BOUND`)가 **같아야** 한다. 한쪽에만 연산자를 추가하면 `==`에서
+    막 닫은 결함이 한 줄 편집으로 되살아난다 - 다른 파일에서, 오류 없이:
+
+    - `relative_slack`은 `if operator in _LOWER_BOUND: ... else: ...`라
+      분류되지 않은 연산자를 **상한으로 읽는다**.
+    - `baseline_ratio_allowances`도 같은 삼항으로 상한으로 읽고, 그 기준에
+      여유분을 준다.
+    - `guard_band_violations`는 `if _UPPER_BOUND / elif _LOWER_BOUND`라
+      그 기준을 **통째로 건너뛴다** - 여유분은 나왔는데 적용되지 않고,
+      `_unguarded`는 이름이 allowances에 있으므로 "방비됨"이라고 보고한다.
+
+    셋 다 조용하다. `"!="`, `"~="`, 유니코드 `"≥"` 중 무엇을 넣어도 같다.
+
+    두 번째 단언은 **부분집합**이지 동등이 아니다 - `judge_tools._OPERATORS`는
+    `==`를 **일부러** 들고 있고(`evaluate_criteria`는 그것을 판정할 수 있다),
+    `ALLOWED_OPERATORS`가 그것을 거절하는 이유는 그 아래 세 소비자가
+    갈리기 때문이다. 비교표에 없는 연산자를 허용하면 판정 시점의
+    `KeyError`인데, 그쪽은 **시끄럽다** - 위의 조용한 분기보다 위험이 낮아
+    같은 테스트에 넣되 방향만 고정한다."""
+    from analogcoder import judge_tools
+    from analogcoder.spec import ALLOWED_OPERATORS
+
+    classified = set(judge_tools._LOWER_BOUND) | set(judge_tools._UPPER_BOUND)
+
+    assert set(ALLOWED_OPERATORS) == classified, (
+        f"spec.ALLOWED_OPERATORS {sorted(ALLOWED_OPERATORS)} and judge_tools' "
+        f"direction classification {sorted(classified)} disagree - an operator in "
+        f"only one of them is read as an upper bound by relative_slack and "
+        f"baseline_ratio_allowances and skipped entirely by guard_band_violations, "
+        f"silently"
+    )
+    # 허용된 것은 전부 판정 가능해야 한다(역은 아니다 - '=='가 그 예다).
+    assert set(ALLOWED_OPERATORS) <= set(judge_tools._OPERATORS)
