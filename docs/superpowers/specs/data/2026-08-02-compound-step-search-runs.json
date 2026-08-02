@@ -1,0 +1,623 @@
+{
+  "contaminated_slots_supplied": [],
+  "control_determinism": {
+    "A": {
+      "checked": true,
+      "decks_identical": true,
+      "reductions": [
+        12.055759593291503,
+        12.055759593291503
+      ],
+      "reductions_identical": true
+    },
+    "B": {
+      "checked": true,
+      "decks_identical": true,
+      "reductions": [
+        21.426654967162925,
+        21.426654967162925
+      ],
+      "reductions_identical": true
+    },
+    "C": {
+      "checked": true,
+      "decks_identical": true,
+      "reductions": [
+        0.0,
+        0.0
+      ],
+      "reductions_identical": true
+    }
+  },
+  "rows": [
+    {
+      "after_equals_confirmed": true,
+      "area_after": 8.685969000000001e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 16,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "f94dddf1c782df0a",
+        "dc_tc": "898b7543d621a5b2",
+        "psrr": "6add6a6591167748",
+        "settling": "64ab311548f34784",
+        "startup": "0b99b29f3a115df5"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotB_fb1",
+      "objective_confirmed": 8.685969000000001e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 21.426654967162925,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 195,
+        "sweep_calls": 2
+      },
+      "slot": "B",
+      "step_budget": 20,
+      "steps_accepted_nominal": 16,
+      "steps_rejected": 4,
+      "steps_survived": 16,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 140.357
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.119566533479994e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 1,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 16,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "426b7878a29a58db",
+        "dc_tc": "f767d5dd4720bf1b",
+        "psrr": "c0bbcd5babe57c1f",
+        "settling": "bdd29ae14b3603d6",
+        "startup": "a37841014e1b0a54"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotB_fb1",
+      "objective_confirmed": 9.119566533479994e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 1,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 17.504328211966055,
+      "row_status": "ok",
+      "side": "b",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 195,
+        "sweep_calls": 2
+      },
+      "slot": "B",
+      "step_budget": 20,
+      "steps_accepted_nominal": 14,
+      "steps_rejected": 6,
+      "steps_survived": 14,
+      "strategy": "compound_fallback_1",
+      "wall_clock_s": 140.029
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 8.685969000000001e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 16,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "f94dddf1c782df0a",
+        "dc_tc": "898b7543d621a5b2",
+        "psrr": "6add6a6591167748",
+        "settling": "64ab311548f34784",
+        "startup": "0b99b29f3a115df5"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotB_fb3",
+      "objective_confirmed": 8.685969000000001e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 21.426654967162925,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 195,
+        "sweep_calls": 2
+      },
+      "slot": "B",
+      "step_budget": 20,
+      "steps_accepted_nominal": 16,
+      "steps_rejected": 4,
+      "steps_survived": 16,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 140.504
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.196096999999993e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 16,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "d7a7d1e8adc4e81f",
+        "dc_tc": "200498224c053bac",
+        "psrr": "5cedcc47c8d1cca4",
+        "settling": "c68ad37cd255356d",
+        "startup": "43a69370804166fb"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotB_fb3",
+      "objective_confirmed": 9.196096999999993e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 3,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 16.812032999837175,
+      "row_status": "ok",
+      "side": "b",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 195,
+        "sweep_calls": 2
+      },
+      "slot": "B",
+      "step_budget": 20,
+      "steps_accepted_nominal": 12,
+      "steps_rejected": 8,
+      "steps_survived": 12,
+      "strategy": "compound_fallback_3",
+      "wall_clock_s": 140.088
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 2.380369e-10,
+      "area_before": 2.380369e-10,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": false,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 0,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": false,
+        "pvt_corners_declared": true,
+        "reason": "control (coordinate_descent) accepted 0 steps on this slot; there is no baseline to compare against",
+        "verdict": "void",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "ac_loop_gain": "99151802751f8a26",
+        "psr_minus": "b19b27a51e6a9498",
+        "psr_plus": "d825de2ef64e43dd",
+        "settling_time": "c53e74574ad1437a"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotC_fb1",
+      "objective_confirmed": null,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "UNCHANGED",
+      "reduction_pct": 0.0,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 1,
+        "spice_runs": 184,
+        "sweep_calls": 1
+      },
+      "slot": "C",
+      "step_budget": 20,
+      "steps_accepted_nominal": 0,
+      "steps_rejected": 0,
+      "steps_survived": 0,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 7.876
+    },
+    {
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 0,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": false,
+        "pvt_corners_declared": true,
+        "reason": "control (coordinate_descent) accepted 0 steps on this slot; there is no baseline to compare against",
+        "verdict": "void",
+        "verify_corners_wired": true
+      },
+      "exit": 0,
+      "invocation_elapsed_s": 10,
+      "killed_by_cap": 0,
+      "name": "slotC_fb1",
+      "partners": 1,
+      "row_status": "no_record",
+      "side": "b",
+      "slot": "C",
+      "spec": "benchmarks/two_stage_opamp/spec_search_slot.yaml"
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 2.380369e-10,
+      "area_before": 2.380369e-10,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": false,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 0,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": false,
+        "pvt_corners_declared": true,
+        "reason": "control (coordinate_descent) accepted 0 steps on this slot; there is no baseline to compare against",
+        "verdict": "void",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "ac_loop_gain": "99151802751f8a26",
+        "psr_minus": "b19b27a51e6a9498",
+        "psr_plus": "d825de2ef64e43dd",
+        "settling_time": "c53e74574ad1437a"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotC_fb3",
+      "objective_confirmed": null,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "UNCHANGED",
+      "reduction_pct": 0.0,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 1,
+        "spice_runs": 184,
+        "sweep_calls": 1
+      },
+      "slot": "C",
+      "step_budget": 20,
+      "steps_accepted_nominal": 0,
+      "steps_rejected": 0,
+      "steps_survived": 0,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 7.979
+    },
+    {
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 0,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": false,
+        "pvt_corners_declared": true,
+        "reason": "control (coordinate_descent) accepted 0 steps on this slot; there is no baseline to compare against",
+        "verdict": "void",
+        "verify_corners_wired": true
+      },
+      "exit": 0,
+      "invocation_elapsed_s": 10,
+      "killed_by_cap": 0,
+      "name": "slotC_fb3",
+      "partners": 3,
+      "row_status": "no_record",
+      "side": "b",
+      "slot": "C",
+      "spec": "benchmarks/two_stage_opamp/spec_search_slot.yaml"
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.72188399999999e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 8,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "a734403b7d0362e7",
+        "dc_tc": "18ce4a35b1b5d7f3",
+        "psrr": "efaf0315b2b623d7",
+        "settling": "a6c8a5ad8df86d7a",
+        "startup": "aee6911bba159a43"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotA_fb1",
+      "objective_confirmed": 9.72188399999999e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 12.055759593291503,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 1455,
+        "sweep_calls": 6
+      },
+      "slot": "A",
+      "step_budget": 20,
+      "steps_accepted_nominal": 14,
+      "steps_rejected": 12,
+      "steps_survived": 8,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 349.772
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.627399279989992e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 3,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 8,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "4c912cda686c3de9",
+        "dc_tc": "6ee710fed8211a81",
+        "psrr": "85c1a76f33cbdff4",
+        "settling": "8d986c9d501d25c0",
+        "startup": "1f8d0e63553cf837"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotA_fb1",
+      "objective_confirmed": 9.627399279989992e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 1,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 12.910469126065175,
+      "row_status": "ok",
+      "side": "b",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 555,
+        "sweep_calls": 2
+      },
+      "slot": "A",
+      "step_budget": 20,
+      "steps_accepted_nominal": 12,
+      "steps_rejected": 8,
+      "steps_survived": 12,
+      "strategy": "compound_fallback_1",
+      "wall_clock_s": 199.967
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.72188399999999e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 0,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 8,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "a734403b7d0362e7",
+        "dc_tc": "18ce4a35b1b5d7f3",
+        "psrr": "efaf0315b2b623d7",
+        "settling": "a6c8a5ad8df86d7a",
+        "startup": "aee6911bba159a43"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotA_fb3",
+      "objective_confirmed": 9.72188399999999e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 0,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 12.055759593291503,
+      "row_status": "ok",
+      "side": "a",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 1455,
+        "sweep_calls": 6
+      },
+      "slot": "A",
+      "step_budget": 20,
+      "steps_accepted_nominal": 14,
+      "steps_rejected": 12,
+      "steps_survived": 8,
+      "strategy": "coordinate_descent",
+      "wall_clock_s": 349.971
+    },
+    {
+      "after_equals_confirmed": true,
+      "area_after": 9.72188399999999e-09,
+      "area_before": 1.1054599999999992e-08,
+      "compound_steps_accepted": 1,
+      "corner_confirmed": true,
+      "corner_failure": null,
+      "eligibility": {
+        "checked": true,
+        "control_side": "a",
+        "control_steps_accepted": 8,
+        "control_strategy": "coordinate_descent",
+        "corner_confirmed": true,
+        "pvt_corners_declared": true,
+        "reason": null,
+        "verdict": "eligible",
+        "verify_corners_wired": true
+      },
+      "failure": null,
+      "final_deck_sha256": {
+        "amp_loops": "a734403b7d0362e7",
+        "dc_tc": "18ce4a35b1b5d7f3",
+        "psrr": "efaf0315b2b623d7",
+        "settling": "a6c8a5ad8df86d7a",
+        "startup": "aee6911bba159a43"
+      },
+      "guard_infeasible": [],
+      "invocation": "slotA_fb3",
+      "objective_confirmed": 9.72188399999999e-09,
+      "outcome": null,
+      "over_run_cap": false,
+      "partners": 3,
+      "record_status": "OPTIMIZED",
+      "reduction_pct": 12.055759593291503,
+      "row_status": "ok",
+      "side": "b",
+      "simulations": {
+        "nominal_calls": 21,
+        "spice_runs": 1455,
+        "sweep_calls": 6
+      },
+      "slot": "A",
+      "step_budget": 20,
+      "steps_accepted_nominal": 10,
+      "steps_rejected": 12,
+      "steps_survived": 8,
+      "strategy": "compound_fallback_3",
+      "wall_clock_s": 349.799
+    }
+  ],
+  "verdict": {
+    "candidates": {
+      "1": {
+        "adopt": false,
+        "at_least_one_slot_ge_1pp": false,
+        "control_reduction": {
+          "A": 12.055759593291503,
+          "B": 21.426654967162925
+        },
+        "delta_pp": {
+          "A": 0.854709532773672,
+          "B": -3.9223267551968704
+        },
+        "missing_slots": [],
+        "not_worse_everywhere": false,
+        "per_slot_reduction": {
+          "A": 12.910469126065175,
+          "B": 17.504328211966055
+        },
+        "timed_out_slots": []
+      },
+      "3": {
+        "adopt": false,
+        "at_least_one_slot_ge_1pp": false,
+        "control_reduction": {
+          "A": 12.055759593291503,
+          "B": 21.426654967162925
+        },
+        "delta_pp": {
+          "A": 0.0,
+          "B": -4.61462196732575
+        },
+        "missing_slots": [],
+        "not_worse_everywhere": false,
+        "per_slot_reduction": {
+          "A": 12.055759593291503,
+          "B": 16.812032999837175
+        },
+        "timed_out_slots": []
+      }
+    },
+    "reason": "어떤 partners>0 도 '모든 슬롯에서 나쁘지 않고 한 슬롯에서 1.0%p 이상' 을 만족하지 못했다",
+    "single_deck": true,
+    "slots": {
+      "A": {
+        "state": "usable"
+      },
+      "B": {
+        "state": "usable"
+      },
+      "C": {
+        "reason": "control (coordinate_descent) accepted 0 steps on this slot; there is no baseline to compare against",
+        "state": "void"
+      }
+    },
+    "verdict": "REJECT"
+  }
+}

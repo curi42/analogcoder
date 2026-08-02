@@ -1,0 +1,6 @@
+{"name": "slotB_fb1", "slot": "B", "partners": 1, "spec": "benchmarks/bandgap/spec_corner_reduction.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 280}
+{"name": "slotB_fb3", "slot": "B", "partners": 3, "spec": "benchmarks/bandgap/spec_corner_reduction.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 286}
+{"name": "slotC_fb1", "slot": "C", "partners": 1, "spec": "benchmarks/two_stage_opamp/spec_search_slot.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 10}
+{"name": "slotC_fb3", "slot": "C", "partners": 3, "spec": "benchmarks/two_stage_opamp/spec_search_slot.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 10}
+{"name": "slotA_fb1", "slot": "A", "partners": 1, "spec": "benchmarks/bandgap/spec_pvt.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 552}
+{"name": "slotA_fb3", "slot": "A", "partners": 3, "spec": "benchmarks/bandgap/spec_pvt.yaml", "exit": 0, "killed_by_cap": 0, "invocation_elapsed_s": 702}
