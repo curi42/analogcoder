@@ -3,7 +3,7 @@ import json
 import math
 import os
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -868,6 +868,80 @@ async def test_optimization_runs_after_pass_and_before_the_final_pvt_sweep(tmp_p
     # 두면 status 병합 같은 규칙이 한쪽에만 붙는다.
     assert captured["optimizer_simulate"] is captured["agents"].simulate
     assert result["optimization"]["status"] == "UNCHANGED"
+    assert result["status"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_the_area_phase_runs_on_pass_before_run_optimization_and_its_final_criteria_lands_in_the_result(
+    tmp_path,
+):
+    """배선 자체를 잰다 - 대역이 아니라 `cli.py`가 실제로 면적 단계를
+    부르는가, `run_optimization`보다 먼저 부르는가, 그리고 `run_optimization`이
+    아무 것도 못 쟀을 때(선언이 없거나 무의미해 `final_criteria` 키 자체가
+    없는 모양 - `_optimization_result()`의 기본값) 면적 단계가 남긴
+    `final_criteria`가 최상위 `result`로 올라오는가.
+
+    호출 순서는 두 대역을 하나의 관리자(Mock)에 붙여 `mock_calls`로 잰다 -
+    각자 "불렸다"만 보는 두 단언은 순서가 뒤집혀도 통과한다. 이 테스트가
+    잡는 변형: `cli.py`에서 `run_area_optimization` 호출 자체를 지운
+    변형(실제로 그 호출을 주석 처리하고 이 테스트가 실패하는 것을 확인함) -
+    conftest.py의 `_disable_area_optimization`은 이 테스트에는 적용되지
+    않는다. 이 테스트가 그것을 자기 것(`area_mock`)으로 다시 덮기
+    때문이다."""
+    (tmp_path / "netlist.cir").write_text("* ac netlist\n.end\n")
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(OPTIMIZE_SPEC_YAML)
+
+    run_dir = str(tmp_path / "runs" / "area_wiring")
+    parser = build_arg_parser()
+    args = parser.parse_args(["--spec", str(spec_path), "--run-dir", run_dir])
+
+    passing = {"overall_pass": True, "criteria": [], "summary": "ok", "worst_case_corners": {}}
+
+    area_final_criteria = [
+        {"name": "iq_ua", "target": "<=300.0", "actual": 211.68, "pass": True, "margin": 88.32}
+    ]
+    area_result = {
+        "status": "OPTIMIZED",
+        "objective_before": 212.99,
+        "objective_after": 211.68,
+        "area_before": 1.0,
+        "area_after": 0.92,
+        "steps_accepted": 1,
+        "steps_rejected": 0,
+        "final_criteria": area_final_criteria,
+        "final_netlist_paths": {},
+    }
+    area_mock = AsyncMock(return_value=area_result)
+    # "선언은 있었지만 final_criteria 없이 끝났다"의 모양이다 -
+    # _optimization_result()의 기본값에는 final_criteria 키가 아예 없다. 그래야
+    # 아래 result["final_criteria"] 단언이 면적 단계의 값**만** 반영한다는 것을
+    # 잰다 - run_optimization이 뒤에서 뭔가를 남겼다면 그것과 구별이 안 된다.
+    opt_mock = AsyncMock(return_value=_optimization_result())
+
+    order = Mock()
+    order.attach_mock(area_mock, "area")
+    order.attach_mock(opt_mock, "optimization")
+
+    with (
+        patch(
+            "analogcoder.cli.run_orchestration",
+            new=_orchestration(_pass_result(run_dir)),
+        ),
+        patch("analogcoder.cli.run_full_pvt_sweep", return_value=passing),
+        patch("analogcoder.cli.run_area_optimization", new=area_mock),
+        patch("analogcoder.cli.run_optimization", new=opt_mock),
+    ):
+        result = await _run(args)
+
+    # 순서가 계약이다: 최종 스윕이 최적화된 넷리스트를 확정하는 역할을
+    # 그대로 하려면 면적 단계가 run_optimization보다 먼저 착지해야 한다.
+    assert [call[0] for call in order.mock_calls] == ["area", "optimization"]
+    assert result["area_optimization"] is area_result
+    # run_optimization이 아무것도 못 쟀는데도 result["final_criteria"]가
+    # 면적 단계 이전 덱(오케스트레이션 판정)을 기준으로 남으면 리포트가
+    # 최적화가 옮긴 덱과 다른 덱을 설명하게 된다.
+    assert result["final_criteria"] == area_final_criteria
     assert result["status"] == "PASS"
 
 
