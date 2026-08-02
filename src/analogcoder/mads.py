@@ -89,6 +89,11 @@
 
 게이트에 적용하는 질문을 탐색기에도 적용한다. 세 가지 무력한 사태가 있고,
 셋 다 `mads_poll` / `mads_summary` 이벤트에서 **서로 다르게** 보인다.
+아래의 이름은 전략이 `run.log_event`에 넘기는 **접미사**다 - 이력에 남는
+이름에는 단계 라벨이 앞에 붙어 `optimize_mads_poll` /
+`optimize_area_mads_poll`이 된다(`SearchRun.log_event` 참조). `runs/search_ab/`
+아래 단계 3 측정이 남긴 세 이력 파일은 그 라벨이 붙기 **전**에 쓰였으므로
+`mads_poll`을 그대로 이고 있다.
 
 - 첫 폴에서 전부 거절 → `poll_complete: true`, `success: false`,
   `mesh: "contract"`가 반복되고 `mads_summary.expands == 0`.
