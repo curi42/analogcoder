@@ -6,6 +6,7 @@ from analogcoder.area import DEFAULT_AREA_MODEL, total_area
 from analogcoder.area_limits import check_area_growth, index_baseline_components, is_count_param
 from analogcoder.area_ranking import rank_by_area_gain
 from analogcoder.judge_tools import (
+    baseline_ratio_allowances,
     corner_allowances,
     evaluate_criteria,
     guard_band_violations,
@@ -21,6 +22,7 @@ from analogcoder.netlist import (
 )
 from analogcoder.patterns import find_patterns
 from analogcoder.signal_path import build_signal_paths
+from analogcoder.spec import Criterion
 from analogcoder.structure import derive_structure
 from analogcoder.structure_view import render_netlist, render_structure, select_focus
 
@@ -53,6 +55,20 @@ def _objective_value(
 
 
 @dataclass(frozen=True)
+class MarginFloor:
+    """코너를 잴 수 없을 때 쓸 여유분 하한 규칙 하나. `PhaseConfig`와 같은
+    계약이다 - **분기가 아니라 데이터다.**
+
+    `rule`은 `"f1"` / `"f2"` / `"f3"`. `value`의 단위는 rule에 따라 다르다 -
+    f1(과 f1로 환원되는 f3)은 임계값에 곱할 비율 `g`, f2는 기준선 여유에
+    곱할 배율 `r`이다. 두 규칙이 원래 다른 단위의 상수를 받으므로 이 자체가
+    문제가 아니다 - 규칙을 갈라 읽는 곳은 `_margin_floor_allowances` 하나뿐이다."""
+
+    rule: str
+    value: float
+
+
+@dataclass(frozen=True)
 class PhaseConfig:
     """최적화 단계 하나의 설정. **분기가 아니라 데이터다.**
 
@@ -65,11 +81,18 @@ class PhaseConfig:
     objective: "str | _AreaObjective"
     # None이면 예산 검사를 하지 않는다.
     area_budget: float | None
-    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다.
+    # None이면 비율 폴백이 없다. 실측 여유분만 쓴다. **코너를 잴 수 있을 때의
+    # 여유분 조립(비율 위에 코너 실측을 덮어쓰는 것)에만 쓰인다** - 이 필드를
+    # margin_floor와 겸용하지 않는다. 한 필드가 두 단계에서 다른 뜻을 가지면
+    # 안 된다.
     guard_band: float | None
     # 이벤트 이름 접두사. 기존 optimize_*를 읽는 쪽이 새 단계의 이벤트를
     # 오늘의 것으로 오독하면 안 된다.
     label: str
+    # None이면 하한이 없다 - 코너를 잴 수 없을 때 모든 기준이 무방비로
+    # 남는다(오늘의 면적 단계 출하 상태). 값은 Task 4의 측정이 정한다 - 지금
+    # 고르면 사후 규칙 변경이다.
+    margin_floor: MarginFloor | None = None
 
 
 def phase_from_spec(optimize) -> PhaseConfig:
@@ -83,7 +106,8 @@ def phase_from_spec(optimize) -> PhaseConfig:
 
 
 AREA_PHASE = PhaseConfig(
-    objective=AREA_OBJECTIVE, area_budget=None, guard_band=None, label="optimize_area"
+    objective=AREA_OBJECTIVE, area_budget=None, guard_band=None, label="optimize_area",
+    margin_floor=None,
 )
 
 
@@ -1218,6 +1242,53 @@ async def run_optimization(
         )
 
 
+def _margin_floor_allowances(
+    baseline_measurements: dict, criteria: list[Criterion], floor: "MarginFloor | None"
+) -> dict[str, float]:
+    """코너를 잴 수 없을 때의 대체 여유분. **세 규칙(f1/f2/f3)이 갈리는
+    유일한 곳** - 호출부는 이 함수를 부를 뿐, `rule`을 다시 묻지 않는다.
+
+    `floor`가 `None`이면 대체 여유분이 없다 - 모든 기준이 무방비로 남는다
+    (오늘의 면적 단계 출하 상태이고, 2026-08-02 측정이 코너에서 깨지는
+    것을 확인한 그 상태다).
+
+    f1은 `ratio_allowances`(임계값 비율) 그 자체이므로 모든 기준 이름이
+    채워진다. f2는 `baseline_ratio_allowances`(기준선 여유의 배율)를 쓰고,
+    적용할 수 없는 기준(측정 없음/이미 실패/임계값에 정확히 붙음)은
+    반환하는 딕셔너리에 **넣지 않는다** - `guard_band_violations`가 없는
+    이름을 여유분 0.0으로 읽으므로, 이름이 빠진 채로 남는 것 자체가 "이
+    기준은 무방비"라는 사실이다. `_optimize`의 `_unguarded`가 바로 이
+    규칙(allowances에 이름이 있는가)으로 무방비 목록을 다시 만들므로,
+    `baseline_ratio_allowances`가 함께 돌려주는 제외 이름 목록을 여기서
+    따로 들고 다니지 않아도 같은 사실이 두 번 다른 방법으로 재지지 않는다.
+
+    f3은 별도 계산이 아니다 - 사전 등록(`2026-08-02-area-phase-margin-floor
+    -design.md`)이 이미 "코너 없는 절반에서 F1·F2의 우승자를 그대로 쓰므로
+    별도 격자가 없다"고 적었다. 코너가 있을 때 코너 실측을 쓰는 것은 세
+    규칙 전부가 이미 하는 일이므로(`_optimize`가 비율 위에
+    `corner_allowances`를 덮어쓴다), f3이 f1·f2와 갈릴 수 있는 입력은 코너
+    없는 이 절반뿐인데 거기서 f3의 정의 자체가 f1 아니면 f2와 같은
+    딕셔너리를 만드는 것이다. 그래서 f1로 환원한다고 **여기서 명시적으로
+    기록한다** - 사전 등록을 지우지 않고 "구별되지 않음"으로 보고하는
+    쪽은 Task 4의 결과 문서가 한다."""
+    if floor is None:
+        return {}
+
+    rule = floor.rule
+    if rule == "f3":
+        rule = "f1"  # 코너 없는 절반에서 f1과 구별되지 않는다 - 위 독스트링 참고.
+
+    if rule == "f1":
+        return ratio_allowances(criteria, floor.value)
+    if rule == "f2":
+        allowances, _excluded = baseline_ratio_allowances(
+            baseline_measurements, criteria, floor.value
+        )
+        return allowances
+
+    raise ValueError(f"unknown margin_floor rule {floor.rule!r}")
+
+
 async def _optimize(
     netlist_texts: dict[str, str], spec, state, agents: OptimizerAgents, progress: dict,
     phase: "PhaseConfig | None",
@@ -1452,7 +1523,14 @@ async def _optimize(
             **corner_allowances(baseline_measurements, entry_sweep, spec.all_criteria),
         }
     else:
-        allowances = ratio
+        # 코너를 잴 수 없는 절반 - margin_floor가 있으면 그 규칙, 없으면
+        # 오늘 그대로 ratio(guard_band 대체, 없으면 {}). margin_floor가
+        # None인 한 이 분기의 값은 어제와 한 글자도 다르지 않다.
+        allowances = (
+            _margin_floor_allowances(baseline_measurements, spec.all_criteria, phase.margin_floor)
+            if phase.margin_floor is not None
+            else ratio
+        )
 
     # allowances가 이 실행이 실제로 쓸 최종값으로 확정되는 지점이 여기다 -
     # 코너 대응이면 실측이 섞이고, 아니면 비율뿐이다. baseline 이벤트를 더

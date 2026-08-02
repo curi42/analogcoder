@@ -56,13 +56,17 @@ def test_the_area_phase_config_has_no_budget_and_no_ratio_guard():
 
     guard_band=None: 비율 폴백은 선언에서 오는데 이 단계는 선언 없이 돈다.
     없는 숫자를 지어내지 않는다. 대신 어느 기준이 무방비인지를 Task 4가
-    이벤트로 드러낸다."""
+    이벤트로 드러낸다.
+
+    margin_floor=None: 값은 Task 4의 측정이 정한다. 지금 고르면 사후 규칙
+    변경이다 - 이 저장소가 이미 명시적으로 철회한 관행이다(D1)."""
     from analogcoder.optimizer import AREA_PHASE
 
     assert AREA_PHASE.objective is AREA_OBJECTIVE
     assert AREA_PHASE.area_budget is None
     assert AREA_PHASE.guard_band is None
     assert AREA_PHASE.label == "optimize_area"
+    assert AREA_PHASE.margin_floor is None
 
 
 @pytest.mark.asyncio
@@ -312,3 +316,167 @@ async def test_the_area_phase_ranks_knobs_from_the_passed_deck_not_states_deck(t
     # = 1.6e-12이다. state 덱(w=2e-6)에서 현재값을 읽었다면 2e-6 -> 1.8e-6이
     # 되어, base(4e-6 기준)와의 차이가 8.8e-12로 완전히 다르게 나온다.
     assert ranked_by_key[("AMP.M1", "w")] == pytest.approx(1.6e-12, rel=1e-6)
+
+
+# --- 여유분 하한(MarginFloor) - 결정 지점은 _margin_floor_allowances 하나 ---
+
+
+def test_the_area_phase_with_no_floor_leaves_every_criterion_unguarded():
+    """하한이 없으면 코너 없는 스펙에서 모든 기준이 무방비다 - 이것이
+    2026-08-02 측정이 코너에서 깨지는 것을 확인한 출하 상태다."""
+    from analogcoder.optimizer import _margin_floor_allowances
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+        Criterion(name="psrr", measurement="psrr_db", operator="<=", threshold=-25.0),
+    ]
+    baseline = {"gain_db": 65.0, "psrr_db": -30.0}
+
+    # floor가 None이면 baseline이 무엇이든, 임계값이 무엇이든 결과는 늘 {}다 -
+    # "잴 수 없다"가 아니라 "규칙이 없다"이므로 입력에 좌우되지 않는다.
+    assert _margin_floor_allowances(baseline, criteria, None) == {}
+    assert _margin_floor_allowances({}, criteria, None) == {}
+
+
+def test_f1_fills_every_criterion_from_the_threshold():
+    """F1 은 ratio_allowances 그 자체이므로 모든 이름이 채워진다."""
+    from analogcoder.judge_tools import ratio_allowances
+    from analogcoder.optimizer import MarginFloor, _margin_floor_allowances
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+        Criterion(name="psrr", measurement="psrr_db", operator="<=", threshold=-25.0),
+    ]
+    floor = MarginFloor(rule="f1", value=0.1)
+
+    # F1은 기준선을 보지 않는다 - 빈 딕셔너리를 줘도 값이 같아야 한다.
+    allowances = _margin_floor_allowances({}, criteria, floor)
+
+    assert set(allowances) == {"gain", "psrr"}
+    assert allowances == ratio_allowances(criteria, 0.1)
+
+
+def test_f2_fills_from_the_baseline_distance_and_names_what_it_could_not():
+    """F2 는 적용 못 한 기준을 **이름으로** 남긴다 - 조용히 빠지면
+    '하한이 걸렸다'와 '이 기준에는 하한이 없다'가 같아 보인다."""
+    from analogcoder.optimizer import MarginFloor, _margin_floor_allowances
+    from analogcoder.spec import Criterion
+
+    criteria = [
+        Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+        Criterion(name="psrr", measurement="psrr_db", operator="<=", threshold=-25.0),
+    ]
+    # gain은 기준선이 5의 여유를 가진다(65 - 60). psrr은 임계값에 정확히
+    # 붙어 있어(-25 == -25) baseline_ratio_allowances가 제외하는 세 경우 중
+    # 하나(slack == 0)를 친다.
+    baseline = {"gain_db": 65.0, "psrr_db": -25.0}
+    floor = MarginFloor(rule="f2", value=0.5)
+
+    allowances = _margin_floor_allowances(baseline, criteria, floor)
+
+    assert allowances == {"gain": 2.5}
+    # psrr은 조용히 빠진 게 아니라 "이 이름이 allowances에 없다"로 확인할 수
+    # 있게 빠져 있다 - guard_band_violations는 없는 이름을 여유분 0.0으로
+    # 읽으므로, 여기서 "이름이 없다"는 곧 "무방비"의 정의다.
+    assert "psrr" not in allowances
+
+
+def test_f3_reduces_to_f1_explicitly():
+    """F3 은 구별되는 규칙이 아니다 - 사전 등록이 "코너 없는 절반에서
+    F1·F2의 우승자를 그대로 쓰므로 별도 격자가 없다"고 적었고, 코너 없는
+    이 절반에서 f3의 정의(코너가 있으면 그것, 없으면 F1/F2) 자체가 f1과
+    같은 딕셔너리를 만드는 것과 같다. 그 환원을 여기서 고정한다."""
+    from analogcoder.optimizer import MarginFloor, _margin_floor_allowances
+    from analogcoder.spec import Criterion
+
+    criteria = [Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0)]
+
+    f1 = _margin_floor_allowances({}, criteria, MarginFloor(rule="f1", value=0.1))
+    f3 = _margin_floor_allowances({}, criteria, MarginFloor(rule="f3", value=0.1))
+
+    assert f3 == f1
+
+
+def test_the_three_rules_are_decided_in_exactly_one_place():
+    """규칙이 셋으로 늘어도 결정 지점은 하나여야 한다.
+
+    소스를 읽어 `MarginFloor.rule`을 분기하는(`rule ==`/`rule in`) 줄이
+    `_margin_floor_allowances` 안에만 있는지 확인한다. compose.py가
+    netlist.py의 규칙을 손으로 베껴 양방향으로 갈라진 것이 이 저장소가
+    이미 치른 대가다.
+
+    (브리프는 이 형태의 소스 스캔에 tests/unit/test_area_ranking.py의
+    선례가 있다고 적었지만, 확인 결과 그 파일에는 inspect.getsource를
+    쓰는 테스트가 전혀 없다 - 선례 없이 새로 쓴다.)"""
+    import inspect
+    import re
+
+    from analogcoder import optimizer as optimizer_module
+    from analogcoder.optimizer import _margin_floor_allowances
+
+    module_lines = inspect.getsource(optimizer_module).splitlines()
+    func_lines, func_start = inspect.getsourcelines(_margin_floor_allowances)
+    func_line_numbers = set(range(func_start, func_start + len(func_lines)))
+
+    pattern = re.compile(r"\brule\s*(==|in)\s")
+    branching_lines = [i + 1 for i, line in enumerate(module_lines) if pattern.search(line)]
+
+    # 패턴이 하나도 안 걸리면 정규식이 코드와 어긋난 것이지, "분기가 없다"는
+    # 뜻이 아니다 - 침묵을 통과로 읽지 않는다.
+    assert branching_lines, "no 'rule ==' / 'rule in' line found at all"
+    outside = [ln for ln in branching_lines if ln not in func_line_numbers]
+    assert outside == [], f"rule is branched outside _margin_floor_allowances at lines {outside}"
+
+
+@pytest.mark.asyncio
+async def test_margin_floor_is_actually_wired_into_the_optimize_baseline_event(tmp_path):
+    """단위 함수가 아니라 `_optimize`의 allowances 조립 지점에 실제로
+    배선됐는지를 본다. `_margin_floor_allowances`가 존재해도 `_optimize`가
+    여전히 옛 `ratio`만 읽으면 psrr이 무방비로 남는데, 그 차이는 함수
+    단위 테스트로는 안 잡힌다."""
+    from types import SimpleNamespace
+
+    from analogcoder.optimizer import MarginFloor, OptimizerAgents, PhaseConfig, run_optimization
+    from analogcoder.spec import Criterion
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _spec
+
+    tb = SimpleNamespace(
+        name="tb",
+        criteria=[
+            Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+            Criterion(name="psrr", measurement="psrr_db", operator="<=", threshold=-25.0),
+        ],
+        control_block=".control\nmeas dc iq_ua FIND i(Vdd) AT=27\n.endc\n",
+        fragments=None,
+    )
+    spec = _spec(testbenches=[tb], optimize=None)
+
+    async def simulate(netlist_texts, spec_arg):
+        return {
+            "measurements": {"iq_ua": 200.0, "gain_db": 65.0, "psrr_db": -25.0},
+            "status": "success",
+            "warnings": [],
+        }
+
+    # knob_ranking=[] (None이 아니다) - 이 테스트는 조립 지점만 보므로 LLM은
+    # 부르지 않는다(OptimizerAgents.knob_ranking 참고).
+    agents = OptimizerAgents(propose=None, simulate=simulate, knob_ranking=[])
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+
+    phase = PhaseConfig(
+        objective="iq_ua", area_budget=None, guard_band=None, label="optimize_f2test",
+        margin_floor=MarginFloor(rule="f2", value=0.5),
+    )
+
+    await run_optimization({"tb": DECK}, spec, state, agents, phase=phase)
+
+    events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
+    baseline = next(e for e in events if e["step"] == "optimize_f2test_baseline")
+
+    # gain은 F2가 여유 2.5(=0.5*(65-60))를 채운다. psrr은 임계값에 정확히
+    # 붙어 있어 F2가 이름으로 제외하고, _unguarded는 그 이름을 무방비로 본다.
+    assert baseline["unguarded_criteria"] == ["psrr"]
