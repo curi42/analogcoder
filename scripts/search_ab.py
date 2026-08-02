@@ -226,6 +226,103 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _count_compound_accepted(steps: list[dict]) -> int:
+    """조합 스텝(노브 2개 이상을 한 후보로 묶은 시도)이 실제로 **수락**된 수.
+
+    `changes`가 실린 스텝(`_steps_from_history` 참고)만 조합 시도이고, 그중
+    `accepted`가 참인 것만 센다 - 단일 노브 수락(`changes` 없음)과 거절된
+    조합(`accepted=False`)을 섞지 않는다. 사전 등록의 선행 조건("조합 스텝이
+    한 번도 수락되지 않으면 그 슬롯은 void")이 이 값을 읽으므로, 거절된
+    조합을 세어 넣으면 실제로 발화하지 않은 조건을 발화한 것처럼 판정하게
+    된다."""
+    return sum(1 for s in steps if s["accepted"] and s.get("changes"))
+
+
+def _corner_capability(spec, agents) -> dict:
+    """`corner_capable`이 참인지 결정하는 두 사실을 따로 잰다.
+
+    `optimizer.py:1757`의 정의(`spec.pvt_corners is not None and
+    agents.verify_corners is not None`)를 **재유도하지 않고 그대로 읽는다** -
+    이 저장소의 규칙이다(규칙을 소유한 곳에서 가져온다). 이 하니스의
+    `build_agents`는 두 조건을 하나로 묶어 놓았지만
+    (`verify_corners=... if spec.pvt_corners is not None else None`), 그
+    묶임을 지키는 것은 코드가 아니라 이 파일을 읽는 사람의 규율이다 - 그래서
+    두 사실을 따로 재 두면, 나중에 이 하니스가 바뀌어 둘이 갈라지더라도
+    "무엇이 없어서 명목 전용이 됐는가"를 여전히 가를 수 있다."""
+    pvt_corners_declared = spec.pvt_corners is not None
+    verify_corners_wired = agents.verify_corners is not None
+    return {
+        "pvt_corners_declared": pvt_corners_declared,
+        "verify_corners_wired": verify_corners_wired,
+        "corner_capable": pvt_corners_declared and verify_corners_wired,
+    }
+
+
+def _eligibility_verdict(
+    corner_capability: dict,
+    control_side,
+    control_steps_accepted,
+    control_corner_confirmed,
+) -> dict:
+    """적격성 게이트의 순수 판정 - 시뮬레이션·파일 IO에서 분리해 두어 이
+    판정만 ngspice 없이 단위 시험할 수 있게 한다.
+
+    네 결과(`nominal_only`/`not_applicable`/`void`/`eligible`) 모두 같은 키
+    모양을 쓴다. "게이트가 통과했다"와 "게이트가 없다"와 "이 실행은 애초에
+    잴 자격이 없다"가 `history`/`comparison.json`만으로 구별되려면 세 가지가
+    같은 모양으로, 항상 남아야 한다.
+
+    **`nominal_only`가 가장 먼저 판정된다.** F1 리뷰: `corner_capable`이
+    거짓이면 `steps_accepted`는 확인 스윕 생존 수가 아니라 `_search`가 낸
+    원시 명목 수락 수다(`optimizer.py` 1911-1915 vs 1937) -
+    `steps_survived > 0`만으로는 이 둘을 구별할 수 없으므로, 대조군을
+    돌리기도 전에 이 전제부터 거부한다. "대조군이 스텝을 0개 수락했다"
+    (`void`, 조건이 발생하지 않았다)와는 다른 사실이다 - 이 실행은 애초에
+    코너 인식 수락으로 돌지 않는다."""
+    verdict = {
+        "checked": False,
+        "control_strategy": None,
+        "control_side": control_side,
+        "control_steps_accepted": control_steps_accepted,
+        "pvt_corners_declared": corner_capability["pvt_corners_declared"],
+        "verify_corners_wired": corner_capability["verify_corners_wired"],
+        "corner_confirmed": control_corner_confirmed,
+        "verdict": None,
+        "reason": None,
+    }
+    if not corner_capability["corner_capable"]:
+        if not corner_capability["pvt_corners_declared"]:
+            missing = "spec.pvt_corners is None"
+        else:
+            missing = "agents.verify_corners is None even though spec.pvt_corners is declared"
+        verdict["verdict"] = "nominal_only"
+        verdict["reason"] = (
+            f"{missing} - acceptance would be judged at a single nominal point, not "
+            "a corner-confirmed sweep; revision 1 of the design doc forbids "
+            "measuring search-strategy differences under that rule"
+        )
+        return verdict
+    if control_side is None:
+        verdict["verdict"] = "not_applicable"
+        verdict["reason"] = (
+            "neither --strategy is literally 'coordinate_descent'; there is no "
+            "designated control to establish a baseline against, so the eligibility "
+            "gate does not apply to this pair"
+        )
+        return verdict
+    verdict["checked"] = True
+    verdict["control_strategy"] = "coordinate_descent"
+    if control_steps_accepted == 0:
+        verdict["verdict"] = "void"
+        verdict["reason"] = (
+            "control (coordinate_descent) accepted 0 steps on this slot; "
+            "there is no baseline to compare against"
+        )
+    else:
+        verdict["verdict"] = "eligible"
+    return verdict
+
+
 def _steps_from_history(state, step_event: str) -> list[dict]:
     """이력의 `step_event`(단계에 따라 `optimize_step` 또는 `optimize_area_step`)를
     비교 가능한 모양으로 줄인다.
@@ -283,11 +380,28 @@ def run_side(
     넘기는 `ranking`(고정 순위)은 목적 단계에서만 쓰이고 면적 단계에서는
     `run_area_optimization`이 만드는 새 `OptimizerAgents`로 통째로 대체된다
     (`optimizer.py:2109-2118`) - `agents.propose`/`simulate`/`verify_corners`/
-    `search_strategy`만 그대로 이어받는다.
+    `search_strategy`만 그대로 이어받는다. **그래서 `phase="area"`에는
+    `ranking`을 비워서 줘야 한다** - 아래 가드가 그것을 강제한다.
 
     `record`와 `meta`를 가르는 것이 중요하다. record는 **결정론적이어야 하는**
     모든 것이고, meta는 그렇지 않은 것(벽시계, 경로)이다. 자기 검사는 record만
     비교한다 - meta를 섞으면 검사가 언제나 실패해 아무 말도 하지 않게 된다."""
+    if phase == "area" and ranking:
+        # F2 리뷰: `main()`의 인자 검증(`--phase area`와 `--knob`을 함께 주면
+        # 거부)은 이 스크립트를 CLI로 부를 때만 지난다 - 이 모듈을 직접
+        # import해서 `run_side`를 부르면 그 검증을 건너뛴다. 조용히 받으면
+        # `record["knob_ranking"]`이 `run_area_optimization`이 실제로는 아예
+        # 읽지 않는 값을 그대로 실어("결과는 자기가 반환한 것을 기술해야
+        # 한다"는 규칙 위반) 실제로 쓰인 순위(`history.jsonl`의
+        # `optimize_area_ranking` 이벤트)와 달라 보이게 된다. `corner_regime`
+        # 가드와 같은 이유로 여기서도 다시 거부한다.
+        raise ValueError(
+            f"run_side(phase='area', ranking={ranking!r})에 노브 순위를 주면 "
+            "안 된다: run_area_optimization은 rank_by_area_gain으로 순위를 "
+            "스스로 계산해 OptimizerAgents를 통째로 새로 만들고 "
+            "(optimizer.py:2109-2118) 여기서 받은 ranking은 그 안에서 아예 "
+            "읽히지 않는다."
+        )
     if corner_regime is not None:
         # **거부를 `main()`에만 두지 않는다.** `main()`의 인자 검증은 이
         # 스크립트를 CLI로 부를 때만 지난다 - 이 모듈을 직접 import해서
@@ -351,9 +465,7 @@ def run_side(
     # 사전 등록의 선행 조건: 조합 스텝(노브 2개 이상)이 이 런에서 실제로 한 번
     # 이라도 **수락**됐는가. 0이어도 키를 쓴다 - "조합이 한 번도 안 됐다"와
     # "이 계측이 사라졌다"가 history.jsonl 만으로는 구별되지 않으면 안 된다.
-    compound_steps_accepted = sum(
-        1 for s in steps if s["accepted"] and s.get("changes")
-    )
+    compound_steps_accepted = _count_compound_accepted(steps)
     final_texts = state.current_netlist_texts()
 
     record = {
@@ -455,7 +567,12 @@ def main(argv=None) -> int:
         type=parse_knob,
         default=[],
         metavar="REFDES:PARAM:DIRECTION",
-        help="고정 노브 순위. 순서가 곧 순위다. 여러 번 줄 수 있다.",
+        help="고정 노브 순위. 순서가 곧 순위다. 여러 번 줄 수 있다. "
+             "--phase objective 에서는 필수(LLM을 부르지 않으려면 순위를 "
+             "고정해야 한다), --phase area 에서는 줄 수 없다 "
+             "(run_area_optimization 이 rank_by_area_gain 으로 순위를 스스로 "
+             "계산해 여기서 준 값을 아예 읽지 않기 때문 - 조용히 버리는 대신 "
+             "거부한다).",
     )
     parser.add_argument(
         "--strategy",
@@ -508,16 +625,28 @@ def main(argv=None) -> int:
     for name in args.strategy:
         if name not in SEARCH_STRATEGIES:
             parser.error(f"unknown strategy {name!r}; known: {sorted(SEARCH_STRATEGIES)}")
-    if not args.knob and args.phase == "objective":
+    if args.phase == "objective" and not args.knob:
         parser.error(
             "--knob을 최소 하나 주어야 한다. 순위를 고정하지 않으면 LLM을 부르게 되고, "
             "그러면 이 하니스가 존재하는 이유가 사라진다"
         )
-    # `--phase area`에서는 `--knob`이 필요 없다 - `run_area_optimization`은
-    # `rank_by_area_gain`으로 순위를 스스로 계산해 `OptimizerAgents`를 통째로
-    # 새로 만들고(`optimizer.py:2109-2118`), 여기서 넘긴 고정 순위는 그 안에서
-    # 아예 읽히지 않는다. 그래도 준 값은 버리지 않고 그대로 이어 준다 - 넣어도
-    # 해가 없고, 목적 단계로 재실행할 때 같은 커맨드라인을 재사용할 수 있다.
+    if args.phase == "area" and args.knob:
+        # F2 리뷰(Important, 승격): `run_area_optimization`은
+        # `rank_by_area_gain`으로 순위를 스스로 계산해 `OptimizerAgents`를
+        # 통째로 새로 만들고(`optimizer.py:2109-2118`), 여기서 준 `--knob`은
+        # 그 안에서 **아무 데도 읽히지 않는다** - 실제로 쓰인 순위는
+        # `history.jsonl`의 `optimize_area_ranking` 이벤트에만 있다. 조용히
+        # 버리면 `record["knob_ranking"]`이 무시된 값을 그대로 실어 "결과는
+        # 자기가 반환한 것을 기술해야 한다"는 규칙(이 저장소가 다섯 번 친
+        # 규칙)을 어긴다. `corner_regime`의 coverage를 시작 전에 거부하는
+        # 것과 같은 모양·같은 이유로 여기서도 경계에서 거부한다.
+        parser.error(
+            "--phase area와 --knob을 함께 줄 수 없다: run_area_optimization은 "
+            "rank_by_area_gain으로 순위를 스스로 계산하므로 --knob으로 준 "
+            "고정 순위는 아무 데도 읽히지 않는다 - 조용히 버리는 대신 시작 "
+            "전에 거부한다. 실제로 쓰인 순위는 history.jsonl의 "
+            "optimize_area_ranking 이벤트에서 확인해라."
+        )
     if not args.corner_regime:
         args.corner_regime = [None, None]
     if len(args.corner_regime) != 2:
@@ -563,22 +692,38 @@ def main(argv=None) -> int:
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    # 코너 경로의 적격성(사전 등록 개정 1, design.md "코너 경로의 적격성"절) -
-    # 대조군(coordinate_descent)이 스텝을 하나도 수락하지 못하면 비교할
-    # 기준선이 없다. 기준선이 자기 가드를 못 지키는 경우(optimize_guard_infeasible)가
-    # 그렇고, 그때는 어떤 전략도 0을 낸다 - 여유분 하한 측정이 P2 에서 정확히
-    # 이렇게 무효가 됐다. void 는 실패가 아니라 "조건이 발생하지 않았다"이다.
+    # 코너 경로의 적격성(사전 등록 개정 1, design.md "코너 경로의 적격성"절).
     #
+    # F1 리뷰(Important): 먼저 이 게이트가 딛고 선 전제(`corner_capable` -
+    # optimizer.py:1757의 `spec.pvt_corners is not None and
+    # agents.verify_corners is not None`) 그 자체를 대조군을 돌리기 **전에**
+    # 확인한다. 거짓이면 결과의 `steps_accepted`가 확인 스윕 생존 수가 아니라
+    # `_search`의 원시 명목 수락 수라(1911-1915 vs 1937), `steps_survived > 0`
+    # 만으로는 이 실행이 코너 확인을 거쳤는지 알 수 없다 - 그래서 시뮬레이션을
+    # 전혀 쓰지 않고(스펙 재파싱 + `OptimizerAgents` 구성뿐, ngspice 미실행)
+    # 이 전제부터 거부한다. `nominal_only`는 "대조군이 0개 수락했다"(`void`,
+    # 조건이 발생하지 않았다)와는 **다른 사실** - 이 실행은 애초에 코너 인식
+    # 수락으로 돌지 않는다.
+    spec_for_gate = load_spec(args.spec)
+    gate_agents = build_agents(
+        spec_for_gate, args.strategy[0], args.knob, Meter(), args.sim_timeout
+    )
+    corner_capability = _corner_capability(spec_for_gate, gate_agents)
+
     # 대조군은 두 --strategy 중 문자 그대로 "coordinate_descent"인 쪽이다
     # (위치는 무관 - a든 b든). 그 대조군을 **먼저** 돌리고, 0 수락이면 나머지
-    # 쪽은 아예 돌리지 않는다. 어느 쪽도 "coordinate_descent"가 아니면(둘 다
-    # compound_fallback_*인 비교 등) 이 게이트가 세울 기준선 자체가 없으므로
-    # 적용하지 않는다 - **적용하지 않았다는 사실도 기록한다**, 조용히
-    # 건너뛰면 "게이트가 통과했다"와 "게이트가 아예 없다"가 history 만으로는
-    # 구별되지 않는다.
+    # 쪽은 아예 돌리지 않는다(대조군이 스텝을 하나도 수락하지 못하면 비교할
+    # 기준선이 없다 - 기준선이 자기 가드를 못 지키는 경우가 그렇고, 여유분
+    # 하한 측정이 P2 에서 정확히 이렇게 무효가 됐다. void 는 실패가 아니라
+    # "조건이 발생하지 않았다"이다). 어느 쪽도 "coordinate_descent"가
+    # 아니면(둘 다 compound_fallback_*인 비교 등) 이 게이트가 세울 기준선
+    # 자체가 없으므로 적용하지 않는다 - **적용하지 않았다는 사실도
+    # 기록한다**, 조용히 건너뛰면 "게이트가 통과했다"와 "게이트가 아예 없다"가
+    # history 만으로는 구별되지 않는다.
     control_idx = next(
         (i for i, s in enumerate(args.strategy) if s == "coordinate_descent"), None
     )
+    control_side = None if control_idx is None else ("a" if control_idx == 0 else "b")
 
     def _run(idx: int) -> dict:
         side = "a" if idx == 0 else "b"
@@ -587,52 +732,47 @@ def main(argv=None) -> int:
             args.corner_regime[idx], phase=args.phase,
         )
 
+    if not corner_capability["corner_capable"]:
+        eligibility = _eligibility_verdict(corner_capability, control_side, None, None)
+        comparison = {
+            "spec": os.path.relpath(args.spec, os.getcwd()),
+            "phase": args.phase,
+            "step_budget": args.max_steps,
+            "knob_ranking": args.knob,
+            "strategies": args.strategy,
+            "eligibility_check": eligibility,
+            "verdict": eligibility["verdict"],
+            "reason": eligibility["reason"],
+            "a": None,
+            "b": None,
+        }
+        with open(os.path.join(out_dir, "comparison.json"), "w") as f:
+            json.dump(comparison, f, indent=2, sort_keys=True)
+        print(
+            f"\nNOMINAL_ONLY: {eligibility['reason']}. Neither side was run. "
+            f"wrote {os.path.join(out_dir, 'comparison.json')}"
+        )
+        return 0
+
     payloads = {0: None, 1: None}
     if control_idx is None:
-        eligibility = {
-            "checked": False,
-            "control_strategy": None,
-            "control_side": None,
-            "control_steps_accepted": None,
-            "verdict": "not_applicable",
-            "reason": (
-                "neither --strategy is literally 'coordinate_descent'; there is no "
-                "designated control to establish a baseline against, so the eligibility "
-                "gate does not apply to this pair"
-            ),
-        }
+        eligibility = _eligibility_verdict(corner_capability, None, None, None)
         payloads[0] = _run(0)
         payloads[1] = _run(1)
     else:
         control_payload = _run(control_idx)
         payloads[control_idx] = control_payload
-        # record["steps_survived"]는 run_side가 이름만 바꿔 실은
-        # optimizer.run_optimization/run_area_optimization의 원시 결과
-        # result["steps_accepted"]와 같은 값이다 - 코너를 잴 수 있으면 확인
-        # 스윕에서 살아남은 수, 아니면 nominal 수락 수.
+        # record["steps_survived"]/["corner_confirmed"]는 run_side가 이름만
+        # 바꿔 실은 optimizer.run_optimization/run_area_optimization의 원시
+        # 결과 result["steps_accepted"]/["corner_confirmed"]와 같은 값이다 -
+        # corner_capable이 참으로 확인된 뒤이므로 여기서는 steps_survived가
+        # 확인 스윕에서 살아남은 수라고 읽어도 된다.
         control_steps = control_payload["record"]["steps_survived"]
-        control_side = "a" if control_idx == 0 else "b"
-        if control_steps == 0:
-            eligibility = {
-                "checked": True,
-                "control_strategy": "coordinate_descent",
-                "control_side": control_side,
-                "control_steps_accepted": 0,
-                "verdict": "void",
-                "reason": (
-                    "control (coordinate_descent) accepted 0 steps on this slot; "
-                    "there is no baseline to compare against"
-                ),
-            }
-        else:
-            eligibility = {
-                "checked": True,
-                "control_strategy": "coordinate_descent",
-                "control_side": control_side,
-                "control_steps_accepted": control_steps,
-                "verdict": "eligible",
-                "reason": None,
-            }
+        control_confirmed = control_payload["record"]["corner_confirmed"]
+        eligibility = _eligibility_verdict(
+            corner_capability, control_side, control_steps, control_confirmed
+        )
+        if eligibility["verdict"] == "eligible":
             other_idx = 1 - control_idx
             payloads[other_idx] = _run(other_idx)
 
