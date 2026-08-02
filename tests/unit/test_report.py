@@ -1030,11 +1030,17 @@ def test_the_report_distinguishes_a_crashed_area_phase_from_a_clean_no_op(tmp_pa
     두 렌더를 `failure` 유무만 다르게 만들고 비교한다 - "그 절이 있다"만
     보는 단언은 아무것도 못 잡는다. `failure` 값 자체가 어느 쪽에만
     나타나는지를 잰다."""
+    # `unguarded_criteria`를 실제 모양대로 채운다 - `optimizer._result`는 이
+    # 키를 절대 생략하지 않는다(끝까지 쟀으면 리스트, 못 쟀으면 `None`, 둘 다
+    # 실제로 실린다). 이전 버전은 두 dict 모두에서 이 키를 아예 뺐고, 그러면
+    # `.get()`이 조용히 `None`을 돌려줘 "쟀고 비었다"와 "못 쟀다"가 report.py
+    # 안에서 우연히 같은 렌더(무렌더)로 붕괴했다 - production이 내지 않는
+    # 모양을 검사하고 있었다.
     clean = {
         "status": "UNCHANGED", "steps_accepted": 0, "steps_rejected": 0,
-        "area_before": 41.0, "area_after": 41.0,
+        "area_before": 41.0, "area_after": 41.0, "unguarded_criteria": [],
     }
-    crashed = {**clean, "failure": "AgentExecutionError: boom"}
+    crashed = {**clean, "failure": "AgentExecutionError: boom", "unguarded_criteria": None}
 
     clean_path = write_report_md(
         _dir(tmp_path, "area_clean_noop"), _result(status="PASS", area_optimization=clean)
@@ -1047,6 +1053,61 @@ def test_the_report_distinguishes_a_crashed_area_phase_from_a_clean_no_op(tmp_pa
 
     assert "AgentExecutionError: boom" not in clean_md
     assert "AgentExecutionError: boom" in crashed_md
+
+
+@pytest.mark.asyncio
+async def test_unguarded_criteria_s_three_states_render_three_different_lines(
+    tmp_path, monkeypatch
+):
+    """`unguarded_criteria`는 세 다른 사실을 가질 수 있다: 계산됐고 이름이
+    있다 / 계산됐고 비어 있다(모든 기준이 방비됨) / **계산되지 못했다**(이
+    단계가 준비 구간에서 죽어 allowances 자체가 존재한 적이 없다). 세 번째를
+    손으로 만든 dict로 흉내 내면 딱 이 결함을 반복한다 - 그래서 실제 코드
+    경로(`run_area_optimization`의 준비 구간을 강제로 터뜨린다)로 만든다.
+
+    `_result`가 `None`을 `[]`로 접었다면 세 번째는 두 번째와 같은 렌더가
+    되어 "모든 기준이 방비됨"이라는 거짓 문장을 낸다 - 그 회귀를 이 테스트가
+    잡는다."""
+    import analogcoder.optimizer as optimizer_mod
+    from analogcoder.optimizer import run_area_optimization
+    from analogcoder.state import RunState
+    from tests.unit.test_optimizer import DECK, _agents, _spec
+
+    def boom(*args, **kwargs):
+        raise ValueError("boom in derive_structure")
+
+    monkeypatch.setattr(optimizer_mod, "derive_structure", boom)
+    agents, _ = _agents([200.0])
+    state = RunState(run_dir=str(tmp_path / "crash_state"), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    crashed = await run_area_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+    # 준비 구간이 실제로 죽었고, unguarded_criteria는 실제로 None이다 - 이
+    # 단언이 없으면 아래 렌더 비교가 fixture 오류를 놓칠 수 있다.
+    assert crashed["failure"] is not None
+    assert crashed["unguarded_criteria"] is None
+
+    with_names = {**crashed, "failure": None, "unguarded_criteria": ["gain", "phase_margin"]}
+    empty = {**crashed, "failure": None, "unguarded_criteria": []}
+
+    def _unguarded_line(area_optimization, dirname):
+        path = write_report_md(
+            _dir(tmp_path, dirname), _result(status="PASS", area_optimization=area_optimization)
+        )
+        text = open(path, encoding="utf-8").read()
+        return next(line for line in text.splitlines() if "무방비 기준" in line)
+
+    named_line = _unguarded_line(with_names, "u_named")
+    empty_line = _unguarded_line(empty, "u_empty")
+    crashed_line = _unguarded_line(crashed, "u_crashed")
+
+    assert len({named_line, empty_line, crashed_line}) == 3
+    assert "gain" in named_line and "phase_margin" in named_line
+    assert "every criterion is corner- or ratio-guarded" in empty_line
+    assert "every criterion is corner- or ratio-guarded" not in crashed_line
+    # 크래시를 "0"으로 읽으면 안 된다 - 아무 기준도 어떤 allowance와도
+    # 비교되지 않았다.
+    assert "- 무방비 기준(여유분 0으로 판정됨): 0" not in crashed_line
+    assert "끝까지 가지 못해" in crashed_line
 
 
 def test_the_report_renders_the_area_phase_s_corner_failure_and_guard_infeasibility(tmp_path):

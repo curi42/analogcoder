@@ -367,9 +367,20 @@ def _result(
         # 읽는 소비자는 이 위험을 볼 방법이 없었다. 계획 문서("스펙에 없던 결정
         # 하나")가 "보고서는 무방비 기준의 개수를 적는다"고 값을 명시했는데
         # 그 값이 코드 어디에도 없었던 것이 최종 리뷰의 Critical이다.
-        # 빈 리스트(계산했고 전부 방비됨)와 None(allowances 자체가 아직 정해지지
-        # 않은 경로 - SKIPPED/REFUSED/예외)은 다른 사실이라 후자만 []로 접는다.
-        "unguarded_criteria": list(unguarded_criteria) if unguarded_criteria is not None else [],
+        #
+        # **`None`을 `[]`로 접지 않는다 - 여기서는 guard_infeasible과 같은
+        # 관례를 쓰면 안 된다.** guard_infeasible은 report.py가 `if
+        # area.get("guard_infeasible"):`로 진실성 검사만 하므로 `[]`와 `None`이
+        # 렌더링에서 똑같이 "아무것도 안 그림"이 된다 - 무해한 붕괴다. 이 필드는
+        # 다르다: `_unguarded_summary`는 **빈 리스트에도 긍정 문장**("모든 기준이
+        # 방비됨")을 그리도록 설계됐다 - 그것이 Critical 수정의 핵심이었다.
+        # `None`을 `[]`로 접으면 "allowances가 아예 없어서 잴 수 없었다"(이
+        # 단계가 `_search`에 들어가기도 전에, 또는 도중에 터진 경우 -
+        # `run_optimization`/`run_area_optimization`의 except 핸들러, REFUSED
+        # 경로)와 "쟀고 전부 방비됐다"가 같은 긍정 문장으로 렌더된다. 그 문장은
+        # 거짓이다: 어떤 기준도 어떤 allowance와도 비교되지 않았다. `0`과
+        # `unknown`은 이 저장소에서 한 칸을 나눠 쓰지 않는다.
+        "unguarded_criteria": list(unguarded_criteria) if unguarded_criteria is not None else None,
     }
 
 

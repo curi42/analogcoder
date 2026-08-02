@@ -11,17 +11,24 @@ from analogcoder.json_io import dump as json_dump
 _UNGUARDED_NAME_LIMIT = 10
 
 
-def _unguarded_summary(names: list | None) -> str | None:
-    """`unguarded_criteria`를 사람이 읽을 문장 하나로. `None`이면 이 결과가
-    그 필드를 낸 코드 경로를 안 지났다는 뜻이므로(REFUSED 등, 그 절이
-    이 지점에 닿기 전에 이미 반환한다) 아무것도 그리지 않는다 - 빈 리스트와
-    `None`은 여전히 다른 사실이지만, `optimizer._result`가 이미 `None`을
-    `[]`로 접어 낸다는 것은 알고 있어야 한다(가드밴드 미실행 필드
-    `guard_infeasible`과 같은 관례). 그래서 이 함수가 보는 `[]`는 "계산했고
-    전부 방비됨"과 "이 단계 자체가 크래시해서 검색을 시작도 못 함"을 둘 다
-    가리킬 수 있다 - 후자는 바로 옆의 `failure` 줄이 구분한다."""
+def _unguarded_summary(names: list | None) -> str:
+    """`unguarded_criteria`를 사람이 읽을 문장 하나로. **세 상태 모두 그린다** -
+    `None`을 받고 조용히 침묵하던 이전 버전은 결함이었다.
+
+    `optimizer._result`는 이 필드에서 `guard_infeasible`과 **다른** 관례를
+    쓴다: `guard_infeasible`은 report.py가 `if area.get("guard_infeasible"):`로
+    진실성만 검사하므로 `[]`와 `None`이 렌더링에서 똑같이 "아무것도 안 그림"이
+    되는, 무해한 붕괴다. 이 필드는 다르다 - 빈 리스트에도 **긍정 문장**("모든
+    기준이 방비됨")을 그리도록 설계됐다(그것이 Critical 수정의 핵심이었다).
+    그래서 `_result`는 이 필드만은 `None`을 `[]`로 접지 않는다: `None`은
+    "이 단계가 `_search`에 들어가기 전이나 도중에 터져서 allowances 자체가
+    존재하지 않았다"는 사실이고(`run_optimization`/`run_area_optimization`의
+    except 핸들러, `REFUSED` 경로), `[]`는 "끝까지 쟀고 전부 방비됐다"는
+    사실이다 - 둘을 같은 문장으로 그리면 크래시 경로에서 "모든 기준이
+    방비됨"이라는 **거짓** 주장이 나간다. `0`과 `unknown`은 이 저장소에서
+    한 칸을 나눠 쓰지 않는다."""
     if names is None:
-        return None
+        return "알 수 없음 - 이 단계가 끝까지 가지 못해 allowances 자체가 없었다"
     if not names:
         return "0 (every criterion is corner- or ratio-guarded)"
     if len(names) <= _UNGUARDED_NAME_LIMIT:
@@ -118,9 +125,10 @@ def _area_optimization_lines(area: dict | None) -> list[str]:
     # 여유가 0.305 -> 0.024로 줄었다 - 그 스펙은 코너를 선언하지 않으므로
     # 아무도 그 드리프트를 다시 확인하지 않는다. 어느 기준이 그 상태로
     # 판정됐는지가 실행 하나(이 리포트)만 보고 드러나야 한다.
-    unguarded = _unguarded_summary(area.get("unguarded_criteria"))
-    if unguarded is not None:
-        lines.append(f"- 무방비 기준(여유분 0으로 판정됨): {unguarded}")
+    lines.append(
+        f"- 무방비 기준(여유분 0으로 판정됨): "
+        f"{_unguarded_summary(area.get('unguarded_criteria'))}"
+    )
     if area.get("corner_failure"):
         lines.append(f"- 코너 확인이 돌지 못했다: {area['corner_failure']}")
     if area.get("failure"):
@@ -189,9 +197,10 @@ def _optimization_lines(optimization: dict | None) -> list[str]:
     coverage = optimization.get("area_coverage") or {}
     if coverage.get("reason"):
         lines.append(f"**Area budget:** {coverage['reason']}")
-    unguarded = _unguarded_summary(optimization.get("unguarded_criteria"))
-    if unguarded is not None:
-        lines.append(f"**Unguarded criteria (judged with zero margin):** {unguarded}")
+    lines.append(
+        f"**Unguarded criteria (judged with zero margin):** "
+        f"{_unguarded_summary(optimization.get('unguarded_criteria'))}"
+    )
 
     return lines
 
