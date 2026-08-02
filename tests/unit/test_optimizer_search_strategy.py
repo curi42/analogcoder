@@ -28,8 +28,8 @@ class FakeRun:
     def exhausted(self, knob, state, reason):
         self.exhausted_calls.append((knob, reason))
 
-    def log_event(self, step, payload):
-        self.logged_events.append((step, payload))
+    def log_event(self, suffix, payload):
+        self.logged_events.append((suffix, payload))
 
     async def attempt(self, steps):
         self.attempts.append(list(steps))
@@ -157,3 +157,43 @@ async def test_a_partner_that_cannot_move_opposite_is_logged_not_exhausted():
     assert payload["attempted_direction"] == "decrease"
     assert payload["partner_value"] == 1.0
     assert payload["budget_spent"] is True
+
+
+class _FakeState:
+    """`SearchRun`이 이벤트를 넘기는 곳만 흉내낸다."""
+
+    def __init__(self):
+        self.events = []  # list[(name, payload)]
+
+    def log_event(self, name, payload):
+        self.events.append((name, payload))
+
+
+def test_search_run_log_event_prefixes_the_phase_label():
+    """`SearchRun.log_event`가 스스로 단계 라벨을 붙인다는 것을 못박는다.
+
+    `FakeRun`은 `SearchRun`이 아니므로(전략이 보는 표면만 흉내낸다) 이 시험은
+    진짜 `SearchRun`을 세운다. `run_area_optimization`이 `agents.search_strategy`를
+    면적 단계에도 그대로 넘기므로, 한 실행에서 면적 단계와 목적 단계가 같은
+    전략(예: `compound_fallback_1`)을 둘 다 돌릴 수 있다 - 라벨이 빠지면
+    `history.jsonl`만 보고는 어느 단계가 낸 사건인지 구별할 수 없다. 이
+    시험은 라벨이 빠지면(예: `log_event`가 `suffix`를 그대로 내보내면) 깨진다."""
+    state = _FakeState()
+    phase = opt.PhaseConfig(objective="dummy", area_budget=None, guard_band=None, label="optimize_area")
+    run = opt.SearchRun(
+        spec=None,
+        state=state,
+        oracle=None,
+        knobs=[],
+        canonical_name="",
+        objective_before=0.0,
+        records={},
+        max_steps=10,
+        phase=phase,
+    )
+
+    run.log_event("compound_partner_direction_unavailable", {"lead_refdes": "A"})
+
+    assert state.events == [
+        ("optimize_area_compound_partner_direction_unavailable", {"lead_refdes": "A"})
+    ]

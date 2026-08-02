@@ -480,12 +480,15 @@ async def test_mads_composes_with_the_real_accept_rule_and_gates(tmp_path):
     assert result["steps_accepted"] >= 1
     # m은 개수 노브다 - 정수로 쓰여야 한다(m=3.0은 정수성 검사가 거부한다).
     assert "m=3" in state.current_netlist_texts()["tb"]
-    # 그리고 자기 폴 기록을 남겼다.
+    # 그리고 자기 폴 기록을 남겼다. `SearchRun.log_event`가 단계 라벨을
+    # 스스로 붙이므로(면적/목적 두 단계가 같은 전략을 돌릴 수 있어, 라벨이
+    # 없으면 history.jsonl만 보고 어느 단계가 낸 사건인지 구별할 수 없다),
+    # 여기서는 목적 단계 라벨 "optimize"가 붙은 이름으로 남는다.
     import json
 
     with open(state.history_path) as f:
         steps = [json.loads(line)["step"] for line in f]
-    assert "mads_poll" in steps and "mads_summary" in steps
+    assert "optimize_mads_poll" in steps and "optimize_mads_summary" in steps
 
 
 # --- 검증이 잡은 세 결함의 회귀 못 ------------------------------------------

@@ -997,7 +997,7 @@ class SearchRun:
             self._reject(self._event(knob, gate=gate, reason=reason, reason_code=code), code)
         return state
 
-    def log_event(self, step: str, payload: dict) -> None:
+    def log_event(self, suffix: str, payload: dict) -> None:
         """전략이 **자기 행동에 대해** 남기는 기록. 이력에 닿는 유일한 문이다.
 
         필요한 이유는 이 저장소가 게이트에 열 번 물었던 질문과 같다: "이것이
@@ -1008,8 +1008,19 @@ class SearchRun:
 
         **집계는 여전히 전략이 쓸 수 없다.** accepted/rejected/best_objective는
         읽기 전용이고, 이 문으로 나가는 것은 이력의 이벤트뿐이다 - 실행이
-        돌려주는 넷리스트를 설명하는 숫자는 하나도 전략을 거치지 않는다."""
-        self._state.log_event(step, payload)
+        돌려주는 넷리스트를 설명하는 숫자는 하나도 전략을 거치지 않는다.
+
+        **이 문이 스스로 단계 라벨을 앞에 붙인다** (`f"{self._phase.label}_{suffix}"`).
+        `spend_step`/`attempt`가 이미 그렇게 하는 것과 같은 이유다: `SearchRun`은
+        `_phase.label`을 내주는 공개 프로퍼티가 없고, 파라미터 이름을 `suffix`로
+        둔 것은 호출부가 "이건 접미사일 뿐, 완전한 이벤트 이름이 아니다"를
+        보게 하려는 것이다. `run_area_optimization`이 `agents.search_strategy`를
+        그대로 area 단계에도 넘기므로(`optimizer.py:2102` 부근), 한 실행에서
+        면적 단계와 목적 단계가 **같은 전략**을 돌릴 수 있다 - 전략이 라벨을
+        스스로 붙이게 두면 그 실행이 낸 사건이 `history.jsonl`에서 두 단계
+        사이에 섞여 버린다. 라벨을 이 문이 강제로 붙이면 전략은 그것을 잊을
+        방법이 없다."""
+        self._state.log_event(f"{self._phase.label}_{suffix}", payload)
 
     def exhausted(self, knob: Knob, state: KnobState, reason: str) -> None:
         """전략이 "이 노브는 더 갈 곳이 없다"고 판단한 경우. 사실이 사유와
@@ -1260,8 +1271,8 @@ async def _try_partners(
             # 아무 기록도 안 남기면 "이 파트너를 아예 고려조차 안 했다"와
             # 구별되지 않는다.
             run.log_event(
-                "compound_partner_direction_unavailable",
-                {
+                suffix="compound_partner_direction_unavailable",
+                payload={
                     "lead_refdes": knob.refdes,
                     "lead_param": knob.param,
                     "partner_refdes": partner.refdes,
