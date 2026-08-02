@@ -132,3 +132,39 @@ def ratio_allowances(criteria: list[Criterion], guard_band: float) -> dict[str, 
     `|T|`를 쓰므로 임계값의 부호와 무관하게 양수 절대량이 나오고, 그래서
     guard_band_violations 쪽이 부호 문제를 아예 만나지 않는다."""
     return {c.name: guard_band * abs(c.threshold) for c in criteria}
+
+
+def baseline_ratio_allowances(
+    baseline_measurements: dict, criteria: list[Criterion], r: float
+) -> tuple[dict[str, float], list[str]]:
+    """기준선 여유의 `r` 배를 남기라는 여유분, 그리고 **적용할 수 없는 기준들**.
+
+    `ratio_allowances`가 `g·|T|`(임계값에 비례)인 것과 달리 이쪽은
+    `r·|기준선 - T|`(회로가 실제로 갖고 있던 여유에 비례)다. 고를 상수가
+    비율 하나뿐이고 기준의 단위·부호·크기와 무관한 것이 이 규칙을 후보에
+    넣은 이유다.
+
+    셋을 제외하고 그 이름을 **돌려준다**(조용히 빼지 않는다): 측정값이
+    없는 기준(거리를 잴 수 없다), 이미 실패 중인 기준(음수에 r을 곱하면
+    하한이 위로 올라가 규칙이 뒤집힌다), 임계값에 정확히 붙은 기준(여유 0에
+    무엇을 곱해도 0이라 규칙이 침묵한다). 앞 둘은 `overall_pass`가 이미
+    판정하므로 이 규칙이 할 일이 없다. `guard_band_violations`는 이름이
+    없는 기준의 여유분을 0.0으로 읽으므로, 제외된 이름을 별도로 돌려주지
+    않으면 "적용 안 함"과 "여유 0"이 구분되지 않는다."""
+    allowances: dict[str, float] = {}
+    excluded: list[str] = []
+
+    for c in criteria:
+        actual = baseline_measurements.get(c.measurement)
+        if actual is None:
+            excluded.append(c.name)
+            continue
+
+        slack = (actual - c.threshold) if c.operator in _LOWER_BOUND else (c.threshold - actual)
+        if slack <= 0.0 or slack != slack:  # NaN 도 여기서 걸린다 - 측정 실패를 여유로 읽지 않는다
+            excluded.append(c.name)
+            continue
+
+        allowances[c.name] = r * slack
+
+    return allowances, excluded
