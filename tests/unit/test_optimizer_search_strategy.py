@@ -14,6 +14,7 @@ class FakeRun:
         self._budget = budget
         self.attempts = []          # list[list[ProposedStep]]
         self.exhausted_calls = []
+        self.logged_events = []     # list[(step, payload)]
 
     def spend_step(self, knob):
         if self._budget <= 0:
@@ -26,6 +27,9 @@ class FakeRun:
 
     def exhausted(self, knob, state, reason):
         self.exhausted_calls.append((knob, reason))
+
+    def log_event(self, step, payload):
+        self.logged_events.append((step, payload))
 
     async def attempt(self, steps):
         self.attempts.append(list(steps))
@@ -56,6 +60,30 @@ async def test_partners_zero_is_byte_for_byte_coordinate_descent():
 
     assert [[(s.knob.refdes, s.value) for s in a] for a in comp.attempts] == \
            [[(s.knob.refdes, s.value) for s in a] for a in base.attempts]
+
+    # 위 시나리오는 A가 예산(8)이 바닥날 때까지 계속 수락되므로 B·C에 도달하지
+    # 않고, 조합 갈래에서 `_try_partners`는 단 한 번도 호출되지 않는다 -
+    # partners=0과 coordinate_descent가 실제로 갈라지는 유일한 지점
+    # (`if not await _try_partners(...)`가 `break`를 대신하는 그 줄)을 밟지
+    # 않는다는 뜻이다. 리드가 **실제로 거절되는** 시나리오를 추가해 그 줄을
+    # 실제로 밟게 한다: 아무것도 수락하지 않으면 A·B·C가 각각 한 번씩
+    # 시도되고, 조합 갈래에서는 `_try_partners(..., 0)`이 매번 빈 파트너
+    # 목록을 만나 `False`를 돌려주며 `break`로 이어져야 한다.
+    reject_all = lambda key: False
+
+    base_rejected = FakeRun(_knobs("A", "B", "C"), reject_all, budget=8)
+    await opt.coordinate_descent(base_rejected)
+
+    comp_rejected = FakeRun(_knobs("A", "B", "C"), reject_all, budget=8)
+    await opt._compound_fallback(0)(comp_rejected)
+
+    assert [[(s.knob.refdes, s.value) for s in a] for a in comp_rejected.attempts] == \
+           [[(s.knob.refdes, s.value) for s in a] for a in base_rejected.attempts]
+    # 거절이 실제로 일어났다는 것: 노브마다 정확히 한 번씩 시도되고 다음
+    # 노브로 넘어간다. `_try_partners`가 (버그로) 파트너 목록이 비어 있어도
+    # 무조건 `True`를 돌려주면 while 루프가 `continue`로 A만 반복하며 예산이
+    # 바닥날 때까지 시도하므로, 이 단언은 그 버그에서 깨진다.
+    assert len(comp_rejected.attempts) == len(knobs) == 3
 
 
 @pytest.mark.asyncio
@@ -94,3 +122,38 @@ async def test_compound_attempts_spend_the_same_budget():
     run = FakeRun(knobs, lambda key: False, budget=3)   # 전부 거절
     await opt._compound_fallback(3)(run)
     assert len(run.attempts) == 3, "조합 시도가 예산을 쓰지 않았다"
+
+
+@pytest.mark.asyncio
+async def test_a_partner_that_cannot_move_opposite_is_logged_not_exhausted():
+    """파트너가 반대 방향으로 못 움직일 때 예산은 이미 나갔는데(`spend_step`이
+    성공했으므로) 이력에 아무것도 안 남으면 "그 파트너를 아예 고려조차 안
+    했다"와 구별되지 않는다. `run.exhausted`(거절 카운터를 올린다)를 쓰면 안
+    된다 - 이 파트너는 평가된 적조차 없고 자기 방향으로는 멀쩡하다."""
+    lead = opt.Knob(refdes="A", param="m", direction="increase")
+    partner = opt.Knob(refdes="B", param="m", direction="increase")
+
+    class Run(FakeRun):
+        def knob_state(self, knob):
+            # A는 정수 노브라 increase 로 문제없이 3으로 간다. B는 이미
+            # 1이라 반대 방향(decrease)으로 갈 곳이 없다(`_next_value`가
+            # None을 낸다).
+            if knob.refdes == "A":
+                return opt.KnobState(token="m", value=2.0, integer=True)
+            return opt.KnobState(token="m", value=1.0, integer=True)
+
+    run = Run([lead, partner], lambda key: False, budget=6)  # 전부 거절
+    await opt._compound_fallback(1)(run)
+
+    assert not run.exhausted_calls, "평가된 적 없는 파트너를 거절로 세면 안 된다"
+
+    logged = [e for e in run.logged_events if e[0] == "compound_partner_direction_unavailable"]
+    assert logged, "파트너가 못 움직일 때 아무 이벤트도 안 남았다"
+    _, payload = logged[0]
+    assert payload["lead_refdes"] == "A"
+    assert payload["lead_param"] == "m"
+    assert payload["partner_refdes"] == "B"
+    assert payload["partner_param"] == "m"
+    assert payload["attempted_direction"] == "decrease"
+    assert payload["partner_value"] == 1.0
+    assert payload["budget_spent"] is True

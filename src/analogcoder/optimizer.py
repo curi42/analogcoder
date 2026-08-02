@@ -1072,8 +1072,10 @@ class SearchRun:
             ),
         )
         if len(steps) > 1:
-            # 오늘의 전략은 절대 여기 오지 않는다. 여러 노브를 한 후보로 미는
-            # 탐색기가 붙었을 때, 이벤트의 스칼라 필드만 보면 나머지 변경이
+            # `coordinate_descent`는 언제나 steps 길이 1이라 여기 오지 않지만,
+            # `compound_fallback_*`는 조합 스텝을 시도할 때마다(거절 여부와
+            # 무관하게) 이 분기를 지난다 - 여러 노브를 한 후보로 미는 전략이
+            # 붙었을 때, 이벤트의 스칼라 필드(head 하나분)만 보면 나머지 변경이
             # 통째로 안 보이므로 목록을 함께 남긴다.
             event["changes"] = evaluation.changes
         self._state.log_event(f"{self._phase.label}_step", event)
@@ -1251,6 +1253,24 @@ async def _try_partners(
         opposite = "increase" if knob.direction == "decrease" else "decrease"
         partner_value = _next_value(partner_state.value, partner_state.integer, opposite)
         if partner_value is None:
+            # 이 파트너는 자기 방향(원래 순위 방향)으로는 멀쩡하다 - 반대
+            # 방향으로만 갈 곳이 없다. `run.exhausted`는 쓰지 않는다: 그건
+            # `_reject`를 타 거절 카운터를 올리는데, 이 파트너는 평가된 적조차
+            # 없다. 그래도 예산 1스텝은 `spend_step`이 이미 써 버렸으므로,
+            # 아무 기록도 안 남기면 "이 파트너를 아예 고려조차 안 했다"와
+            # 구별되지 않는다.
+            run.log_event(
+                "compound_partner_direction_unavailable",
+                {
+                    "lead_refdes": knob.refdes,
+                    "lead_param": knob.param,
+                    "partner_refdes": partner.refdes,
+                    "partner_param": partner.param,
+                    "attempted_direction": opposite,
+                    "partner_value": partner_state.value,
+                    "budget_spent": True,
+                },
+            )
             continue
         outcome = await run.attempt(
             [
