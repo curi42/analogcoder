@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable
 
 from analogcoder.agents.backend import AgentExecutionError
@@ -1767,13 +1767,21 @@ def _area_knob_state(
     return KnobState(token=token, value=value, integer=is_count_param(component, token))
 
 
-async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agents) -> dict:
+async def run_area_optimization(
+    netlist_texts: dict[str, str], spec, state, agents, margin_floor: "MarginFloor | None" = None
+) -> dict:
     """면적 최소화 단계. **선언이 필요 없고 LLM을 부르지 않는다.**
 
     `run_optimization`을 그대로 쓰되 둘을 바꾼다: 단계 설정을 `AREA_PHASE`로
     주고, 계산한 노브 순위를 `OptimizerAgents.knob_ranking`에 **주입**한다.
     주입된 순위가 있으면 `_knob_ranking`이 에이전트를 부르지 않으므로 LLM을
     빼기 위한 새 배선이 필요 없다.
+
+    `margin_floor`는 기본값 `None`이면 `AREA_PHASE`를 그대로 쓴다 - 오늘의
+    호출부와 한 글자도 다르지 않다. 값을 주면 `dataclasses.replace`로 그
+    필드 하나만 다른 새 `PhaseConfig`를 만든다 - **`AREA_PHASE` 자체는
+    바뀌지 않는다**(Task 4의 측정 스크립트가 여럿을 순서대로 도는 동안 같은
+    모듈 상수를 공유 상태로 바꾸면 조합끼리 오염된다).
 
     `counted == 0`에서 REFUSED를 내는 것은 그것이 UNCHANGED와 다른 사실이기
     때문이다 - "쟀는데 못 줄였다"와 "잴 수 없었다"를 합치면 면적 모델이 이
@@ -1866,4 +1874,5 @@ async def run_area_optimization(netlist_texts: dict[str, str], spec, state, agen
         state.log_event("optimize_area_failed", {"reason": reason})
         return _result("UNCHANGED", state, None, None, area_before, area_before, failure=reason)
 
-    return await run_optimization(netlist_texts, spec, state, area_agents, phase=AREA_PHASE)
+    phase = AREA_PHASE if margin_floor is None else replace(AREA_PHASE, margin_floor=margin_floor)
+    return await run_optimization(netlist_texts, spec, state, area_agents, phase=phase)
