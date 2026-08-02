@@ -1186,10 +1186,92 @@ async def coordinate_descent(run: SearchRun) -> None:
                 break
 
 
+def _compound_fallback(partners: int) -> SearchStrategy:
+    """좌표별 하강 + 거절 시 **부호가 섞인** 2노브 스텝 되시도.
+
+    왜 반대 방향인가: 면적 단계는 목적이 면적이므로 순위의 모든 방향이
+    "decrease"다. 어떤 노브를 축소해서 기준이 깨졌다면 둘을 같이 축소하면
+    **더** 깨진다 - 같은 방향 조합은 실행되고 로그도 남지만 거절을 구제할 수
+    없다. 좌표별 하강이 결합 문제에서 막히는 이유는 개선 방향이 부호가 섞인
+    대각선이기 때문이고(밀러 캡을 줄이되 출력단을 키운다), 축만 따라가는
+    탐색은 그 방향을 원리적으로 보지 못한다.
+
+    확대 폭은 새 상수가 아니다 - `_next_value`가 이미 `direction="increase"`를
+    `current / STEP_RATIO`로 처리한다. 순 면적이 떨어져야 한다는 것은
+    `accept_step`이 이미 요구하므로 여기서 검사하지 않는다.
+
+    `partners=0`은 `coordinate_descent`와 같아야 하며, 그것은 주장이 아니라
+    `test_partners_zero_is_byte_for_byte_coordinate_descent`가 못박는다."""
+
+    async def strategy(run: SearchRun) -> None:
+        for index, knob in enumerate(run.knobs):
+            while True:
+                if not run.spend_step(knob):
+                    return
+                state = run.knob_state(knob)
+                if state is None:
+                    break
+                value = _next_value(state.value, state.integer, knob.direction)
+                if value is None:
+                    run.exhausted(
+                        knob,
+                        state,
+                        f"{knob.refdes}.{knob.param} cannot move further in "
+                        f"direction {knob.direction!r}",
+                    )
+                    break
+                outcome = await run.attempt([ProposedStep(knob, state, value)])
+                if outcome.accepted:
+                    continue
+                if not await _try_partners(run, index, knob, state, value, partners):
+                    break
+
+    return strategy
+
+
+async def _try_partners(
+    run: SearchRun,
+    index: int,
+    knob: Knob,
+    state: KnobState,
+    value: float,
+    partners: int,
+) -> bool:
+    """순위상 다음 `partners` 개를 **반대 방향**으로 짝지어 시도한다.
+
+    상대를 결합 스캔에서 고르지 않는 이유: 스캔은 덱 하나·테스트벤치 하나에만
+    있고, 스캔을 전제하는 전략은 스캔이 없는 덱에서 돌 수 없다. 순위는 모든
+    실행이 이미 만든다."""
+    for partner in run.knobs[index + 1 : index + 1 + partners]:
+        if not run.spend_step(partner):
+            return False
+        partner_state = run.knob_state(partner)
+        if partner_state is None:
+            continue
+        opposite = "increase" if knob.direction == "decrease" else "decrease"
+        partner_value = _next_value(partner_state.value, partner_state.integer, opposite)
+        if partner_value is None:
+            continue
+        outcome = await run.attempt(
+            [
+                ProposedStep(knob, state, value),
+                ProposedStep(replace(partner, direction=opposite), partner_state, partner_value),
+            ]
+        )
+        if outcome.accepted:
+            return True
+    return False
+
+
 # 이름으로 전략을 고르는 표. scripts/search_ab.py가 이것을 읽는다 - 하니스가
 # 모듈 내부를 뒤지게 하면 전략을 하나 더 붙일 때마다 하니스도 고쳐야 한다.
 SEARCH_STRATEGIES: dict[str, SearchStrategy] = {
     "coordinate_descent": coordinate_descent,
+    # 사전 등록 격자 partners ∈ {0,1,3}. 0은 coordinate_descent와 같으므로
+    # 표에 넣지 않는다 - 같은 것을 두 이름으로 넣으면 A/B 표에 대조군이 둘로
+    # 보인다. 동일성은 단위 테스트가 못박는다.
+    "compound_fallback_1": _compound_fallback(1),
+    "compound_fallback_3": _compound_fallback(3),
 }
 DEFAULT_STRATEGY = "coordinate_descent"
 
