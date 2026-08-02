@@ -1,0 +1,6316 @@
+{
+  "area_gain_ranking": {
+    "n_candidates": 167,
+    "n_tunable": 167,
+    "ranked_all": [
+      {
+        "gain": 2.4999999999999893e-10,
+        "param": "L",
+        "refdes": "BUF_N.Xcc"
+      },
+      {
+        "gain": 2.4999999999999893e-10,
+        "param": "W",
+        "refdes": "BUF_N.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "BUF_P.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "BUF_P.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "ERRAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "ERRAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "L",
+        "refdes": "TRIMAMP.Xcc"
+      },
+      {
+        "gain": 1.5999999999999945e-10,
+        "param": "W",
+        "refdes": "TRIMAMP.Xcc"
+      },
+      {
+        "gain": 4.395999999999909e-11,
+        "param": "l",
+        "refdes": "BANDGAP.XRl2"
+      },
+      {
+        "gain": 4.395999999999909e-11,
+        "param": "w",
+        "refdes": "BANDGAP.XRl2"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "L",
+        "refdes": "BGR_CORE.Xcc"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "W",
+        "refdes": "BGR_CORE.Xcc"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "L",
+        "refdes": "BUF_P.Xcl"
+      },
+      {
+        "gain": 4.000000000000069e-11,
+        "param": "W",
+        "refdes": "BUF_P.Xcl"
+      },
+      {
+        "gain": 3.9999999999999035e-11,
+        "param": "L",
+        "refdes": "BUF_N.Xcl"
+      },
+      {
+        "gain": 3.9999999999999035e-11,
+        "param": "W",
+        "refdes": "BUF_N.Xcl"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "l",
+        "refdes": "BGR_CORE.XRpa"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "w",
+        "refdes": "BGR_CORE.XRpa"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "l",
+        "refdes": "BGR_CORE.XRpb"
+      },
+      {
+        "gain": 3.2473999999998786e-11,
+        "param": "w",
+        "refdes": "BGR_CORE.XRpb"
+      },
+      {
+        "gain": 3.1360000000001017e-11,
+        "param": "l",
+        "refdes": "BANDGAP.XRl1"
+      },
+      {
+        "gain": 3.1360000000001017e-11,
+        "param": "w",
+        "refdes": "BANDGAP.XRl1"
+      },
+      {
+        "gain": 6.8599999999997054e-12,
+        "param": "l",
+        "refdes": "BANDGAP.XRl4"
+      },
+      {
+        "gain": 6.8599999999997054e-12,
+        "param": "w",
+        "refdes": "BANDGAP.XRl4"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X1"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X1"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X2"
+      },
+      {
+        "gain": 4.799999999999818e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_N.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_N.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "l",
+        "refdes": "BUF_N.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "w",
+        "refdes": "BUF_N.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_P.X1"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_P.X1"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "BUF_P.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "BUF_P.X2"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "l",
+        "refdes": "ERRAMP.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "w",
+        "refdes": "ERRAMP.XRz"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X6"
+      },
+      {
+        "gain": 3.999999999999573e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X6"
+      },
+      {
+        "gain": 3.312000000000288e-12,
+        "param": "l",
+        "refdes": "BGR_CORE.XR1"
+      },
+      {
+        "gain": 3.312000000000288e-12,
+        "param": "w",
+        "refdes": "BGR_CORE.XR1"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "L",
+        "refdes": "BUF_P.X7"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "W",
+        "refdes": "BUF_P.X7"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xt"
+      },
+      {
+        "gain": 2.399999999999082e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xt"
+      },
+      {
+        "gain": 2.339999999999808e-12,
+        "param": "l",
+        "refdes": "BANDGAP.XRl3"
+      },
+      {
+        "gain": 2.339999999999808e-12,
+        "param": "w",
+        "refdes": "BANDGAP.XRl3"
+      },
+      {
+        "gain": 2.0000000000006135e-12,
+        "param": "L",
+        "refdes": "BUF_P.X6"
+      },
+      {
+        "gain": 2.0000000000006135e-12,
+        "param": "W",
+        "refdes": "BUF_P.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "BUF_N.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "BUF_N.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "BUF_N.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "BUF_N.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "ERRAMP.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "ERRAMP.X6"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X1"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.X2"
+      },
+      {
+        "gain": 1.999999999998959e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.X2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "ERRAMP.Xt"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "ERRAMP.Xt"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xc1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xc1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xc2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xc2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xp1"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "L",
+        "refdes": "TRIMAMP.Xp2"
+      },
+      {
+        "gain": 1.6000000000004908e-12,
+        "param": "W",
+        "refdes": "TRIMAMP.Xp2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_N.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_N.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xc1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xc2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xm1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xm1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xm2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xm2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xn1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xn1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xn2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xn2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xp1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xp1"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "L",
+        "refdes": "BUF_P.Xp2"
+      },
+      {
+        "gain": 1.5999999999988364e-12,
+        "param": "W",
+        "refdes": "BUF_P.Xp2"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "l",
+        "refdes": "BUF_P.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "w",
+        "refdes": "BUF_P.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "l",
+        "refdes": "TRIMAMP.XRz"
+      },
+      {
+        "gain": 1.5000000000000465e-12,
+        "param": "w",
+        "refdes": "TRIMAMP.XRz"
+      },
+      {
+        "gain": 9.999999999994796e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xmpout"
+      },
+      {
+        "gain": 9.999999999994796e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xmpout"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_b"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_b"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_r"
+      },
+      {
+        "gain": 8.399999999997614e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_r"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "BUF_N.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "BUF_N.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xc1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xc1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xc2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xc2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.X7"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xm1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xm2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xn1"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xn2"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "L",
+        "refdes": "TRIMAMP.Xt"
+      },
+      {
+        "gain": 8.000000000002454e-13,
+        "param": "W",
+        "refdes": "TRIMAMP.Xt"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb3"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb3"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb5"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb5"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb6"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb6"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.X7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.X7"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xm1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xm1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xm2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xm2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xn1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xn1"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "L",
+        "refdes": "ERRAMP.Xn2"
+      },
+      {
+        "gain": 4.000000000001227e-13,
+        "param": "W",
+        "refdes": "ERRAMP.Xn2"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_d"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_d"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "L",
+        "refdes": "BGR_CORE.Xsu_i"
+      },
+      {
+        "gain": 2.0000000000088853e-13,
+        "param": "W",
+        "refdes": "BGR_CORE.Xsu_i"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb4"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb4"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "L",
+        "refdes": "BGR_CORE.Xb8"
+      },
+      {
+        "gain": 9.99999999987899e-14,
+        "param": "W",
+        "refdes": "BGR_CORE.Xb8"
+      }
+    ],
+    "source": "optimizer.run_area_optimization \uc900\ube44 \uad6c\uac04 \uc7ac\ud604 (derive_structure \u2192 _area_knob_state \u2192 rank_by_area_gain(_area_change))",
+    "top_knobs_requested": 12,
+    "top_knobs_used": [
+      "BUF_N.Xcc.L",
+      "BUF_N.Xcc.W",
+      "BUF_P.Xcc.L",
+      "BUF_P.Xcc.W",
+      "ERRAMP.Xcc.L",
+      "ERRAMP.Xcc.W",
+      "TRIMAMP.Xcc.L",
+      "TRIMAMP.Xcc.W",
+      "BANDGAP.XRl2.l",
+      "BANDGAP.XRl2.w",
+      "BGR_CORE.Xcc.L",
+      "BGR_CORE.Xcc.W"
+    ],
+    "unknown": [],
+    "zero_gain": [
+      "BGR_CORE.Xq8.m"
+    ]
+  },
+  "bias_generator_refdes": [],
+  "bistability_validity": {
+    "checked": false,
+    "confirmed_pairs_total": 15,
+    "confirmed_pairs_valid": [
+      [
+        "BUF_N.Xcc.L",
+        "BUF_N.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BGR_CORE.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ]
+    ],
+    "confirmed_pairs_valid_count": 15,
+    "confirmed_pairs_void": [],
+    "confirmed_pairs_void_count": 0,
+    "headline_check": null,
+    "not_checked_reason": "\ub371 'bandgap_loops'\uc5d0\ub294 \ubc14\uc774\uc2a4\ud14c\uc774\ube14 \uc644\ud654\ucc45\ub3c4 \uc0c1\ud0dc \ud504\ub85c\ube0c\ub3c4 \ubd99\uc9c0 \uc54a\uc558\ub2e4. \uc774 \ub371\uc774 \uadf8 \uc624\uc5fc\uc744 \uac16\uc9c0 \uc54a\ub294\ub2e4\ub294 \uadfc\uac70\ub294 \ubcc4\ub3c4 \uce21\uc815\uc5d0 \uc788\ub2e4(scripts/dc_solution_uniqueness.py: \ubc14\uc774\uc5b4\uc2a4 \uccb4\uc778 \ucd08\uae30 \ucd94\uc815\uc744 \ub2e4\uc12f \ubc29\ud5a5\uc73c\ub85c, \uc18c\uc790 \ud06c\uae30 \ub124 \uac00\uc9c0, \ud14c\uc2a4\ud2b8\ubca4\uce58 \ub371 \ub124 \uac1c\uc5d0 \uac78\uccd0 \ubc00\uc5c8\uace0 \uc5ec\uc12f \ud504\ub85c\ube0c\uac00 \ub9e4\ubc88 \ub3d9\uc77c\ud588\ub2e4). **\uadf8\ub7ec\ub098 \uc774\ubc88 \uc2e4\ud589\uc5d0\uc11c \ud655\uc778\ud55c \uac83\uc740 \uc544\ub2c8\ub2e4.** degn_deviation_points=0\uc740 '\uc774\ud0c8 \uc5c6\uc74c'\uc774 \uc544\ub2c8\ub77c '\uc7ac\uc9c0 \uc54a\uc74c'\uc774\ub2e4.",
+    "rule": "\uc774\ud0c8 \uc810(v(xdut.degn) > degn_state_a_threshold)\uc744 \ud558\ub098\ub77c\ub3c4 \uac00\uc9c4 \uc30d\uc740 \ubb34\ud6a8, 0\uc778 \uc30d\uc740 \uc720\ud6a8 - \uc0ac\uc804 \ub4f1\ub85d \ubb38\uc7a5\uc744 \uadf8\ub300\ub85c \uc801\uc6a9\ud55c\ub2e4."
+  },
+  "deck": "bandgap_loops",
+  "degn_state_a_threshold": null,
+  "knob_source": "area_ranking",
+  "knobs": {
+    "dropped_scales_stage1": {},
+    "skipped_unparseable": [],
+    "total_tunable": 12,
+    "used": [
+      "BUF_N.Xcc.L",
+      "BUF_N.Xcc.W",
+      "BUF_P.Xcc.L",
+      "BUF_P.Xcc.W",
+      "ERRAMP.Xcc.L",
+      "ERRAMP.Xcc.W",
+      "TRIMAMP.Xcc.L",
+      "TRIMAMP.Xcc.W",
+      "BANDGAP.XRl2.l",
+      "BANDGAP.XRl2.w",
+      "BGR_CORE.Xcc.L",
+      "BGR_CORE.Xcc.W"
+    ]
+  },
+  "limits": [
+    "1\ub2e8\uacc4 \uacb0\ud569 \ud6c4\ubcf4\uac00 66\uc30d\uc774\uc5c8\uace0, \uc774 \uc804\ubd80\uc758 2\ub2e8\uacc4(7x7)\ub97c \uc608\uc0b0(8000 \uc2dc\ubbac) \uc548\uc5d0\uc11c \ub3cc\ub9b4 \uc218 \uc5c6\ub2e4\ub294 \uac83\uc744 \uc2e4\uce21\uc73c\ub85c \ud655\uc778\ud588\ub2e4(\uc2e0\uaddc \uc2dc\ubbac\ub808\uc774\uc158 \uc18c\uc694\uac00 \uc608\uc0b0\uc744 \ud06c\uac8c \ub118\uc5c8\ub2e4). \uadf8\ub798\uc11c 1\ub2e8\uacc4 \ucd5c\ub313\uac12 I_rel \uc0c1\uc704 15\uc30d\ub9cc 2\ub2e8\uacc4\ub85c \ud655\uc778\ud588\ub2e4 - \uc54c\ud30c\ubcb3/\ub4f1\ub85d \uc21c\uc11c\uac00 \uc544\ub2c8\ub77c I_rel \uc21c\uc704\ub85c \uace8\ub790\ub2e4. \ub098\uba38\uc9c0 51\uc30d\uc740 stage2.untested_candidates\uc5d0 \uc788\uace0 \uacb0\ud569 \uc5ec\ubd80\uac00 \ubbf8\uc815\uc774\ub2e4 - \uacb0\ud569 \uc5c6\uc74c\uc73c\ub85c \uc77d\uc9c0 \ub9d0 \uac83.",
+    "1\ub2e8\uacc4\uc758 I_rel\uc740 \ub178\ube0c \ud558\ub098\ub2f9 \uaca9\uc790\uc758 \uc591 \ub05d(x0.5, x2) \ub450 \uc810\uc73c\ub85c\ub9cc \uc7ac\ubbc0\ub85c \uad6d\uc18c \uacc4\ub2e8(\uc608: T16\uc774 \ubc1c\uacac\ud55c \ubc14\uc774\uc2a4\ud14c\uc774\ube14 \uc804\ud658\ucc98\ub7fc \uc881\uc740 \ud3ed\uc5d0\uc11c\ub9cc \ub098\ub294 \uc774\uc0c1)\uc5d0 \ubbfc\uac10\ud558\ub2e4 - \uadf8\ub798\uc11c 2\ub2e8\uacc4(7x7, \ubaa8\ub4e0 2x2 \ubd80\ubd84\uaca9\uc790\uc758 \uc911\uc559\uac12)\uac00 \uc788\ub2e4.",
+    "nominal(tt/1.8/27, \ub80c\ub354\ub9c1 \uc5c6\ub294 \ub371) \ud55c \uc810\uc5d0\uc11c\ub9cc \uc7c0\ub2e4 - \ucf54\ub108 \ud655\uc778\uc740 \uacb0\ud569 \ud6c4\ubcf4\uac00 \uc815\ud574\uc9c4 \ub4a4 \ubcc4\ub3c4\ub85c \ud55c\ub2e4.",
+    "\uc815\uc218 \ub178\ube0c(mf)\ub294 \ubc18\uc62c\ub9bc \ud6c4 1 \ubbf8\ub9cc\uc778 scale\uc774 \ubc84\ub824\uc9c0\ubbc0\ub85c \uadf8 \ucd95\uc758 '\ub0ae\uc740 \ub05d'\uc774 \ucd9c\ud558\uac12 \uc790\uccb4\uac00 \ub418\ub294 \uacbd\uc6b0\uac00 \uc788\ub2e4 - knobs.dropped_scales_stage1\ub85c \ub0a8\ub294\ub2e4.",
+    "\uacb0\ud569\uc740 (\ub371 x \ud14c\uc2a4\ud2b8\ubca4\uce58 x \uce21\uc815\uac12)\uc758 \uc131\uc9c8\uc774\ub2e4. \uc5ec\uae30\uc11c \uc7b0 \uac83\uc740 'amp_loops' \ud14c\uc2a4\ud2b8\ubca4\uce58 \ud558\ub098\uc774\ubbc0\ub85c, \uc774 \uacb0\uacfc\ub294 \uac19\uc740 \ub371\uc758 \ub2e4\ub978 \ud14c\uc2a4\ud2b8\ubca4\uce58\ub97c \ub300\ubcc0\ud558\uc9c0 \uc54a\ub294\ub2e4.",
+    "**\uc774 \uc2e4\ud589\uc5d0\uc11c \ubc14\uc774\uc2a4\ud14c\uc774\ube14 \ud655\uc778\uc740 \ub3cc\uc9c0 \uc54a\uc558\ub2e4**(\ub371 'bandgap_loops'\uc5d0 \ud504\ub85c\ube0c\ub3c4 \uc644\ud654\ucc45\ub3c4 \ubd99\uc9c0 \uc54a\uc558\ub2e4). degn_deviation_points=0\uc740 '\uc774\ud0c8 \uc5c6\uc74c'\uc774 \uc544\ub2c8\ub77c '\uc7ac\uc9c0 \uc54a\uc74c'\uc774\ub2e4 - bistability_validity.checked \ucc38\uc870. \uc774 \ub371\uc774 \uc624\uc5fc\ub418\uc9c0 \uc54a\uc558\ub2e4\ub294 \uadfc\uac70\ub294 scripts/dc_solution_uniqueness.py\uc758 \ubcc4\ub3c4 \uce21\uc815\uc774\uace0, \uadf8 \uce21\uc815\ub3c4 \ub2e4\uc12f \ubc29\ud5a5 \ud0d0\uce68\uc774\uc9c0 \uc720\uc77c\uc131\uc758 \uc99d\uba85\uc740 \uc544\ub2c8\ub2e4.",
+    "1\ub2e8\uacc4\ub294 \uc2a4\ud06c\ub9ac\ub2dd\uc774\uc9c0 \ud310\uc815\uc774 \uc544\ub2c8\ub2e4 - 528\uc30d \uc911 \ub2e4\uc218\uac00 \uacb0\ud569\uc73c\ub85c \ub098\uc624\ub294 \uac83\uc740 L/W\uac00 \ubd84\ub9ac\ub41c tunable \ub178\ube0c\uc778 \uc774 \ub371\uc5d0\uc11c\ub294 \ub180\ub78d\uc9c0 \uc54a\ub2e4(\uac19\uc740 \ud2b8\ub79c\uc9c0\uc2a4\ud130\uc758 L\uacfc W\ub294 W/L \ube44\ub97c \ud1b5\ud574 \ubb3c\ub9ac\uc801\uc73c\ub85c \uacb0\ud569\ub3fc \uc788\ub2e4). \uc0ac\uc804 \ub4f1\ub85d\uc774 \uc774 \uacbd\uc6b0\ub97c \uc608\uc0c1\ud588\ub2e4 - 1\ub2e8\uacc4 \uacb0\uacfc\ub294 \ubcf4\uace0\ud558\ub418 \ud655\uc815\ud558\uc9c0 \uc54a\uace0, stage2.confirmed_pairs\ub9cc '\uacb0\ud569\uc774 \uc2e4\uc7ac\ud55c\ub2e4'\ub294 \uc8fc\uc7a5\uc758 \uadfc\uac70\ub85c \uc4f4\ub2e4."
+  ],
+  "measurements": [
+    "core_gain_db",
+    "core_pm_deg",
+    "trim_gain_db",
+    "trim_pm_deg",
+    "buf1_gain_db",
+    "buf1_pm_deg",
+    "buf0_gain_db",
+    "buf0_pm_deg"
+  ],
+  "nodeset": null,
+  "rank_testbench": "dc_tc",
+  "spec": "benchmarks/bandgap/spec.yaml",
+  "stage1": {
+    "cache_stats": {
+      "entries": 289,
+      "hits": 0,
+      "misses": 289
+    },
+    "coupled_candidates": [
+      [
+        "BUF_P.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BUF_N.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BGR_CORE.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ]
+    ],
+    "degn_deviation_points": 0,
+    "degn_deviation_points_bias_generator_pairs": 0,
+    "degn_deviation_points_non_bias_pairs": 0,
+    "n_pairs": 66,
+    "pairs": {
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 39.6519,
+            "I_rel": 1.3659691887944223,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 11.444099999999992,
+            "I_rel": 0.7429255847469175,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.007699999999999818,
+            "I_rel": 0.18965517241379914,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.0870000000000033,
+            "I_rel": 0.23324396782842416,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.002899999999996794,
+            "I_rel": 0.6041666666656181,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 1.5186999999999955,
+            "I_rel": 0.33665846467602045,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.048499999999989996,
+            "I_rel": 0.006611142160001906,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BANDGAP.XRl2.l|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.06320000000000903,
+            "I_rel": 0.004065642107701499,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.0020000000000095497,
+            "I_rel": 0.0045871559633245814,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.013600000000010937,
+            "I_rel": 0.0006837400581184546,
+            "beats": 2,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.1588000000000136,
+            "I_rel": 0.020712683257684224,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BANDGAP.XRl2.l|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.06350000000000477,
+            "I_rel": 0.004085019878286013,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.0020000000000095497,
+            "I_rel": 0.0045871559633245814,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.013499999999993406,
+            "I_rel": 0.0006775067750674197,
+            "beats": 2,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.15930000000000177,
+            "I_rel": 0.0207762735738323,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BANDGAP.XRl2.w|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.056200000000004025,
+            "I_rel": 0.003603834685305976,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.01300000000000523,
+            "I_rel": 0.03485254691690366,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.01279999999999859,
+            "I_rel": 0.0006430868167201866,
+            "beats": 2,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.1594000000000051,
+            "I_rel": 0.04647094836885376,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BANDGAP.XRl2.w|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.05649999999999977,
+            "I_rel": 0.0036231419373869626,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.012000000000000455,
+            "I_rel": 0.032258064516130266,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.012800000000012801,
+            "I_rel": 0.0006419450936343522,
+            "beats": 2,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.1600000000000108,
+            "I_rel": 0.046637712420208914,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.03300000000000125,
+            "I_rel": 0.8684210526316872,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.22100000000001785,
+            "I_rel": 0.9285714285714499,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 11.322599999999994,
+            "I_rel": 0.8697716221510379,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.5915000000000106,
+            "I_rel": 0.5759493670886173,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.00019999999999242846,
+            "I_rel": 1.2818869375235765e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0002999999999957481,
+            "I_rel": 0.007228915662548286,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.7327999999999975,
+            "I_rel": 0.016789433287892442,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008000000000123464,
+            "I_rel": 0.020671834625646555,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.0020999999999986585,
+            "I_rel": 0.0002798470169638811,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0011000000000080945,
+            "I_rel": 7.030101616975107e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.00019999999999242846,
+            "I_rel": 0.0047169811318968245,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.7783999999999907,
+            "I_rel": 0.017542436289224625,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0007999999999839247,
+            "I_rel": 0.019704433497135198,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.06930000000001257,
+            "I_rel": 0.02147971360382255,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.3218000000000103,
+            "I_rel": 0.0073384704146534615,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00560000000000116,
+            "I_rel": 0.0002813914808729748,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.1127999999999929,
+            "I_rel": 0.12725631768952345,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.32210000000000605,
+            "I_rel": 0.007345345249470503,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005599999999986949,
+            "I_rel": 0.000280891831564565,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.11299999999999955,
+            "I_rel": 0.12719495722647342,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 1.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.026600000000001955,
+            "I_rel": 14.77777777775497,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 20.6886,
+            "I_rel": 0.3972572227364023,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.010400000000004184,
+            "I_rel": 0.8888888888888888,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.0879
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.49150000000000205,
+            "I_rel": 0.9296387365235511,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.35
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BUF_P.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.005100000000012983,
+            "I_rel": 0.00028115593680127127,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.010300000000000864,
+            "I_rel": 0.00023397498512102785,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00010000000000331966,
+            "I_rel": 0.0073529411767164505,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.0879
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.00039999999999906777,
+            "I_rel": 0.0015860428231525164,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.349
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BUF_P.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.004199999999997317,
+            "I_rel": 0.00022979826994716377,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.010399999999989973,
+            "I_rel": 0.00023624605026111947,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00010000000000331966,
+            "I_rel": 0.0073529411767164505,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.0879
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.00039999999999906777,
+            "I_rel": 0.0015860428231525164,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.349
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|ERRAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.04379999999999029,
+            "I_rel": 0.00099582798094718,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.007999999999995566,
+            "I_rel": 0.00026590971035770066,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.001599999999996271,
+            "I_rel": 0.006309148264969379,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.349
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.044799999999995066,
+            "I_rel": 0.001018586937986587,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.008200000000009311,
+            "I_rel": 0.0002706368878081155,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0016999999999995907,
+            "I_rel": 0.006640624999998395,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.349
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.000999999999990564,
+            "I_rel": 0.005649717514070769,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.27000000000001023,
+            "I_rel": 0.006204571620289646,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.004800000000003024,
+            "I_rel": 0.04979253112036192,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.32910000000001105,
+            "I_rel": 0.01921841604279388,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.000999999999990564,
+            "I_rel": 0.005649717514070769,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.27080000000000837,
+            "I_rel": 0.006223069940596074,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.7
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.004800000000003024,
+            "I_rel": 0.04979253112036192,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.32970000000000255,
+            "I_rel": 0.019238063006552876,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.00019999999999242846,
+            "I_rel": 1.2818869375235765e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0002999999999957481,
+            "I_rel": 0.007228915662548286,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.727800000000002,
+            "I_rel": 0.016636379221669856,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008000000000123464,
+            "I_rel": 0.020671834625646555,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.0020000000000095497,
+            "I_rel": 0.00026652807207046324,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0011000000000080945,
+            "I_rel": 7.030101616975107e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0002999999999957481,
+            "I_rel": 0.0070754716980128175,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.7738000000000085,
+            "I_rel": 0.01740108166454925,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0007999999999839247,
+            "I_rel": 0.019704433497135198,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.06959999999999411,
+            "I_rel": 0.021574705517667027,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.3222999999999985,
+            "I_rel": 0.007333533566331696,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00560000000000116,
+            "I_rel": 0.0002813914808729748,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.11310000000000286,
+            "I_rel": 0.12755159580467154,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.32260000000000844,
+            "I_rel": 0.007340393095570927,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005599999999986949,
+            "I_rel": 0.000280891831564565,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.11339999999999861,
+            "I_rel": 0.12758775877587555,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BUF_P.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.005100000000012983,
+            "I_rel": 0.00028115593680127127,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.010300000000000864,
+            "I_rel": 0.00023345474491104611,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00010000000000331966,
+            "I_rel": 0.0073529411767164505,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.0879
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0005000000000023874,
+            "I_rel": 0.001974723538713958,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.35
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|BUF_P.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.004199999999997317,
+            "I_rel": 0.00022979826994716377,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.010400000000004184,
+            "I_rel": 0.0002357207615594783,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00010000000000331966,
+            "I_rel": 0.0073529411767164505,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.0879
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0004999999999881766,
+            "I_rel": 0.0019747235386579436,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.35
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|ERRAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.04480000000000928,
+            "I_rel": 0.0010162970491091358,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00809999999999178,
+            "I_rel": 0.0002692335817370479,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.001600000000010482,
+            "I_rel": 0.00630169358019091,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.35
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.04480000000000928,
+            "I_rel": 0.0010162970491091358,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00840000000000174,
+            "I_rel": 0.0002772377875104951,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0016999999999995907,
+            "I_rel": 0.006640624999998395,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.35
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.000999999999990564,
+            "I_rel": 0.005649717514070769,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.27009999999999934,
+            "I_rel": 0.006192894564880931,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.004800000000003024,
+            "I_rel": 0.04979253112036192,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.3293999999999926,
+            "I_rel": 0.019235822778156917,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.W|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.000999999999990564,
+            "I_rel": 0.005649717514070769,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9856
+          },
+          "buf1_pm_deg": {
+            "I": 0.27079999999999416,
+            "I_rel": 0.006209058162916565,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 120.722
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.004800000000003024,
+            "I_rel": 0.04979253112036192,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.3300000000000125,
+            "I_rel": 0.019255455712452584,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.016099999999994452,
+            "I_rel": 0.002302104781513734,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 4.135700000000014,
+            "I_rel": 0.22269427931420765,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.001999999999995339,
+            "I_rel": 0.00465116279068676,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.006100000000003547,
+            "I_rel": 0.1732954545455394,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.18060000000001253,
+            "I_rel": 0.02351654361498656,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.015399999999999636,
+            "I_rel": 0.002238176903176995,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 3.3684999999999974,
+            "I_rel": 0.1880876867755119,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.0030000000000001137,
+            "I_rel": 0.008310249307479442,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005899999999982697,
+            "I_rel": 0.1590296495951804,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.12369999999998527,
+            "I_rel": 0.03628630096802158,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04349999999999454,
+            "I_rel": 0.0023962321315445815,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 0.009259259259304339,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00019999999999242846,
+            "I_rel": 1.0051362461801229e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.013800000000003365,
+            "I_rel": 0.017400075652507178,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04349999999999454,
+            "I_rel": 0.0023962321315445815,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00030000000000995897,
+            "I_rel": 1.5050267895268145e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.013900000000006685,
+            "I_rel": 0.017488676396586276,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.07800000000000296,
+            "I_rel": 15.600000000014779,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 18.89909999999999,
+            "I_rel": 0.6594219838730496,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.001999999999995339,
+            "I_rel": null,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.559
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0031999999999783313,
+            "I_rel": 3.2000000000085267,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.0807
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.17510000000000048,
+            "I_rel": 1.3195177091183175,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.1608
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|ERRAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04019999999999868,
+            "I_rel": 0.002213071434862959,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.559
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005699999999997374,
+            "I_rel": 0.00018942415058214275,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0020999999999986585,
+            "I_rel": 0.008376545672112892,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.2205
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04029999999998779,
+            "I_rel": 0.002218564374149476,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.559
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005699999999997374,
+            "I_rel": 0.00018808963626095533,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0020999999999986585,
+            "I_rel": 0.00830039525691169,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.2208
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04570000000001073,
+            "I_rel": 0.002534678506259643,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0049999999999954525,
+            "I_rel": 0.006553079947569478,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008999999999872443,
+            "I_rel": 0.009523809523673467,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.2722999999999871,
+            "I_rel": 0.015898223345807507,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.044900000000012597,
+            "I_rel": 0.002490335391049913,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.854
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0049999999999954525,
+            "I_rel": 0.006553079947569478,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008999999999872443,
+            "I_rel": 0.009523809523673467,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.27249999999999375,
+            "I_rel": 0.015897462823272358,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.016099999999994452,
+            "I_rel": 0.002302104781513734,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 4.216600000000014,
+            "I_rel": 0.22617968427320145,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.001999999999995339,
+            "I_rel": 0.00465116279068676,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.006200000000006867,
+            "I_rel": 0.17663817663837272,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.1817000000000064,
+            "I_rel": 0.02365608196956167,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.015399999999999636,
+            "I_rel": 0.002238176903176995,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 3.445900000000009,
+            "I_rel": 0.19169128241073008,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.0030000000000001137,
+            "I_rel": 0.008310249307479442,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005899999999982697,
+            "I_rel": 0.1590296495951804,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.12460000000000093,
+            "I_rel": 0.03653958944281556,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04349999999999454,
+            "I_rel": 0.002378218796128946,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 0.009259259259304339,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00019999999999242846,
+            "I_rel": 1.0051362461801229e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.013999999999995794,
+            "I_rel": 0.017656703241260865,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04370000000000118,
+            "I_rel": 0.0023891400735877658,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.00030000000000995897,
+            "I_rel": 1.5050267895268145e-05,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.013900000000006685,
+            "I_rel": 0.017488676396586276,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|ERRAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.0391000000000048,
+            "I_rel": 0.0021363551922722293,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.559
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005699999999997374,
+            "I_rel": 0.00018942415058214275,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0020999999999844476,
+            "I_rel": 0.008376545672055731,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.2205
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.041200000000003456,
+            "I_rel": 0.0022509602093613414,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 101.559
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.005699999999997374,
+            "I_rel": 0.00018808963626095533,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.0020999999999986585,
+            "I_rel": 0.00830039525691169,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 81.2208
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04219999999999402,
+            "I_rel": 0.002322663026726807,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0049999999999954525,
+            "I_rel": 0.006553079947569478,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0007999999999839247,
+            "I_rel": 0.0084656084654374,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.27429999999999666,
+            "I_rel": 0.016013403855359605,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.W|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.162
+          },
+          "buf0_pm_deg": {
+            "I": 0.04240000000000066,
+            "I_rel": 0.0023336965974263654,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 110.871
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0049999999999954525,
+            "I_rel": 0.006553079947569478,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008999999999872443,
+            "I_rel": 0.009523809523673467,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.27429999999999666,
+            "I_rel": 0.016000980008983215,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.014099999999999113,
+            "I_rel": 0.0009031456370378818,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 0.0023255813953599047,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.11380000000000479,
+            "I_rel": 0.003795155007737207,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.09719999999998663,
+            "I_rel": 0.013032111014277217,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.0163999999999902,
+            "I_rel": 0.001047274213426196,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.11760000000000304,
+            "I_rel": 0.003906963764240086,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.10090000000000998,
+            "I_rel": 0.03132567525613484,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.020000000000010232,
+            "I_rel": 0.5128205128207557,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.015000000000000568,
+            "I_rel": 0.12711864406780682,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 8.711099999999995,
+            "I_rel": 0.3595497734008038,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.4484999999999957,
+            "I_rel": 0.40202581570454954,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.020000000000010232,
+            "I_rel": 0.5128205128207557,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.016000000000005343,
+            "I_rel": 0.1344537815126502,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 8.7284,
+            "I_rel": 0.3605153050898563,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.4498000000000104,
+            "I_rel": 0.4021816881259005,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.001999999999995339,
+            "I_rel": 1.0,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.391
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 1.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.558
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 20.731500000000008,
+            "I_rel": 0.5269264593002274,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.4166000000000025,
+            "I_rel": 0.7706252312245732,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.2208
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.009000000000000341,
+            "I_rel": 0.04891304347826339,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.009000000000000341,
+            "I_rel": 0.011952191235060212,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.30979999999999563,
+            "I_rel": 0.010330626740250284,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.7755000000000081,
+            "I_rel": 0.04730648870561447,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.010000000000005116,
+            "I_rel": 0.05405405405408104,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.007999999999995566,
+            "I_rel": 0.010610079575590868,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.3100000000000023,
+            "I_rel": 0.010337330434434725,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0573
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.7758999999999929,
+            "I_rel": 0.047293384777612746,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.014200000000002433,
+            "I_rel": 0.0009095450993455395,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.0010000000000047748,
+            "I_rel": 0.0023255813953599047,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.763
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.1144999999999996,
+            "I_rel": 0.0037915916075023704,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 0.09830000000000894,
+            "I_rel": 0.013181361045928125,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 84.1368
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.01649999999999352,
+            "I_rel": 0.0010536533033623364,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.737
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.11840000000000117,
+            "I_rel": 0.0039058376438298697,
+            "beats": 2,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.10199999999997544,
+            "I_rel": 0.031677018633532616,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 82.2807
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.020000000000010232,
+            "I_rel": 0.5128205128207557,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.015000000000000568,
+            "I_rel": 0.12711864406780682,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 8.721700000000006,
+            "I_rel": 0.3570589318977343,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.4531000000000063,
+            "I_rel": 0.40462582604036557,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4353
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.020000000000010232,
+            "I_rel": 0.5128205128207557,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.408
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.016000000000005343,
+            "I_rel": 0.1344537815126502,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 101.577
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 8.738900000000008,
+            "I_rel": 0.358010782642895,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.5449
+          },
+          "trim_pm_deg": {
+            "I": 0.45420000000000016,
+            "I_rel": 0.4046325167037855,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 81.4356
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|TRIMAMP.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.010000000000005116,
+            "I_rel": 0.05405405405408104,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.009000000000000341,
+            "I_rel": 0.011952191235060212,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.31280000000000285,
+            "I_rel": 0.01035730723256601,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.7837999999999994,
+            "I_rel": 0.04783555992261352,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.010000000000005116,
+            "I_rel": 0.05405405405408104,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.007999999999995566,
+            "I_rel": 0.010610079575590868,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.3129999999999953,
+            "I_rel": 0.010363963868506635,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 78.0951
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.7843000000000018,
+            "I_rel": 0.04782812852551802,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.15660000000001162,
+            "I_rel": 0.010098079043584993,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.2560000000000002,
+            "I_rel": 0.410914927768867,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0010999999999938836,
+            "I_rel": 0.012331838564953124,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0002000000000066393,
+            "I_rel": 5.0925572277808974e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 3.918599999999998,
+            "I_rel": 0.24813829787234026,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.1554000000000002,
+            "I_rel": 0.009993826207748123,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.2920000000000016,
+            "I_rel": 0.328089887640451,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.000699999999980605,
+            "I_rel": 0.007777777777563211,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.00019999999999242846,
+            "I_rel": 4.965489845385285e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.017300000000005866,
+            "I_rel": 0.0009984071654473708,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.027000000000001023,
+            "I_rel": 0.13917525773197237,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.20199999999999818,
+            "I_rel": 0.31811023622047413,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.020799999999994156,
+            "I_rel": 0.0010450055767121593,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.36889999999999645,
+            "I_rel": 0.02180698249057118,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.027000000000001023,
+            "I_rel": 0.13917525773197237,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.20299999999998875,
+            "I_rel": 0.3201892744479316,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.020699999999990837,
+            "I_rel": 0.0010381403746328062,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.3686000000000007,
+            "I_rel": 0.021788346840216865,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5235
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.030000000000001137,
+            "I_rel": 0.2727272727272845,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.33799999999999386,
+            "I_rel": 0.49560117302051726,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.14859999999998763,
+            "I_rel": 3.4239631336398393,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1104
+          },
+          "trim_gain_db": {
+            "I": 0.0011999999999972033,
+            "I_rel": 11.999999999573674,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 15.548800000000007,
+            "I_rel": 0.6028699600252801,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.15660000000001162,
+            "I_rel": 0.010098079043584993,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.392
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0037
+          },
+          "buf1_pm_deg": {
+            "I": 0.257000000000005,
+            "I_rel": 0.4125200642054718,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0010999999999938836,
+            "I_rel": 0.012331838564953124,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1213
+          },
+          "trim_gain_db": {
+            "I": 0.0002000000000066393,
+            "I_rel": 5.0925572277808974e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 89.7246
+          },
+          "trim_pm_deg": {
+            "I": 3.9591000000000065,
+            "I_rel": 0.2508013531148252,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.1554000000000002,
+            "I_rel": 0.009993826207748123,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 108.401
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 98.0038
+          },
+          "buf1_pm_deg": {
+            "I": 0.29300000000000637,
+            "I_rel": 0.32884399551066734,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.0008999999999872443,
+            "I_rel": 0.009977827050856827,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 66.1229
+          },
+          "trim_gain_db": {
+            "I": 0.00019999999999242846,
+            "I_rel": 4.965489845385285e-05,
+            "beats": 1,
+            "coupled": false,
+            "single_axis_max": 89.8185
+          },
+          "trim_pm_deg": {
+            "I": 0.05509999999998172,
+            "I_rel": 0.00317418254717963,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.027000000000001023,
+            "I_rel": 0.13917525773197237,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.20199999999999818,
+            "I_rel": 0.31811023622047413,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.020699999999990837,
+            "I_rel": 0.0010399815114393366,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 74.3059
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.3692999999999955,
+            "I_rel": 0.02181373562437582,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "measurements": {
+          "buf0_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 100.158
+          },
+          "buf0_pm_deg": {
+            "I": 0.027000000000001023,
+            "I_rel": 0.13917525773197237,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 104.468
+          },
+          "buf1_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 97.9842
+          },
+          "buf1_pm_deg": {
+            "I": 0.20199999999999818,
+            "I_rel": 0.31811023622047413,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 102.017
+          },
+          "core_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 57.8277
+          },
+          "core_pm_deg": {
+            "I": 0.020699999999990837,
+            "I_rel": 0.0010381403746328062,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 74.3236
+          },
+          "trim_gain_db": {
+            "I": 0.0,
+            "I_rel": 0.0,
+            "beats": 0,
+            "coupled": false,
+            "single_axis_max": 87.545
+          },
+          "trim_pm_deg": {
+            "I": 0.36890000000001066,
+            "I_rel": 0.02178907888130952,
+            "beats": 1,
+            "coupled": true,
+            "single_axis_max": 87.5257
+          }
+        },
+        "touches_bias_generator": false,
+        "void": false
+      }
+    },
+    "scales": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "unique_sims": 289,
+    "wall_seconds": 47.64471254195087
+  },
+  "stage2": {
+    "cache_stats": {
+      "entries": 817,
+      "hits": 85,
+      "misses": 817
+    },
+    "confirmations": {
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|buf0_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 2.2746679062449737,
+        "median_I_rel": 0.9586513133137655,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.2442528735632012,
+        "median_I_rel": 0.7035057862491509,
+        "n_subgrids": 405
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|buf1_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 0.6478260869558932,
+        "median_I_rel": 0.1490066225163584,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.646376811594202,
+        "median_I_rel": 0.11135857461023914,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 338.9999999887734,
+        "median_I_rel": 1.0186915887850032,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|trim_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 0.5899675003532557,
+        "median_I_rel": 0.15851759576456914,
+        "n_subgrids": 441
+      },
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6262304820095057,
+        "median_I_rel": 0.08439694656488826,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.0,
+        "median_I_rel": 0.5000000000026645,
+        "n_subgrids": 438
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.666666666665088,
+        "median_I_rel": 0.6274509803922388,
+        "n_subgrids": 440
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.2295391415110286,
+        "median_I_rel": 0.29251710005071774,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 441
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.3201856148492095,
+        "median_I_rel": 0.306133625410766,
+        "n_subgrids": 441
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|buf0_pm_deg": {
+        "confirmed": false,
+        "max_I_rel": 1.0000000000142109,
+        "median_I_rel": 0.0,
+        "n_subgrids": 205
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|buf1_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 41.285714286030405,
+        "median_I_rel": 1.6904761904963306,
+        "n_subgrids": 224
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.409048603641511,
+        "median_I_rel": 0.11301063750757898,
+        "n_subgrids": 225
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 10.750000000026645,
+        "median_I_rel": 0.36082474226795064,
+        "n_subgrids": 225
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 34.99999999886313,
+        "median_I_rel": 0.49335167354428544,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|buf0_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 42.000000000099476,
+        "median_I_rel": 2.0000000000071054,
+        "n_subgrids": 211
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6612881039105912,
+        "median_I_rel": 0.27472229748036014,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.999999999985789,
+        "median_I_rel": 0.9999999999857891,
+        "n_subgrids": 211
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 20.000000002273737,
+        "median_I_rel": 0.4545454545372334,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 13.250000000026645,
+        "median_I_rel": 0.7937888198758174,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.34482758620711623,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.07471264367818814,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.5511363254441446,
+        "median_I_rel": 0.1268124714174264,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.648711832061067,
+        "median_I_rel": 0.287384161752323,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.34482758620711623,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.07575757575757576,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.5513197070894019,
+        "median_I_rel": 0.12773050929278273,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6488426256000764,
+        "median_I_rel": 0.28748425031501407,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.3939393939395375,
+        "median_I_rel": 0.928571428571066,
+        "n_subgrids": 222
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 2.0,
+        "median_I_rel": 1.0,
+        "n_subgrids": 202
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.5327187926946088,
+        "median_I_rel": 0.17126504015262942,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.87819143525582,
+        "median_I_rel": 0.44436633862220754,
+        "n_subgrids": 225
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.34482758620711623,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.07471264367818814,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.5530362524583347,
+        "median_I_rel": 0.12625922947583887,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6544096928712315,
+        "median_I_rel": 0.29015000524495166,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.34482758620711623,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 1.0,
+        "median_I_rel": 0.07575757575757576,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.5532245428186882,
+        "median_I_rel": 0.12660514230555509,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6545803312435691,
+        "median_I_rel": 0.2901673640167504,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.07188574137726574,
+        "median_I_rel": 0.0079933167517904,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.7863894139886841,
+        "median_I_rel": 0.16049382716049357,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.23999999999995453,
+        "median_I_rel": 0.05494505494492624,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.00017199862401671704,
+        "median_I_rel": 2.0454080586849843e-05,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.4448808988393158,
+        "median_I_rel": 0.12966927111206256,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.22500000000010215,
+        "median_I_rel": 0.007246376811599426,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6070959264126041,
+        "median_I_rel": 0.1585503963759924,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.24033149171287527,
+        "median_I_rel": 0.050912584053845175,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.00015411486695261398,
+        "median_I_rel": 2.076153303228823e-05,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.24057320107273272,
+        "median_I_rel": 0.03382286232706111,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.2166666666667456,
+        "median_I_rel": 0.08333333333325438,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6898148148148383,
+        "median_I_rel": 0.16544117647053888,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|core_pm_deg": {
+        "confirmed": false,
+        "max_I_rel": 0.0025763218666979178,
+        "median_I_rel": 0.0003720829117791932,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.15189453360685462,
+        "median_I_rel": 0.024141511965741016,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 4.52631578947644,
+        "median_I_rel": 0.49999999999986333,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 5.094339622641697,
+        "median_I_rel": 0.42857142857142855,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 6.769784172661889,
+        "median_I_rel": 0.742857142857514,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|trim_gain_db": {
+        "confirmed": true,
+        "max_I_rel": 12.999999999573674,
+        "median_I_rel": 0.9999999998578915,
+        "n_subgrids": 155
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6367495940401372,
+        "median_I_rel": 0.23915869262211706,
+        "n_subgrids": 225
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.07185823925089439,
+        "median_I_rel": 0.008012151129676884,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.7916666666666914,
+        "median_I_rel": 0.16053511705686255,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.23999999999995453,
+        "median_I_rel": 0.053658536585764874,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.00017199862401671704,
+        "median_I_rel": 2.0454080586849843e-05,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.4522526843265099,
+        "median_I_rel": 0.1318187220219466,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|buf0_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|buf0_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.22500000000010215,
+        "median_I_rel": 0.0072523865822000655,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|buf1_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|buf1_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.6076115485564221,
+        "median_I_rel": 0.1573896353166862,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|core_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.0,
+        "median_I_rel": 0.0,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|core_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.23691460055101812,
+        "median_I_rel": 0.05099778270506205,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|trim_gain_db": {
+        "confirmed": false,
+        "max_I_rel": 0.00015411486695261398,
+        "median_I_rel": 2.076153303228823e-05,
+        "n_subgrids": 315
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w|trim_pm_deg": {
+        "confirmed": true,
+        "max_I_rel": 0.2472626272356547,
+        "median_I_rel": 0.03388796767492037,
+        "n_subgrids": 315
+      }
+    },
+    "confirmed_pairs": [
+      [
+        "BUF_N.Xcc.L",
+        "BUF_N.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BGR_CORE.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ]
+    ],
+    "degn_deviation_points": 0,
+    "degn_deviation_points_bias_generator_pairs": 0,
+    "degn_deviation_points_non_bias_pairs": 0,
+    "n_candidate_pairs": 15,
+    "new_sims": 528,
+    "pair_degn": {
+      "BANDGAP.XRl2.l|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BGR_CORE.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_N.Xcc.L|BUF_N.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "BUF_P.Xcc.L|BUF_P.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.L|ERRAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.L": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "ERRAMP.Xcc.W|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|BGR_CORE.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.L|TRIMAMP.Xcc.W": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.l": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      },
+      "TRIMAMP.Xcc.W|BANDGAP.XRl2.w": {
+        "degn_deviations": 0,
+        "touches_bias_generator": false,
+        "void": false
+      }
+    },
+    "scales": [
+      0.3,
+      0.5,
+      0.7,
+      1.0,
+      1.4,
+      2.0,
+      3.0
+    ],
+    "skip_reason": null,
+    "skipped": false,
+    "unique_sims": 613,
+    "untested_candidates": [
+      [
+        "TRIMAMP.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "TRIMAMP.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BANDGAP.XRl2.w",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.w",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BANDGAP.XRl2.w"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BANDGAP.XRl2.l",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "BGR_CORE.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "BGR_CORE.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "TRIMAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "TRIMAMP.Xcc.W"
+      ],
+      [
+        "ERRAMP.Xcc.W",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "ERRAMP.Xcc.L",
+        "BANDGAP.XRl2.l"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_P.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_P.Xcc.W",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BUF_P.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BUF_P.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "BUF_P.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "ERRAMP.Xcc.W"
+      ],
+      [
+        "BUF_N.Xcc.L",
+        "ERRAMP.Xcc.L"
+      ],
+      [
+        "BUF_N.Xcc.W",
+        "ERRAMP.Xcc.L"
+      ]
+    ],
+    "untested_candidates_reason": "1\ub2e8\uacc4 \ucd5c\ub313\uac12 I_rel \uc0c1\uc704 15\uc30d\ub9cc \uc608\uc0b0 \uc548\uc5d0\uc11c \ud655\uc778\ud588\ub2e4 - \ub098\uba38\uc9c0 51\uc30d\uc740 2\ub2e8\uacc4\ub97c \uac70\uce58\uc9c0 \uc54a\uc558\uc73c\ubbc0\ub85c \uacb0\ud569 \uc5ec\ubd80\uac00 \ubbf8\uc815\uc774\ub2e4(\uacb0\ud569 \uc5c6\uc74c\uc73c\ub85c \uc77d\uc73c\uba74 \uc548 \ub41c\ub2e4).",
+    "wall_seconds": 80.22214812482707
+  },
+  "testbench": "amp_loops",
+  "tolerance": 0.001,
+  "totals": {
+    "budget_exceeded": false,
+    "stage2_untested_candidate_count": 51,
+    "total_sims": 817,
+    "total_wall_seconds": 130.78719854098745
+  }
+}

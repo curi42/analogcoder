@@ -206,6 +206,12 @@ class DeckProfile:
     # 헤드라인 사례(있으면 산출물에 별도 확인 칸을 만든다).
     headline_pair: tuple[str, str] | None
     headline_measurement: str | None
+    # 노브 **순위**를 매길 덱의 테스트벤치. knob_source="area_ranking"에서
+    # None이면 spec.canonical을 쓴다(면적 단계가 읽는 덱).
+    # 면적 단계는 `spec.canonical`의 덱 하나에서 순위를 매기므로(optimizer.py의
+    # `start_text = netlist_texts[canonical_name]`), 다른 테스트벤치에서 재더라도
+    # **순위는 canonical에서** 나와야 "면적 단계가 만지는 노브"라는 주장이 선다.
+    rank_testbench_name: str | None = None
 
 
 TWO_STAGE_PROFILE = DeckProfile(
@@ -245,7 +251,25 @@ BANDGAP_PROFILE = DeckProfile(
     headline_measurement=None,
 )
 
-PROFILES = {p.key: p for p in (TWO_STAGE_PROFILE, BANDGAP_PROFILE)}
+# T18b 후속. `dc_tc`(canonical)에서는 면적 순위 상위 12개 중 **10개가 정확히
+# 무효과**다 - Xcc는 보상 커패시터고 dc_tc는 DC 온도 스윕이라 DC 전류를 흘리지
+# 않는다(측정값 다섯 개가 바이트 동일하다는 것을 단축 프로브로 확인했다).
+# 그래서 그 열 개에 대한 "결합 없음"은 직교성의 증거가 아니라 **계기가 그
+# 노브를 못 본 것**이다. 결합은 (덱 x 테스트벤치 x 측정값)의 성질이므로, 그
+# 노브를 볼 수 있는 테스트벤치에서 따로 잰다. 순위는 여전히 canonical 덱에서
+# 나온다 - 면적 단계가 순위를 매기는 덱이 그것이기 때문이다.
+BANDGAP_LOOPS_PROFILE = replace(
+    BANDGAP_PROFILE,
+    key="bandgap_loops",
+    testbench_name="amp_loops",
+    rank_testbench_name=None,  # = spec.canonical, 아래에서 그렇게 해석된다
+    measurements=(
+        "core_gain_db", "core_pm_deg", "trim_gain_db", "trim_pm_deg",
+        "buf1_gain_db", "buf1_pm_deg", "buf0_gain_db", "buf0_pm_deg",
+    ),
+)
+
+PROFILES = {p.key: p for p in (TWO_STAGE_PROFILE, BANDGAP_PROFILE, BANDGAP_LOOPS_PROFILE)}
 
 DEFAULT_OUT_JSON = os.path.join(
     REPO, "docs", "superpowers", "specs", "2026-07-30-knob-coupling-scan.json"
@@ -254,6 +278,10 @@ OUT_JSON_BY_DECK = {
     "two_stage_opamp": DEFAULT_OUT_JSON,
     "bandgap": os.path.join(
         REPO, "docs", "superpowers", "specs", "2026-08-02-bandgap-coupling-precondition.json"
+    ),
+    "bandgap_loops": os.path.join(
+        REPO, "docs", "superpowers", "specs",
+        "2026-08-02-bandgap-coupling-precondition-amp-loops.json"
     ),
 }
 _SCRATCH = "/private/tmp/claude-501/-Users-sunbeom-orca-projects-analogcoder/e49ad585-6ed0-4f42-8349-b144ea9e75bd/scratchpad"
@@ -874,11 +902,24 @@ def main() -> int:
         tb = spec.canonical
     else:
         tb = next(t for t in spec.testbenches if t.name == profile.testbench_name)
+    # 순위를 매기는 덱과 재는 덱은 다를 수 있다. 면적 단계는 **canonical
+    # 덱 하나**에서 순위를 매기므로(optimizer.py: `start_text =
+    # netlist_texts[canonical_name]`), 다른 테스트벤치에서 재더라도 "면적
+    # 단계가 만지는 노브"라는 주장을 지키려면 순위는 canonical에서 나와야 한다.
+    if profile.knob_source == "area_ranking":
+        rank_tb = (
+            spec.canonical if profile.rank_testbench_name is None
+            else next(t for t in spec.testbenches if t.name == profile.rank_testbench_name)
+        )
+    else:
+        rank_tb = tb
     # 순위는 `run_area_optimization`이 읽는 것과 같은 **파일 원문**에서 매기고,
     # 시뮬레이션은 include를 절대경로화한 텍스트로 돈다. resolve_includes는
     # 본문을 인라인하지 않고 경로만 다시 쓰므로 tunable 인덱스는 둘이 같다.
-    rank_text = open(tb.netlist_path).read()
-    base_text = resolve_includes(rank_text, os.path.dirname(tb.netlist_path))
+    rank_text = open(rank_tb.netlist_path).read()
+    base_text = resolve_includes(
+        open(tb.netlist_path).read(), os.path.dirname(tb.netlist_path)
+    )
     control_block = build_control_block(tb.control_block, profile)
 
     knob_ranking_record = None
@@ -987,6 +1028,7 @@ def main() -> int:
         "deck": profile.key,
         "spec": os.path.relpath(profile.spec_path, REPO),
         "testbench": tb.name,
+        "rank_testbench": rank_tb.name,
         "measurements": list(profile.measurements),
         "tolerance": COMPARISON_REL_TOLERANCE,
         "knobs": {
