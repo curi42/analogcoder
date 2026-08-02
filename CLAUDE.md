@@ -1343,11 +1343,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1497
-  passed, 2 skipped, 7 deselected, 98.08 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1499
+  passed, 2 skipped, 9 deselected, 96.06 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1497), so do not treat a single timing as a regression signal. A
+  (1273 → 1473 → 1499), so do not treat a single timing as a regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
   when you add a real-simulator test** — it has drifted four times now
