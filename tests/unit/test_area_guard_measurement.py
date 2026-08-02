@@ -80,6 +80,59 @@ def test_tightest_slack_present_but_value_missing_is_also_unjudged():
     assert reason is not None
 
 
+def test_verify_instrument_refuses_a_baseline_missing_a_criterion_s_measurement(tmp_path):
+    """아래 `_safe_state` 사각이 **오늘 발화하지 않는 유일한 이유**를 못박는다.
+
+    사각 자체는 아래 테스트가 재현한다: 기준 하나의 측정값이 안 나오면
+    `_tightest_slack`이 그 기준을 빼고 다른 기준의 양수 여유를 돌려주므로
+    `_safe_state`가 `void` 대신 `False`를 낸다. 그 조합이 실제 그리드에서
+    나오지 않는 것은 `verify_instrument`가 **재기 전에** 기준선 시뮬레이션을
+    돌려보고 요구된 측정값이 하나라도 없으면 거절하기 때문이다.
+
+    아래 테스트는 이름으로 그 의존을 주장했지만 `verify_instrument`를 한 번도
+    부르지 않았다 - 사전 거절을 느슨하게 해도 초록이었다. 그 절반이 이
+    테스트다. 여기가 깨지면 아래 사각이 살아난다."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from area_guard_measurement import verify_instrument
+
+    from analogcoder.spec import Criterion
+
+    netlist = tmp_path / "tb.cir"
+    netlist.write_text("* tb\n.end\n", encoding="utf-8")
+    tb = SimpleNamespace(name="tb", netlist_path=str(netlist), control_block=".control\n.endc\n")
+    spec = SimpleNamespace(
+        testbenches=[tb],
+        all_criteria=[
+            Criterion(name="iq", measurement="iq_ua", operator="<=", threshold=300.0),
+            Criterion(name="gain", measurement="gain_db", operator=">=", threshold=60.0),
+        ],
+    )
+
+    class _Backend:
+        def __init__(self, measurements):
+            self._measurements = measurements
+
+        def run(self, _path, _options):
+            return SimpleNamespace(measurements=dict(self._measurements))
+
+    # gain_db 가 안 나온다 - 정확히 아래 사각을 만드는 기준선이다.
+    refused = asyncio.run(
+        verify_instrument("p", spec, _Backend({"iq_ua": 200.0}), tmp_path)
+    )
+    assert refused["ok"] is False
+    assert refused["missing"] == ["gain_db"]
+    assert refused["wanted"] == 2
+
+    # 대조군: 둘 다 나오면 통과한다(거절이 무조건 참인 게이트가 아니다).
+    accepted = asyncio.run(
+        verify_instrument("p", spec, _Backend({"iq_ua": 200.0, "gain_db": 70.0}), tmp_path)
+    )
+    assert accepted["ok"] is True
+    assert accepted["missing"] == []
+
+
 def test_safe_state_is_blind_to_a_nan_criterion_and_depends_on_verify_instrument():
     """**void 판정의 알려진 사각을 못박는다.**
 
@@ -91,11 +144,17 @@ def test_safe_state_is_blind_to_a_nan_criterion_and_depends_on_verify_instrument
     안전하지 않았다"는 거짓 주장이 void가 막으려던 문이 아니라 **다른
     문으로** 나온다.
 
-    이 테스트는 그 결함을 고치는 것이 아니라 **의존을 고정**한다: 오늘
+    이 테스트는 그 결함을 고치는 것이 아니라 **사각 자체**를 고정한다: 오늘
     발화하지 않는 유일한 이유는 `verify_instrument`가 조합을 돌리기 전에
     두 스펙의 기준이 전부 측정되는지 확인하고 거절하기 때문이다. 그
-    사전 거절을 느슨하게 하는 사람이 이 테스트를 보고 여기도 같이 고쳐야
-    한다는 것을 알게 하는 것이 목적이다.
+    사전 거절을 느슨하게 하는 사람이 여기도 같이 고쳐야 한다는 것을 알게
+    하는 것이 목적이다.
+
+    **그 의존 쪽 절반은 바로 위
+    `test_verify_instrument_refuses_a_baseline_missing_a_criterion_s_measurement`
+    가 맡는다** - 이 테스트는 `verify_instrument`를 부르지 않으므로 사전
+    거절을 느슨하게 해도 초록이다. 이름이 약속하는 링크를 실제로 거는 것은
+    저쪽이고, 둘을 짝으로 읽어야 한다.
 
     실제 수치로 재현한다: 기준 둘 중 `gain`이 NaN(측정 실패, `pass=False`)
     이고 `iq`는 200/300으로 여유 +0.333. `_tightest_slack`은 `iq`만 보고

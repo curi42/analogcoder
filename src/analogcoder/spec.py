@@ -277,10 +277,27 @@ class TargetSpec:
 # `_OPERATORS[...]`에서 `KeyError`로, 즉 스펙 로드가 아니라 **판정 시점에**
 # 터진다.
 #
-# 되살리려면: `==`를 판정하는 방법을 세 소비자 모두에서 정의하고(허용 오차를
-# 무엇으로 할지가 그 결정의 핵심이다), 그 다음 여기에 넣는다. 오늘 출하된
-# 스펙 중 `==`를 쓰는 것은 없다(벤치마크 14개 스펙의 210개 기준 전부가
-# `>=` 아니면 `<=`다).
+# **네 번째 소비자는 `==`를 제대로 구현하고 있고, 이 거절은 그것을 함께
+# 거둬간다.** `curation._at_least_as_good`(`curation.py`의 `_EQUALITY`,
+# `_COMPARABLE_OPERATORS`)은 `==`를 **양방향 허용오차 띠 안이면 "적어도
+# 그만큼"**으로 읽고, 그 허용오차가 `COMPARISON_REL_TOLERANCE = 1e-3`이다 -
+# 이 주석이 "아무도 하지 않았다"고 말하는 그 결정(허용오차를 무엇으로 할
+# 것인가)을 저쪽은 **실측으로** 이미 내렸다(잡음 4.2e-5, 실제 차이 0.102).
+# 자기 자신과도 일관되고(`_is_better`는 같은 띠에서 `==`를 개선으로 세지
+# 않는다) 리뷰가 한 번 굳혀 둔 자리이기도 하다.
+#
+# 그래서 **이 게이트가 실제로 철회하는 능력**을 적어 둔다: `_load_criteria`가
+# `src/`에서 유일한 `Criterion(...)` 생성 지점이므로, `==`를 막는 순간
+# 큐레이션의 **등가 인지 파레토 경로 전체가 스펙에서 도달 불가능**해진다.
+# `vref == 1.2` 같은 중심값 기준을 든 큐레이션 슬롯 스펙은 이제 로드에서
+# 실패한다 - 테스트되고 리뷰된 능력을 잃는 것이며, 거절의 대가다. (그래도
+# 거절한다: 판정하는 세 소비자가 실제로 서로 다른 답을 내는 것으로 충분하다.)
+#
+# 되살리려면: **세 판정 소비자를 서로 합의시키고** - 없는 답을 새로 유도할
+# 게 아니라, 이미 실측으로 정해진 큐레이션의 띠(`COMPARISON_REL_TOLERANCE`)를
+# 세 곳에 그대로 쓰는 것이 기본선이다 - 그 다음 여기에 `==`를 넣는다.
+# 오늘 출하된 스펙 중 `==`를 쓰는 것은 없다(벤치마크 14개 스펙의 210개 기준
+# 전부가 `>=` 아니면 `<=`다).
 ALLOWED_OPERATORS = (">=", ">", "<=", "<")
 
 
@@ -295,7 +312,9 @@ def _load_criteria(raw_criteria: list[dict]) -> list[Criterion]:
                 f"{list(ALLOWED_OPERATORS)}. (An '==' criterion is read three "
                 f"different ways by relative_slack, baseline_ratio_allowances and "
                 f"guard_band_violations, so it is refused rather than silently "
-                f"resolved to one of them.)"
+                f"resolved to one of them. curation._at_least_as_good does "
+                f"implement '==' correctly, with its own measured tolerance - "
+                f"this refusal withdraws that path from spec-declared criteria.)"
             )
         criteria.append(
             Criterion(

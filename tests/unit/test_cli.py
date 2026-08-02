@@ -2926,6 +2926,82 @@ def test_a_verdict_sweep_that_cannot_run_still_writes_the_run_s_artifacts(tmp_pa
     assert _one_history_event(run_dir, "pvt_sweep_failed")["phase"] == "verdict"
 
 
+def test_both_sweep_guards_hold_for_an_exception_outside_oserror_and_valueerror(tmp_path):
+    """**이 테스트의 트리거는 일부러 인위적이다 - 그것이 이 테스트의 일이다.**
+
+    "현실성" 쪽은 위의 두 테스트가 맡는다: 진입 쪽은 프로덕션 렌더러가 내는
+    `CornerRenderError`(= `ValueError`), 판정 쪽은 워커의 `OSError`다. 그런데
+    그 둘만 있으면 `cli.py`의 두 `except Exception`을
+    `except (OSError, ValueError)`로 **좁혀도 전부 초록으로 남는다** - 즉
+    "가드가 저 두 종류보다 넓어야 한다"는 사실을 아무것도 못박고 있지 않다.
+    그 사실이 곧 `# noqa: BLE001` 옆 20줄 주석의 주장이다: 예외 **종류를
+    열거하는 것 자체가 추측**이고, 실제로 그 목록에서 `KeyError` 채널 하나가
+    `spec.ALLOWED_OPERATORS` 때문에 사라졌다.
+
+    **그러니 이 테스트를 "억지스럽다"는 이유로 고치지 말 것.** 여기서 던지는
+    `KeyError`는 오늘의 프로덕션 채널을 재현하는 것이 아니라, 내일 그 자리에
+    도달할 **아직 이름이 없는 결정론적 실패**(스윕 소비자에서 나는
+    `KeyError`/`TypeError`/`AttributeError`)를 대신한다. 좁히면 그 예외가
+    `_run` -> `asyncio.run` -> `main()`을 뚫고, two_stage_opamp 기준 103분짜리
+    실행이 `history.jsonl`만 남기고 끝난다.
+
+    두 가드(`cli.py`의 진입 쪽과 판정 쪽)를 **각각** 건드린다 - 한쪽만 재면
+    다른 한쪽이 같은 방식으로 좁혀질 수 있다.
+    """
+
+    def _boom(*_args, **_kwargs):
+        # (OSError, ValueError) 어느 쪽도 아니고 상속 관계도 없다.
+        raise KeyError("a consumer of the sweep result went looking for a name")
+
+    # --- 진입 스윕 ---
+    entry_dir = str(tmp_path / "runs" / "entrykey")
+    entry_args = _corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, entry_dir)
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=_boom),
+        patch("analogcoder.cli.run_orchestration", new=AsyncMock()) as mock_orch,
+    ):
+        code = _main_with(["--spec", entry_args.spec, "--run-dir", entry_dir])
+
+    assert code == 1
+    mock_orch.assert_not_awaited()
+    result, report = _artifacts(entry_dir)
+    assert result["status"] == "FAIL"
+    assert "entry PVT sweep could not run" in result["failure_reason"]
+    assert "KeyError" in result["failure_reason"]   # 종류가 그대로 실린다
+    assert result["pvt_sweep"] is None
+    assert result["pvt_sweep_error"]["phase"] == "entry"
+    assert "entry PVT sweep could not run" in report
+    assert _one_history_event(entry_dir, "pvt_sweep_failed")["phase"] == "entry"
+
+    # --- 판정 스윕 ---
+    verdict_dir = str(tmp_path / "runs" / "verdictkey")
+    verdict_args = _corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, verdict_dir)
+    entry_sweep = _sweep({"gain": _wc("fs", 41.0), "pm": _wc("ss", 55.0)})
+    calls: list = []
+
+    def entry_then_key_error(netlist_texts, spec, sim_backend, log_event=None):
+        calls.append(dict(netlist_texts))
+        if len(calls) == 1:
+            return entry_sweep
+        _boom()
+
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep", new=entry_then_key_error),
+        patch("analogcoder.cli.run_orchestration", new=_orchestration(_pass_result(verdict_dir))),
+    ):
+        code = _main_with(["--spec", verdict_args.spec, "--run-dir", verdict_dir])
+
+    assert code == 1
+    assert len(calls) == 2
+    result, report = _artifacts(verdict_dir)
+    assert result["status"] == "FAIL"
+    assert "final PVT sweep could not run" in result["failure_reason"]
+    assert "KeyError" in result["failure_reason"]
+    assert result["pvt_sweep"] is None
+    assert result["pvt_sweep_error"]["phase"] == "verdict"
+    assert _one_history_event(verdict_dir, "pvt_sweep_failed")["phase"] == "verdict"
+
+
 def test_a_sweep_that_ran_and_failed_is_not_reported_as_one_that_could_not_run(tmp_path):
     """대조군. 같은 FAIL이지만 **다른 사실**이고, 산출물에서 구별되어야 한다.
 

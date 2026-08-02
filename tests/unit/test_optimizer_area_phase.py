@@ -722,26 +722,40 @@ async def test_each_accepted_step_records_the_relative_slack_of_every_criterion(
     """수락된 스텝 이벤트가 그 스텝이 남긴 덱의 기준별 상대 여유를 든다.
 
     `test_the_result_carries_the_tightest_relative_slack_and_its_criterion`과
-    같은 시나리오(기준선 235 -> 수락 후 200)를 쓰되, 결과가 아니라 **이력**을
-    본다 - 그것이 중간 버전을 붙잡는 유일한 채널이다."""
+    같은 모양이되 결과가 아니라 **이력**을 본다 - 그것이 중간 버전을 붙잡는
+    유일한 채널이다.
+
+    **수락 스텝이 둘 이상인 시나리오여야 한다.** 사전 등록의 문장은 "**각**
+    수락 스텝 이후"이고, 수락이 하나뿐인 시나리오에서는 아래 `for` 루프가 한
+    번만 돌아 "첫 스텝에만 싣는" 구현과 구별되지 않는다 - 실제로 그 변이가
+    이 파일 전체를 초록으로 통과시켰다. 그래서 값이 매 스텝 달라지도록
+    측정열을 235 -> 200 -> 180으로 두고, 스텝별로 **다른** 여유를 기대한다:
+    한 값이 모든 스텝에 복사되는 구현도 여기서 죽는다. `len(accepted) >= 2`
+    단언은 시나리오가 다시 조용히 한 스텝으로 줄어드는 것을 막는다."""
     from analogcoder.optimizer import run_optimization
     from analogcoder.state import RunState
     from tests.unit.test_optimizer import DECK, _agents, _spec
 
     state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
     state.push_netlist_version({"tb": DECK})
-    agents, _ = _agents([235.0, 200.0, 200.0, 200.0, 200.0])
+    # 기준선 235 -> 200(수락) -> 180(수락) -> 정체(거절로 탐색 종료).
+    agents, _ = _agents([235.0, 200.0, 180.0, 180.0, 180.0])
 
     await run_optimization({"tb": DECK}, _spec(), state, agents)
 
     events = [json.loads(line) for line in open(state.history_path, encoding="utf-8")]
     accepted = [e for e in events if e["step"] == "optimize_step" and e.get("accepted")]
 
-    assert accepted, "no accepted step was logged - the scenario changed"
+    assert len(accepted) >= 2, (
+        "the scenario must accept at least two steps - with one, 'each accepted "
+        f"step' is indistinguishable from 'the first one': {accepted}"
+    )
+    assert [e["criteria_slack"] for e in accepted[:2]] == [
+        [{"criterion": "iq", "value": pytest.approx((300.0 - 200.0) / 300.0)}],
+        [{"criterion": "iq", "value": pytest.approx((300.0 - 180.0) / 300.0)}],
+    ]
     for event in accepted:
-        assert event["criteria_slack"] == [
-            {"criterion": "iq", "value": pytest.approx((300.0 - 200.0) / 300.0)},
-        ]
+        assert event["criteria_slack"] is not None
 
 
 @pytest.mark.asyncio

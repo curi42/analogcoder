@@ -137,6 +137,23 @@ directly (see the deterministic-derivation section).
     (Enumerating exception types is guessing — and that list losing a member is the
     proof.) Zero shipped specs are affected: all **210** criteria across the 14
     benchmark specs are `>=` or `<=`.
+    - **A fourth consumer implements `==` correctly, and the refusal withdraws it.**
+      `curation._at_least_as_good` reads `==` as "at least as good when inside a
+      two-sided band", with `COMPARISON_REL_TOLERANCE = 1e-3` — the tolerance
+      decision the refusal says nobody made was already made there, from
+      measurement (noise 4.2e-5, real difference 0.102), and `_is_better` shares
+      the same band. Since `_load_criteria` is the only `Criterion(...)`
+      construction site in `src/`, blocking `==` makes curation's **entire
+      equality-aware Pareto path unreachable from any spec**: a slot spec with a
+      centred criterion (`vref == 1.2`) now fails at load. That is a tested,
+      reviewed capability being withdrawn — the price of refusing. Reopening it
+      means **making the three judging sites agree**, and the default should be to
+      adopt curation's measured band rather than derive a fourth answer.
+      `curation._unjudgeable_operators` becomes unreachable-from-a-spec as a
+      by-product; it is **not** added to the silently-inert ledger, because the
+      gate that now decides is `ALLOWED_OPERATORS` and it fires loudly at the
+      boundary — an inert *stage* behind a live gate is not an inert gate. Total
+      stays **12**.
 - `area_limits.py` — a deterministic gate run before every tuning proposal is
   applied: rejects (with retryable feedback) proposals that grow a component
   beyond a size-tiered limit relative to `netlist_v0`, since there is no PDK here
@@ -1504,11 +1521,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1546
-  passed, 2 skipped, 9 deselected, 97.98 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1548
+  passed, 2 skipped, 9 deselected, 97.75 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546), so do not treat a single timing as a regression
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548), so do not treat a single timing as a regression
   signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
