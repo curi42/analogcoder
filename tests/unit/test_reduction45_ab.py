@@ -1,0 +1,384 @@
+"""`scripts/reduction45_ab.py`/`scripts/reduction45_aggregate.py`의 순수 함수
+시험. ngspice도 LLM도 돌리지 않는다 - 가짜 `result.json`/`history.jsonl`과
+아주 짧은 더미 서브프로세스(`sleep`)만 쓴다."""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
+
+from reduction45_ab import (  # noqa: E402
+    ENABLED_TRUE_RE,
+    run_with_cap,
+    write_off_copy,
+)
+from reduction45_aggregate import (  # noqa: E402
+    build_row,
+    check_accuracy,
+    check_cost,
+    check_precondition,
+    judge,
+    mid_pass_sweep_fail_events,
+    reentry_count,
+    sim_counts,
+)
+
+
+# ---------------------------------------------------------------------------
+# Step 1: 팔 전환 = 정확히 1회 계수 치환
+# ---------------------------------------------------------------------------
+
+def _write_slot(tmp_path, body: str) -> str:
+    path = tmp_path / "slot.yaml"
+    path.write_text(body)
+    return str(path)
+
+
+def test_enabled_true_substituted_exactly_once(tmp_path):
+    src = _write_slot(tmp_path, "corner_reduction:\n  enabled: true\n  retry_budget: 2\n")
+    dst = str(tmp_path / "off.yaml")
+
+    write_off_copy(src, dst)
+
+    text = open(dst).read()
+    assert "enabled: false" in text
+    assert "enabled: true" not in text
+    # 다른 줄은 손대지 않는다.
+    assert "retry_budget: 2" in text
+
+
+def test_zero_matches_dies():
+    with pytest.raises(SystemExit):
+        _write_and_call("corner_reduction:\n  enabled: false\n")
+
+
+def test_two_matches_dies():
+    with pytest.raises(SystemExit):
+        _write_and_call("a:\n  enabled: true\nb:\n  enabled: true\n")
+
+
+def _write_and_call(body: str):
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "slot.yaml")
+        with open(src, "w") as f:
+            f.write(body)
+        write_off_copy(src, os.path.join(d, "off.yaml"))
+
+
+def test_enabled_true_regex_ignores_other_booleans():
+    """`probe: true`처럼 다른 필드의 `true`는 건드리지 않는다는 것을
+    정규식만으로 확인한다(치환은 `enabled:` 줄에만 걸린다)."""
+    text = "corner_reduction:\n  enabled: true\n  probe: true\n"
+    _, n = ENABLED_TRUE_RE.subn("enabled: false", text)
+    assert n == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 2: 감시견 (최소 검증 - 아주 짧은 상한만 쓴다)
+# ---------------------------------------------------------------------------
+
+def test_watchdog_kills_a_process_that_outlives_the_cap():
+    start = time.monotonic()
+    outcome = run_with_cap(["sleep", "5"], cap_s=0.2)
+    elapsed_wall = time.monotonic() - start
+
+    assert outcome["killed_by_cap"] is True
+    # 죽이는 데 5초짜리 sleep을 다 기다리지 않는다 - 유예 5초를 넉넉히 두고도
+    # 훨씨 짧게 끝나야 한다.
+    assert elapsed_wall < 4.0
+
+
+def test_watchdog_lets_a_fast_process_finish_normally():
+    outcome = run_with_cap(["true"], cap_s=5.0)
+
+    assert outcome["killed_by_cap"] is False
+    assert outcome["exit"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Step 3: mid_pass_sweep_fail - "실행이 FAIL로 끝났다"와 뭉개지 않는다
+# ---------------------------------------------------------------------------
+
+def _ev(step, **fields):
+    return {"step": step, **fields}
+
+
+def test_mid_pass_sweep_fail_fires_on_pass_then_sweep_fail():
+    events = [
+        _ev("orchestration_attempt", attempt=0, status="PASS"),
+        _ev("pvt_final_sweep", overall_pass=False, summary="x failed"),
+    ]
+    hits = mid_pass_sweep_fail_events(events)
+    assert len(hits) == 1
+
+
+def test_mid_pass_sweep_fail_does_not_fire_when_mid_loop_failed():
+    """중간 루프가 애초에 FAIL이면(예: max iterations reached) 최종 스윕이
+    실패해도 이 사건이 아니다 - 낙관을 뒤집는 사건이 아니라 이미 실패였던
+    것이 스윕에서도 실패한 것뿐이다."""
+    events = [
+        _ev("orchestration_attempt", attempt=0, status="max iterations reached"),
+        _ev("pvt_final_sweep", overall_pass=False, summary="x failed"),
+    ]
+    assert mid_pass_sweep_fail_events(events) == []
+
+
+def test_mid_pass_sweep_fail_can_differ_from_run_ending_in_fail():
+    """재진입 시나리오: attempt 0은 중간 PASS인데 스윕 실패(사건 발생), 코너
+    집합이 자라서 재진입, attempt 1은 중간 PASS + 스윕 PASS - **실행 전체는
+    PASS로 끝나지만 사건은 일어난 것으로 남아야 한다.** 이것이 브리프가
+    요구하는, `result["status"]`만으로는 못 뽑는 값이라는 증거다."""
+    events = [
+        _ev("orchestration_attempt", attempt=0, status="PASS"),
+        _ev("pvt_final_sweep", overall_pass=False, summary="vbg0_droop failed"),
+        _ev("corner_set_grown", attempt=1, added=["ss/1.62/-40"]),
+        _ev("orchestration_attempt", attempt=1, status="PASS"),
+        _ev("pvt_final_sweep", overall_pass=True, summary="all pass"),
+    ]
+    hits = mid_pass_sweep_fail_events(events)
+    # 사건은 1건 일어났다 - "실행이 FAIL로 끝났다"라면 이 값이 0이어야 하는데
+    # 아니다. 이 실행은 사실 PASS로 끝난다.
+    assert len(hits) == 1
+
+
+def test_mid_pass_sweep_fail_can_differ_from_run_ending_in_pass_too():
+    """반대 방향도 확인한다: 중간 루프가 FAIL로 끝나 스윕 자체가 안 도는(혹은
+    실패한 채) 실행도 있을 수 있는데, 그 경우 `result.status == "FAIL"`이지만
+    이 사건(중간 PASS -> 스윕 뒤집힘)은 0건이다 - 두 값이 서로 독립임을
+    보인다."""
+    events = [_ev("orchestration_attempt", attempt=0, status="max iterations reached")]
+    assert mid_pass_sweep_fail_events(events) == []
+
+
+# ---------------------------------------------------------------------------
+# sim_counts - 면적 단계는 루프 비용에서 뺀다
+# ---------------------------------------------------------------------------
+
+def test_sim_counts_splits_area_phase_from_loop():
+    events = (
+        # 진입 스윕: 3 sim -> loop
+        [_ev("sim_cache", hit=False) for _ in range(3)]
+        + [_ev("pvt_baseline_sweep", overall_pass=False)]
+        # 면적 단계 진입 스윕: 4 sim -> area
+        + [_ev("sim_cache", hit=False) for _ in range(4)]
+        + [_ev("optimize_area_entry_sweep", overall_pass=True)]
+        # 면적 단계 확인 스윕: 2 sim(캐시 적중 1건 포함, 적중은 안 센다) -> area
+        + [_ev("sim_cache", hit=True), _ev("sim_cache", hit=False), _ev("sim_cache", hit=False)]
+        + [_ev("optimize_area_confirm_sweep", overall_pass=True)]
+        # 최종 스윕: 5 sim -> loop
+        + [_ev("sim_cache", hit=False) for _ in range(5)]
+        + [_ev("pvt_final_sweep", overall_pass=True)]
+    )
+    counts = sim_counts(events)
+    assert counts["loop_sims"] == 3 + 5
+    assert counts["area_phase_sims"] == 4 + 2
+    assert counts["cache_hits"] == 1
+    assert counts["cache_misses"] == 3 + 4 + 2 + 5
+    assert counts["unclosed_misses"] == 0
+
+
+def test_sim_counts_unclosed_batch_falls_into_loop():
+    events = [_ev("pvt_baseline_sweep", overall_pass=True)] + [
+        _ev("sim_cache", hit=False) for _ in range(2)
+    ]
+    counts = sim_counts(events)
+    assert counts["unclosed_misses"] == 2
+    assert counts["loop_sims"] == 2
+    assert counts["area_phase_sims"] == 0
+
+
+def test_reentry_count_counts_corner_set_grown():
+    events = [
+        _ev("corner_set_grown", attempt=1),
+        _ev("orchestration_attempt", attempt=1, status="PASS"),
+        _ev("corner_set_grown", attempt=2),
+    ]
+    assert reentry_count(events) == 2
+
+
+# ---------------------------------------------------------------------------
+# 판정 규칙: 선행 조건 P, 정확성+비용 둘 다, killed_by_cap
+# ---------------------------------------------------------------------------
+
+def _ok_row(arm, index, *, mid_fail, loop_sims):
+    return {
+        "arm": arm, "index": index, "row_status": "ok", "drop_reason": None,
+        "mid_pass_sweep_fail": mid_fail, "loop_sims": loop_sims,
+    }
+
+
+def _dropped_row(arm, index, reason):
+    return {
+        "arm": arm, "index": index, "row_status": "dropped", "drop_reason": reason,
+        "mid_pass_sweep_fail": None, "loop_sims": None,
+    }
+
+
+def test_precondition_void_when_off_never_shows_the_event():
+    off_rows = [_ok_row("off", i, mid_fail=False, loop_sims=500) for i in (1, 2, 3)]
+    on_rows = [_ok_row("on", i, mid_fail=False, loop_sims=550) for i in (1, 2, 3)]
+
+    result = judge(off_rows, on_rows)
+
+    assert result["verdict"] == "void"
+    assert result["precondition"]["holds"] is False
+
+
+def test_precondition_holds_with_one_off_hit():
+    check = check_precondition([
+        _ok_row("off", 1, mid_fail=True, loop_sims=500),
+        _ok_row("off", 2, mid_fail=False, loop_sims=500),
+        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+    ])
+    assert check["holds"] is True
+    assert check["off_hit_count"] == 1
+
+
+def test_accept_requires_both_accuracy_and_cost_not_just_one():
+    off_rows = [
+        _ok_row("off", 1, mid_fail=True, loop_sims=500),
+        _ok_row("off", 2, mid_fail=True, loop_sims=500),
+        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+    ]
+    # Case A: 정확성은 만족하지만(0건, OFF의 2건보다 적다) 비용이 1.5배를
+    # 넘는다 -> 기각.
+    on_rows_cost_fails = [
+        _ok_row("on", 1, mid_fail=False, loop_sims=2000),
+        _ok_row("on", 2, mid_fail=False, loop_sims=2000),
+        _ok_row("on", 3, mid_fail=False, loop_sims=2000),
+    ]
+    result_a = judge(off_rows, on_rows_cost_fails)
+    assert result_a["accuracy"]["holds"] is True
+    assert result_a["cost"]["holds"] is False
+    assert result_a["verdict"] == "rejected"
+
+    # Case B: 비용은 만족하지만(1.5배 이내) 정확성이 OFF와 같다(둘 다 1건) ->
+    # 기각.
+    on_rows_accuracy_fails = [
+        _ok_row("on", 1, mid_fail=True, loop_sims=550),
+        _ok_row("on", 2, mid_fail=False, loop_sims=550),
+        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+    ]
+    result_b = judge(off_rows, on_rows_accuracy_fails)
+    assert result_b["cost"]["holds"] is True
+    assert result_b["accuracy"]["holds"] is False
+    assert result_b["verdict"] == "rejected"
+
+    # Case C: 둘 다 만족 -> 채택.
+    on_rows_both = [
+        _ok_row("on", 1, mid_fail=False, loop_sims=550),
+        _ok_row("on", 2, mid_fail=False, loop_sims=550),
+        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+    ]
+    result_c = judge(off_rows, on_rows_both)
+    assert result_c["verdict"] == "accepted"
+
+
+def test_killed_by_cap_run_blocks_acceptance():
+    off_rows = [
+        _ok_row("off", 1, mid_fail=True, loop_sims=500),
+        _ok_row("off", 2, mid_fail=False, loop_sims=500),
+        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+    ]
+    on_rows = [
+        _dropped_row("on", 1, "killed_by_cap"),
+        _ok_row("on", 2, mid_fail=False, loop_sims=550),
+        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+    ]
+    result = judge(off_rows, on_rows)
+    assert result["accuracy"]["holds"] is False
+    assert result["verdict"] != "accepted"
+
+
+def test_dropped_off_rows_do_not_inflate_off_failure_count():
+    """OFF 쪽 탈락 행은 실패로 세지 않는다(ON에 유리하게 만들지 않는 방향) -
+    떨어진 표본을 실패로 세면 OFF의 실패 건수가 부풀어 ON이 이기기 쉬워진다."""
+    off_rows = [
+        _dropped_row("off", 1, "no_result_json"),
+        _ok_row("off", 2, mid_fail=True, loop_sims=500),
+        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+    ]
+    check = check_accuracy(off_rows, [
+        _ok_row("on", 1, mid_fail=False, loop_sims=550),
+        _ok_row("on", 2, mid_fail=False, loop_sims=550),
+        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+    ])
+    assert check["off_fail_count"] == 1  # 탈락 행은 안 셌다
+
+
+# ---------------------------------------------------------------------------
+# build_row - 탈락 경로가 라벨을 달고 남는다
+# ---------------------------------------------------------------------------
+
+def test_build_row_labels_missing_result_json(tmp_path):
+    run_dir = tmp_path / "off_1"
+    run_dir.mkdir()
+    invocation = {
+        "arm": "off", "index": 1, "spec": "x.yaml", "exit": 1,
+        "killed_by_cap": False, "elapsed_s": 12.3, "run_dir": str(run_dir),
+    }
+    row = build_row(invocation)
+    assert row["row_status"] == "dropped"
+    assert row["drop_reason"] == "no_result_json"
+    assert row["mid_pass_sweep_fail"] is None  # 지어내지 않는다
+
+
+def test_build_row_labels_killed_by_cap_even_if_result_json_exists(tmp_path):
+    run_dir = tmp_path / "on_1"
+    run_dir.mkdir()
+    (run_dir / "result.json").write_text(json.dumps({"status": "FAIL"}))
+    invocation = {
+        "arm": "on", "index": 1, "spec": "x.yaml", "exit": None,
+        "killed_by_cap": True, "elapsed_s": 2400.0, "run_dir": str(run_dir),
+    }
+    row = build_row(invocation)
+    assert row["row_status"] == "dropped"
+    assert row["drop_reason"] == "killed_by_cap"
+
+
+def test_build_row_reads_a_real_result_and_history(tmp_path):
+    run_dir = tmp_path / "off_1"
+    run_dir.mkdir()
+    result = {
+        "status": "PASS", "failure_reason": None, "iterations_used": 3,
+        "area_optimization": {
+            "corner_confirmed": True,
+            "final_netlist_paths": {"dc_tc": "runs/x/netlist_v2.cir"},
+        },
+    }
+    (run_dir / "result.json").write_text(json.dumps(result))
+    events = [
+        {"step": "sim_cache", "hit": False},
+        {"step": "pvt_baseline_sweep", "overall_pass": False},
+        {"step": "orchestration_attempt", "attempt": 0, "status": "PASS"},
+        {"step": "sim_cache", "hit": False},
+        {"step": "pvt_final_sweep", "overall_pass": False, "summary": "x"},
+        {"step": "corner_set_grown", "attempt": 1},
+        {"step": "orchestration_attempt", "attempt": 1, "status": "PASS"},
+        {"step": "sim_cache", "hit": False},
+        {"step": "pvt_final_sweep", "overall_pass": True, "summary": "ok"},
+    ]
+    with open(run_dir / "history.jsonl", "w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+
+    invocation = {
+        "arm": "off", "index": 1, "spec": "x.yaml", "exit": 0,
+        "killed_by_cap": False, "elapsed_s": 555.0, "run_dir": str(run_dir),
+    }
+    row = build_row(invocation)
+
+    assert row["row_status"] == "ok"
+    assert row["result_status"] == "PASS"
+    assert row["mid_pass_sweep_fail"] is True
+    assert row["mid_pass_sweep_fail_attempts"] == 1
+    assert row["reentry_count"] == 1
+    assert row["loop_sims"] == 3
+    assert row["corner_confirmed"] is True
+    assert row["landed_netlist_paths"] == {"dc_tc": "runs/x/netlist_v2.cir"}

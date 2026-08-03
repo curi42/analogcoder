@@ -16,3 +16,7 @@ runs_*.log
 
 # 도구가 만드는 식별자 인덱스 — 소스가 아니다
 CLAUDE.md.ids
+
+# scripts/reduction45_ab.py 의 OFF 팔 파생 사본 - enabled: true 한 필드만
+# 다른 임시 스펙이라 커밋하지 않는다(2026-08-03-reduction45-benefit-design.md).
+benchmarks/bandgap/.reduction45_off.yaml
