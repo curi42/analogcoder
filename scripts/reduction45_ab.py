@@ -111,6 +111,8 @@ def run_with_cap(
     *,
     cwd: str | None = None,
     env: dict | None = None,
+    stdout_path: str | None = None,
+    stderr_path: str | None = None,
 ) -> dict:
     """자식을 백그라운드로 띄우고 경과를 재다가 상한을 넘기면 죽이는 감시견.
 
@@ -131,7 +133,23 @@ def run_with_cap(
     싣는다(음수 = 신호로 죽음) - 죽였다는 사실 자체는 `killed_by_cap`이 말한다.
     """
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
+    # **런별로 자식의 stdout/stderr 를 갈라 저장한다.** 이것이 없으면 두 자식이
+    # 부모의 스트림을 함께 물려받아 한 로그에 섞이고, 백엔드 고장(예: agent SDK
+    # 의 RuntimeError)이 **어느 런의 것인지 귀속되지 않는다**. v2 첫 실행에서
+    # 실제로 그 일이 났고, 그때 이력(`history.jsonl`)에는 오류 이벤트가 한 건도
+    # 남지 않아 산출물만으로는 고장을 알 수 없었다. `None`이면 예전처럼 물려받는다.
+    out_f = open(stdout_path, "wb") if stdout_path else None
+    err_f = open(stderr_path, "wb") if stderr_path else None
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env, start_new_session=True,
+            stdout=out_f, stderr=err_f,
+        )
+    except BaseException:
+        for f in (out_f, err_f):
+            if f is not None:
+                f.close()
+        raise
     killed = False
     try:
         while True:
@@ -146,6 +164,9 @@ def run_with_cap(
             time.sleep(min(POLL_INTERVAL_S, max(cap_s - elapsed, 0.01)))
     finally:
         exit_code = proc.wait()
+        for f in (out_f, err_f):
+            if f is not None:
+                f.close()
     elapsed_s = time.monotonic() - start
     return {"exit": exit_code, "killed_by_cap": killed, "elapsed_s": elapsed_s}
 
@@ -194,6 +215,10 @@ def run_pair_with_cap(
     *,
     off_env: dict | None = None,
     on_env: dict | None = None,
+    off_stdout: str | None = None,
+    off_stderr: str | None = None,
+    on_stdout: str | None = None,
+    on_stderr: str | None = None,
 ) -> dict:
     """짝 파동 하나: `off_cmd`와 `on_cmd`를 **동시에** 띄우고 각각에 독립된
     감시견을 스레드로 붙인다(`run_with_cap`을 그대로 재사용).
@@ -213,12 +238,17 @@ def run_pair_with_cap(
     """
     outcomes: dict[str, dict] = {}
 
-    def _watch(arm: str, cmd: list[str], env: dict | None) -> None:
-        outcomes[arm] = run_with_cap(cmd, cap_s, env=env)
+    def _watch(arm: str, cmd: list[str], env: dict | None,
+               out_p: str | None, err_p: str | None) -> None:
+        outcomes[arm] = run_with_cap(
+            cmd, cap_s, env=env, stdout_path=out_p, stderr_path=err_p
+        )
 
     threads = [
-        threading.Thread(target=_watch, args=("off", off_cmd, off_env)),
-        threading.Thread(target=_watch, args=("on", on_cmd, on_env)),
+        threading.Thread(target=_watch,
+                         args=("off", off_cmd, off_env, off_stdout, off_stderr)),
+        threading.Thread(target=_watch,
+                         args=("on", on_cmd, on_env, on_stdout, on_stderr)),
     ]
     for t in threads:
         t.start()
@@ -249,7 +279,12 @@ def run_wave(
     off_cmd = [analogcoder_bin, "--spec", off_spec_path, "--run-dir", off_run_dir]
     on_cmd = [analogcoder_bin, "--spec", on_spec_path, "--run-dir", on_run_dir]
     env = _child_env()
-    outcomes = run_pair_with_cap(off_cmd, on_cmd, cap_s, off_env=env, on_env=env)
+    os.makedirs(run_root, exist_ok=True)
+    outcomes = run_pair_with_cap(
+        off_cmd, on_cmd, cap_s, off_env=env, on_env=env,
+        off_stdout=f"{off_run_dir}.stdout", off_stderr=f"{off_run_dir}.stderr",
+        on_stdout=f"{on_run_dir}.stdout", on_stderr=f"{on_run_dir}.stderr",
+    )
     return {
         "off": {
             "arm": "off",
@@ -289,11 +324,18 @@ def main(argv: list[str] | None = None) -> int:
         "--off-copy", default=OFF_COPY_PATH,
         help="OFF 팔 파생 사본 경로(benchmarks/bandgap/ 안에 있어야 넷리스트 상대 경로가 풀린다)",
     )
+    parser.add_argument(
+        "--waves", default="1,2,3",
+        help="돌릴 파동 번호(쉼표). 기본 1,2,3. 백엔드 고장 등으로 특정 파동만 "
+             "다시 돌려야 할 때 쓴다 - 사전 등록의 k=3 을 바꾸는 것이 아니라 "
+             "일어나지 않은 런을 채우는 용도다.",
+    )
     args = parser.parse_args(argv)
+    waves = [int(x) for x in args.waves.split(",") if x.strip()]
 
     off_spec_path = write_off_copy(args.slot, args.off_copy)
     try:
-        for index in (1, 2, 3):
+        for index in waves:
             records = run_wave(
                 index, off_spec_path, args.slot,
                 run_root=args.run_root,
