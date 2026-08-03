@@ -737,6 +737,35 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
     `spec_seed_*` variants against the 45-corner worst case (no new simulation) puts
     `spec_seed_buf0_droop` first — spread `19.9324 → 31.6032` (**1.59×**), and it is
     already verified localised and solvable.
+  - **That slot was built and run, and the A/B was REJECTED — but the treatment arm
+    was never once observed, so do not read the rejection as "reduction loses".**
+    6 runs (`benchmarks/bandgap/spec_seed_buf0_droop_45.yaml`, reduction on/off × 3):
+    **5 of 6 hit the pre-registered 40-minute cap**, leaving one observed OFF run and
+    **zero** observed ON runs. The rule was applied literally — precondition held,
+    both acceptance clauses failed, reject — and the cap came from a cost model that
+    was **wrong by 4×** (measured: ~10 min per outer iteration, and this slot needs
+    5–6 iterations off / more on, so **60–100 min per run**; LLM latency dominates,
+    not SPICE). `2026-08-03-reduction45-benefit-results.md`.
+  - **What that one observed run bought is the thing this repo had only projected:
+    a nominal-only mid loop declaring PASS on a deck whose real worst corner misses
+    by 75%.** `off_3` drove `vbg0_droop` to **12.5891** at nominal, called PASS, and
+    the 45-corner sweep measured **26.2401** at `ss/1.62/-40` against `<= 15` — the
+    nominal number was off by **2.08×**, with `orchestration_attempt.status == "PASS"`
+    followed by `pvt_final_sweep.overall_pass == False` in the history. **The failure
+    corner reduction exists to prevent is real and now reproduced end to end.** It is
+    one observation: an existence proof, never a frequency.
+  - Recorded as a side observation and **not** used in the verdict: `on_3` was at
+    `vbg0_droop` **14.4843** *at its worst corner* with all 22 criteria passing when
+    the cap killed it. The treatment arm was solving the honest problem and was cut
+    before its confirming sweep.
+  - **Three defects in that pre-registration, all worth carrying forward.** (a) the
+    cost model above; (b) `void` was hung on the precondition alone, so "precondition
+    held but the treatment arm has zero observations" fell through to a *reject*
+    whose plain meaning misdescribes what happened — a rule must be able to say "this
+    could not be measured"; (c) the accuracy clause's second half ("fewer than OFF")
+    **cannot fire**, because the precondition already guarantees `off_fail >= 1`, so
+    `on_fail == 0` makes it vacuously true. Check at pre-registration time that every
+    clause has an input it can reject on.
   Re-entry fired **zero** times. Of 22 criteria, 5
   drifted between entry and verdict sweep and **all 5 landed on corners already
   inside the set**. Pinned in `test_corner_reduction_bandgap_ngspice.py`.
@@ -1627,11 +1656,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-03: 1573
-  passed, 2 skipped, 9 deselected, 98.66 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-03: 1605
+  passed, 2 skipped, 9 deselected, 99.38 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
@@ -1642,7 +1671,7 @@ baseline — a genuine model capability gap, not a pipeline defect.
   the two new test functions it adds).
 - **A drift guard is updated in one order only**: confirm the new inputs pass the
   gate, *then* raise the count.
-  `test_every_shipped_benchmark_control_block_is_accepted` counts 56 control blocks
-  across 15 specs (42 → 47 → 52 → 56); each bump verified 0 rejections first.
+  `test_every_shipped_benchmark_control_block_is_accepted` counts 61 control blocks
+  across 16 specs (42 → 47 → 52 → 56 → 61); each bump verified 0 rejections first.
   Reverse the order and the guard stops preventing unaudited additions and becomes
   a comment that follows a number.
