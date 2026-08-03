@@ -1,0 +1,69 @@
+{
+ "benchmarks/bandgap/spec_corner_reduction_45.yaml": {
+  "testbenches": 5,
+  "criteria": 22,
+  "corners": 45,
+  "seed_corners": 10,
+  "points_per_tb": 12,
+  "sims_per_iteration": 60,
+  "sims_full_sweep": 225,
+  "ratio_iter_vs_sweep": 0.267,
+  "entry_sweep_overall_pass": true,
+  "seed_record_keys": [
+   "covered",
+   "dropped",
+   "epsilon",
+   "mode",
+   "points_per_tb",
+   "seed_size",
+   "tau",
+   "testbenches",
+   "total"
+  ],
+  "dropped": [],
+  "seed_labels": [
+   "None",
+   "ff/1.8/125.0",
+   "ff/1.98/-40.0",
+   "fs/1.98/-40.0",
+   "sf/1.62/-40.0",
+   "sf/1.62/125.0",
+   "sf/1.98/125.0",
+   "sf/1.98/27.0",
+   "ss/1.62/-40.0",
+   "ss/1.62/125.0"
+  ]
+ },
+ "benchmarks/bandgap/spec_corner_reduction.yaml": {
+  "testbenches": 5,
+  "criteria": 22,
+  "corners": 9,
+  "seed_corners": 7,
+  "points_per_tb": 9,
+  "sims_per_iteration": 45,
+  "sims_full_sweep": 45,
+  "ratio_iter_vs_sweep": 1.0,
+  "entry_sweep_overall_pass": true,
+  "seed_record_keys": [
+   "covered",
+   "dropped",
+   "epsilon",
+   "mode",
+   "points_per_tb",
+   "seed_size",
+   "tau",
+   "testbenches",
+   "total"
+  ],
+  "dropped": [],
+  "seed_labels": [
+   "None",
+   "ff/1.62/27.0",
+   "ff/1.8/27.0",
+   "ff/1.98/27.0",
+   "ss/1.62/27.0",
+   "ss/1.8/27.0",
+   "ss/1.98/27.0"
+  ]
+ }
+}
