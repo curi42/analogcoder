@@ -1,0 +1,635 @@
+{
+ "rows": [
+  {
+   "corner": "tt/1.62/-40.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.58836,
+    0.72127,
+    1.40493
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.62/27.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.52982,
+    0.6816,
+    1.39179
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.62/125.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.44885,
+    0.63775,
+    1.37711
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.8/-40.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.59729,
+    0.71415,
+    1.60551
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.8/27.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.53992,
+    0.67398,
+    1.58214
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.8/125.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.46051,
+    0.6296,
+    1.55677
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.98/-40.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.60616,
+    0.70695,
+    1.79361
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.98/27.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.54986,
+    0.66623,
+    1.76512
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "tt/1.98/125.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.4719,
+    0.62136,
+    1.73302
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.62/-40.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.60713,
+    0.75647,
+    1.36819
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.62/27.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.54861,
+    0.72006,
+    1.35761
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.62/125.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.46772,
+    0.68084,
+    1.34244
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.8/-40.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.61574,
+    0.74983,
+    1.579
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.8/27.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.55833,
+    0.71294,
+    1.5537
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.8/125.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.47904,
+    0.67315,
+    1.52447
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.98/-40.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.62403,
+    0.74349,
+    1.77138
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.98/27.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.56768,
+    0.70604,
+    1.73958
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ss/1.98/125.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.48985,
+    0.66571,
+    1.70206
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.62/-40.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.57008,
+    0.686,
+    1.43069
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.62/27.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.51178,
+    0.64344,
+    1.41695
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.62/125.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.43097,
+    0.59549,
+    1.40219
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.8/-40.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.57967,
+    0.67793,
+    1.62487
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.8/27.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.52256,
+    0.63479,
+    1.60348
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.8/125.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.44331,
+    0.58634,
+    1.58032
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.98/-40.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.58969,
+    0.66921,
+    1.8099
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.98/27.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.53375,
+    0.62544,
+    1.78435
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "ff/1.98/125.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.45582,
+    0.57665,
+    1.75564
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.62/-40.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.56192,
+    0.67474,
+    1.33922
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.62/27.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.50357,
+    0.63251,
+    1.32891
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.62/125.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.42261,
+    0.58527,
+    1.31423
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.8/-40.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.57147,
+    0.66684,
+    1.5628
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.8/27.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.51428,
+    0.62412,
+    1.53345
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.8/125.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.43484,
+    0.57642,
+    1.50102
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.98/-40.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.58143,
+    0.65842,
+    1.76105
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.98/27.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.52536,
+    0.61512,
+    1.72418
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "sf/1.98/125.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.44718,
+    0.56711,
+    1.68186
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.62/-40.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.61543,
+    0.76808,
+    1.44663
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.62/27.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.55691,
+    0.73138,
+    1.43348
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.62/125.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.47615,
+    0.69158,
+    1.4187
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.8/-40.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.62409,
+    0.76135,
+    1.63597
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.8/27.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.5667,
+    0.72418,
+    1.61654
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.8/125.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.48754,
+    0.68377,
+    1.59484
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.98/-40.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.63242,
+    0.75475,
+    1.8183
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.98/27.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.57612,
+    0.71701,
+    1.79524
+   ],
+   "n_crossings": 3
+  },
+  {
+   "corner": "fs/1.98/125.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "status": "ok",
+   "n_points": 501,
+   "crossings": [
+    0.49842,
+    0.67606,
+    1.76882
+   ],
+   "n_crossings": 3
+  }
+ ],
+ "no_data": []
+}
