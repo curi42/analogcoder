@@ -727,6 +727,13 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
   reduction off the mid loop simulates one nominal point per testbench, so enabling
   it is **5 → 60, a 12× mid-loop cost**, bought against catching corner failures
   early. `2026-08-03-reduction45-precondition.md`.
+  Re-entry fired **zero** times **on that 9-corner spec**. Of 22 criteria, 5
+  drifted between entry and verdict sweep and **all 5 landed on corners already
+  inside the set**. Pinned in `test_corner_reduction_bandgap_ngspice.py`.
+  **Those 6 corners** — the 9-corner spec's seed, not the 45-corner slot's 10 —
+  **do not cover all 22 criteria**: three two-sided windows mean `vbgout_min`,
+  `vbg0_min` and `vbg1_min` are never judged in the mid loop no matter which
+  corners are selected. Read it as covering 19 of 22.
   - **That benefit has never been measured, and no shipped spec can measure it.**
     The one 45-corner spec declaring reduction **passes all 45 corners at baseline**,
     so a run ends PASS at iteration 0 with the machinery never exercised. And of 20
@@ -753,7 +760,11 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
     nominal number was off by **2.08×**, with `orchestration_attempt.status == "PASS"`
     followed by `pvt_final_sweep.overall_pass == False` in the history. **The failure
     corner reduction exists to prevent is real and now reproduced end to end.** It is
-    one observation: an existence proof, never a frequency.
+    one observation: an existence proof, never a frequency. The area phase is ruled
+    out as a confound, but not by the route the pre-registration assumed: it accepted
+    **zero** steps (`status: UNCHANGED`, `corner_confirmed: false`, landing identical
+    to the loop's `netlist_v2_*`), so the confirming sweep had no reason to run.
+    `corner_confirmed: false` means "nothing to confirm", not "confirmation failed".
   - Recorded as a side observation and **not** used in the verdict: `on_3` was at
     `vbg0_droop` **14.4843** *at its worst corner* with all 22 criteria passing when
     the cap killed it. The treatment arm was solving the honest problem and was cut
@@ -764,14 +775,14 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
     whose plain meaning misdescribes what happened — a rule must be able to say "this
     could not be measured"; (c) the accuracy clause's second half ("fewer than OFF")
     **cannot fire**, because the precondition already guarantees `off_fail >= 1`, so
-    `on_fail == 0` makes it vacuously true. Check at pre-registration time that every
-    clause has an input it can reject on.
-  Re-entry fired **zero** times. Of 22 criteria, 5
-  drifted between entry and verdict sweep and **all 5 landed on corners already
-  inside the set**. Pinned in `test_corner_reduction_bandgap_ngspice.py`.
-  **Those 6 corners do not cover all 22 criteria**: three two-sided windows mean
-  `vbgout_min`, `vbg0_min` and `vbg1_min` are never judged in the mid loop no matter
-  which corners are selected. Read it as covering 19 of 22.
+    `on_fail == 0` makes it vacuously true; and (d) the cost metric's own
+    "final sweep(s)" term **cannot contribute** — the excluded area phase runs the
+    same full grid on the same deck immediately before it, so the final sweep is
+    entirely cache hits (measured on `off_3`: area entry sweep **0 hits / 225
+    misses**, final sweep **225 hits / 0 misses**), while the 1.5× threshold was
+    derived from *saving* that 225-sim sweep. Threshold and metric point at different
+    quantities. Check at pre-registration time that every clause — and every term of
+    every metric — has an input it can take a non-trivial value on.
 - **Re-entry is not reachable in the argmax regime on this benchmark, and that
   asymmetry is the useful fact.** Growth requires a *failing* criterion whose argmax
   sits outside the set — and if it is inside, the mid loop would have failed there
@@ -1408,11 +1419,18 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `vbg1` = 1.084V). Uses `pnp_05v5` and `res_high_po`; every capacitor is an nfet
   or pfet MOS cap, never MiM. See
   `2026-07-26-bandgap-benchmark-and-scoped-refdes-design.md`.
-  - `spec.yaml` passes everywhere; the three `spec_seed_*.yaml` variants each
+  - `spec.yaml` passes everywhere; the four `spec_seed_*.yaml` criterion-tightening variants each
     tighten one criterion whose only fix lives in one subckt, verified both
     solvable and localised — growing `BUF_N.Xcl` does nothing for `vbg0_droop`,
     only `BUF_P.Xcl` does. `spec_seed_tc.yaml` is deliberately the coupled one:
     `Rp/R1` fixes TC but drags `vbgout` and `vbg1` with it.
+  - `spec_seed_buf0_droop_45.yaml` — `spec_seed_buf0_droop.yaml` plus the 45-corner
+    grid and a `corner_reduction:` block, and **nothing else** (the added blocks are
+    byte-identical to `spec_corner_reduction_45.yaml`'s). It is the measurement slot
+    for the 2026-08-03 reduction A/B, not a tuning benchmark: its 45-corner baseline
+    fails **only** `vbg0_droop` (31.6032 at `ss/1.62/-40`), which is what makes both
+    arms have work to do. **Do not quote an area or timing number from this slot as
+    shipped-spec performance.**
   - `spec.yaml` and `spec_pvt.yaml` carry the `optimize:` block;
     `quiescent_current` sits at 212.99 µA against a 300 µA threshold on purpose.
     `spec_pvt.yaml` is the one that can optimize; the corner-less `spec.yaml` is
