@@ -68,10 +68,16 @@ SIM_WORKERS = "5"
 
 
 def _child_env() -> dict:
-    """짝 파동의 두 자식에게 줄 환경 - 부모 환경 그대로에
-    `ANALOGCODER_SIM_WORKERS`만 얹는다. 호출마다 새 dict를 만들어 두 자식이
-    서로 다른 dict 객체를 받게 한다(값은 같다) - 한쪽이 자기 환경을 바꿔도
-    다른 쪽에 번지지 않게."""
+    """짝 파동의 두 자식에게 줄 환경 - 부모 환경의 **사본**에
+    `ANALOGCODER_SIM_WORKERS`만 얹는다. 사본이므로 부모 `os.environ`은
+    오염되지 않는다.
+
+    **호출부(`run_wave`)는 이것을 파동당 한 번만 부르고 두 자식에게 같은 dict
+    객체를 넘긴다.** 사전 등록이 요구하는 것은 "양쪽 팔에 같은 값"이고 그것은
+    만족되며, `subprocess.Popen`은 넘겨받은 dict를 변형하지 않는다. 이 독스트링이
+    한때 "호출마다 새 dict를 만들어 두 자식이 서로 다른 객체를 받게 한다"고
+    적고 있었는데 호출부는 그렇게 하지 않았다 - 진술과 실행이 어긋난 것을
+    코드 리뷰가 잡았고, 실행 쪽이 맞으므로 진술을 고쳤다."""
     env = dict(os.environ)
     env["ANALOGCODER_SIM_WORKERS"] = SIM_WORKERS
     return env
