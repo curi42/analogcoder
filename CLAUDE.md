@@ -1177,20 +1177,26 @@ recorded rather than deleted.
   is *why*, and it is arithmetic, not statistics: **the strategy proposes candidates
   whose objective cannot change.** `_next_value` moves a knob `×0.9` down and
   `/0.9` up, so pairing a device's `L` with its own `W` gives
-  `0.9L × W/0.9 = LW` — **area exactly unchanged** (measured difference `0.0`).
-  And the partner *is* always that same device: `rank_by_area_gain` gives `L` and
-  `W` identical gain, so sorting puts them adjacent — **83 of 83 devices on slot A,
-  no exceptions** — and `_try_partners` takes `knobs[i+1:i+1+partners]`. So every
-  `partners=1` candidate is area-neutral, `accept_step` requires the objective to
-  fall, and the 5 acceptances came from the proposal being written at **6
-  significant figures** (relative `2.7e-07`); the pair whose rounding went the other
-  way was refused as *"not below the current best"*. **Acceptance was decided by
-  rounding direction, not by search.** Slot A's apparent +0.855 %p win is not a
-  search win either: its nominal landing (9.6274e-09) is *worse* than the control's
+  `0.9L × W/0.9 = LW` — **area exactly unchanged** (`0.9 × 17.2186` times
+  `40 / 0.9` against `17.2186 × 40`, difference `0.0`; the equality holds at full
+  precision only, and the digits the step event prints are truncated to 6 — that
+  truncation is the residue below). And the partner is *usually* that same device:
+  `rank_by_area_gain` gives `L` and `W` identical gain, so sorting puts them
+  adjacent — **83 of 83 devices on slot A, no exceptions** — and `_try_partners`
+  takes `knobs[i+1:i+1+partners]`. So when the lead is the **first** of its own
+  `(L, W)` pair the partner is that pair's other half and the candidate is
+  area-neutral; when the lead is the second, the partner is the *next* device
+  (**2 of the 8 `partners=1` attempts**, both refused on a criterion, not on area).
+  `accept_step` requires the objective to fall, so the 5 acceptances — **all of
+  them same-device** — came from the proposal being written at **6 significant
+  figures** (relative `2.7e-07`); the pair whose rounding went the other way was
+  refused as *"not below the current best"*. **Acceptance was decided by rounding
+  direction, not by search.** Slot A's apparent +0.855 %p win is not a search win
+  either: its nominal landing (9.6274e-09) is *worse* than the control's
   (8.8898e-09), and it only led on the final number because the control's extra
-  steps failed corner confirmation and bisection discarded six. 11 cross-device
-  compound attempts fired and **all 11 were rejected**, and none of them reached the
-  block-crossing pairs above. Full numbers:
+  steps failed corner confirmation and bisection discarded six. **12** cross-device
+  compound attempts fired (A/1 1, A/3 5, B/1 1, B/3 5) and **all 12 were rejected**,
+  and none of them reached the block-crossing pairs above. Full numbers:
   `2026-08-02-compound-step-search-results.md`.
   - **The pre-registration's precondition counted acceptances without asking
     whether they moved the objective**, so it was satisfied by those five

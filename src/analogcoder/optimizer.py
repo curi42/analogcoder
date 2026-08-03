@@ -1214,7 +1214,25 @@ def _compound_fallback(partners: int) -> SearchStrategy:
     `accept_step`이 이미 요구하므로 여기서 검사하지 않는다.
 
     `partners=0`은 `coordinate_descent`와 같아야 하며, 그것은 주장이 아니라
-    `test_partners_zero_is_byte_for_byte_coordinate_descent`가 못박는다."""
+    `test_partners_zero_is_byte_for_byte_coordinate_descent`가 못박는다.
+
+    **이 전략은 측정으로 기각됐다**(`2026-08-02-compound-step-search-results.md`).
+    기본 경로에서는 도달하지 않고 `search_strategy`로 명시해야만 돈다. 남겨 둔
+    이유는 다음 사전 등록이 팔을 다시 세우지 않고 재실행할 수 있게 하기 위해서다.
+    기각의 내용은 "부호가 섞인 2노브 스텝이 나쁘다"가 아니라 **상대를 순위의 다음
+    칸에서 고르는 규칙**이 (a) 대개 같은 소자의 다른 치수를 집어 면적이 구조적으로
+    불변인 후보를 만들고(`0.9L × W/0.9 = LW`), (b) 겨냥한 블록 경계 결합에 닿지
+    못한다는 것이다. 고치려면 상대 선택 규칙을 바꿔야 하고, 그것은 새 사전 등록의
+    몫이다.
+
+    로그 모양에 대해 알아 둘 것 둘. 예산이 `_try_partners` 안에서 마르면 이 전략은
+    `{label}_budget_exhausted`를 **두 번** 낸다 - 파트너에서 한 번, `break` 뒤
+    다음 리드에서 한 번. 대조군은 한 번이다. 예산도 시뮬도 더 쓰지 않고 판정에도
+    영향이 없지만, 두 이벤트의 `refdes`가 각각 파트너와 다음 리드라 "예산이 마를
+    때 무엇을 밀고 있었나"가 모호하다. 그리고 순위 **맨 끝** 노브에서는 슬라이스가
+    비어 아무 이벤트 없이 지나간다(이번 측정에서는 예산이 훨씬 먼저 말라 도달하지
+    않았고, `{label}_ranking`의 길이와 스텝의 `refdes`로 유도할 수 있다). 둘 다
+    기각된 전략의 성질이라 여기서 고치지 않는다."""
 
     async def strategy(run: SearchRun) -> None:
         for index, knob in enumerate(run.knobs):
