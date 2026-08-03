@@ -22,6 +22,7 @@ from reduction45_aggregate import (  # noqa: E402
     build_row,
     check_accuracy,
     check_cost,
+    check_measurability,
     check_precondition,
     corner_seed_dropped,
     judge,
@@ -30,6 +31,7 @@ from reduction45_aggregate import (  # noqa: E402
     probe_promoted_count,
     reentry_count,
     sim_counts,
+    total_outer_iterations,
 )
 
 
@@ -220,26 +222,36 @@ def test_reentry_count_counts_corner_set_grown():
 
 
 # ---------------------------------------------------------------------------
-# 판정 규칙: 선행 조건 P, 정확성+비용 둘 다, killed_by_cap
+# 판정 규칙 (v2): 선행 조건 P1+P2, 정확성(단일 절)+비용(반복 수), killed_by_cap
+#
+# v1 -> v2 로 바뀐 것과 그래서 바뀐 시험:
+#   - `loop_sims` -> `total_outer_iterations`: 비용 축이 바뀌었으므로 판정에
+#     쓰이는 모든 행 픽스처가 `loop_sims=500/550/2000` 대신 실측과 같은
+#     자릿수인 `total_outer_iterations=4/5/7`을 쓰도록 고쳤다(§비용 축).
+#   - `test_accept_requires_both_accuracy_and_cost_not_just_one`의 Case B
+#     주석("정확성이 OFF와 같다")은 v1의 둘째 절을 가리키던 말이라 지웠다 -
+#     v2는 그 절이 아예 없으므로 Case B가 기각되는 이유는 여전히
+#     "on_fail_count(1) != 0" 하나뿐이다(로직은 안 바뀌었다, 주석만 정리).
 # ---------------------------------------------------------------------------
 
-def _ok_row(arm, index, *, mid_fail, loop_sims):
+def _ok_row(arm, index, *, mid_fail, total_outer_iterations):
     return {
         "arm": arm, "index": index, "row_status": "ok", "drop_reason": None,
-        "mid_pass_sweep_fail": mid_fail, "loop_sims": loop_sims,
+        "mid_pass_sweep_fail": mid_fail,
+        "total_outer_iterations": total_outer_iterations,
     }
 
 
 def _dropped_row(arm, index, reason):
     return {
         "arm": arm, "index": index, "row_status": "dropped", "drop_reason": reason,
-        "mid_pass_sweep_fail": None, "loop_sims": None,
+        "mid_pass_sweep_fail": None, "total_outer_iterations": None,
     }
 
 
 def test_precondition_void_when_off_never_shows_the_event():
-    off_rows = [_ok_row("off", i, mid_fail=False, loop_sims=500) for i in (1, 2, 3)]
-    on_rows = [_ok_row("on", i, mid_fail=False, loop_sims=550) for i in (1, 2, 3)]
+    off_rows = [_ok_row("off", i, mid_fail=False, total_outer_iterations=4) for i in (1, 2, 3)]
+    on_rows = [_ok_row("on", i, mid_fail=False, total_outer_iterations=5) for i in (1, 2, 3)]
 
     result = judge(off_rows, on_rows)
 
@@ -249,9 +261,9 @@ def test_precondition_void_when_off_never_shows_the_event():
 
 def test_precondition_holds_with_one_off_hit():
     check = check_precondition([
-        _ok_row("off", 1, mid_fail=True, loop_sims=500),
-        _ok_row("off", 2, mid_fail=False, loop_sims=500),
-        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+        _ok_row("off", 1, mid_fail=True, total_outer_iterations=4),
+        _ok_row("off", 2, mid_fail=False, total_outer_iterations=4),
+        _ok_row("off", 3, mid_fail=False, total_outer_iterations=4),
     ])
     assert check["holds"] is True
     assert check["off_hit_count"] == 1
@@ -259,28 +271,29 @@ def test_precondition_holds_with_one_off_hit():
 
 def test_accept_requires_both_accuracy_and_cost_not_just_one():
     off_rows = [
-        _ok_row("off", 1, mid_fail=True, loop_sims=500),
-        _ok_row("off", 2, mid_fail=True, loop_sims=500),
-        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+        _ok_row("off", 1, mid_fail=True, total_outer_iterations=4),
+        _ok_row("off", 2, mid_fail=True, total_outer_iterations=4),
+        _ok_row("off", 3, mid_fail=False, total_outer_iterations=4),
     ]
-    # Case A: 정확성은 만족하지만(0건, OFF의 2건보다 적다) 비용이 1.5배를
-    # 넘는다 -> 기각.
+    # Case A: 정확성은 만족하지만(사건 0건) 비용이 1.5배를 넘는다(7/4=1.75) ->
+    # 기각.
     on_rows_cost_fails = [
-        _ok_row("on", 1, mid_fail=False, loop_sims=2000),
-        _ok_row("on", 2, mid_fail=False, loop_sims=2000),
-        _ok_row("on", 3, mid_fail=False, loop_sims=2000),
+        _ok_row("on", 1, mid_fail=False, total_outer_iterations=7),
+        _ok_row("on", 2, mid_fail=False, total_outer_iterations=7),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=7),
     ]
     result_a = judge(off_rows, on_rows_cost_fails)
     assert result_a["accuracy"]["holds"] is True
     assert result_a["cost"]["holds"] is False
     assert result_a["verdict"] == "rejected"
 
-    # Case B: 비용은 만족하지만(1.5배 이내) 정확성이 OFF와 같다(둘 다 1건) ->
+    # Case B: 비용은 만족하지만(5/4=1.25, 1.5배 이내) 정확성이 불성립이다
+    # (사건 1건 - v2는 "ON 사건 0건" 단일 절이므로 이것만으로 기각된다) ->
     # 기각.
     on_rows_accuracy_fails = [
-        _ok_row("on", 1, mid_fail=True, loop_sims=550),
-        _ok_row("on", 2, mid_fail=False, loop_sims=550),
-        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+        _ok_row("on", 1, mid_fail=True, total_outer_iterations=5),
+        _ok_row("on", 2, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=5),
     ]
     result_b = judge(off_rows, on_rows_accuracy_fails)
     assert result_b["cost"]["holds"] is True
@@ -289,9 +302,9 @@ def test_accept_requires_both_accuracy_and_cost_not_just_one():
 
     # Case C: 둘 다 만족 -> 채택.
     on_rows_both = [
-        _ok_row("on", 1, mid_fail=False, loop_sims=550),
-        _ok_row("on", 2, mid_fail=False, loop_sims=550),
-        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+        _ok_row("on", 1, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 2, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=5),
     ]
     result_c = judge(off_rows, on_rows_both)
     assert result_c["verdict"] == "accepted"
@@ -299,14 +312,14 @@ def test_accept_requires_both_accuracy_and_cost_not_just_one():
 
 def test_killed_by_cap_run_blocks_acceptance():
     off_rows = [
-        _ok_row("off", 1, mid_fail=True, loop_sims=500),
-        _ok_row("off", 2, mid_fail=False, loop_sims=500),
-        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+        _ok_row("off", 1, mid_fail=True, total_outer_iterations=4),
+        _ok_row("off", 2, mid_fail=False, total_outer_iterations=4),
+        _ok_row("off", 3, mid_fail=False, total_outer_iterations=4),
     ]
     on_rows = [
         _dropped_row("on", 1, "killed_by_cap"),
-        _ok_row("on", 2, mid_fail=False, loop_sims=550),
-        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+        _ok_row("on", 2, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=5),
     ]
     result = judge(off_rows, on_rows)
     assert result["accuracy"]["holds"] is False
@@ -315,18 +328,167 @@ def test_killed_by_cap_run_blocks_acceptance():
 
 def test_dropped_off_rows_do_not_inflate_off_failure_count():
     """OFF 쪽 탈락 행은 실패로 세지 않는다(ON에 유리하게 만들지 않는 방향) -
-    떨어진 표본을 실패로 세면 OFF의 실패 건수가 부풀어 ON이 이기기 쉬워진다."""
+    떨어진 표본을 실패로 세면 OFF의 실패 건수가 부풀어 ON이 이기기 쉬워진다.
+    v2에서 `off_fail_count`는 더 이상 채택 여부를 결정하지 않지만(둘째 절
+    삭제) 여전히 기록으로 계산되므로 이 시험은 그대로 유효하다."""
     off_rows = [
         _dropped_row("off", 1, "no_result_json"),
-        _ok_row("off", 2, mid_fail=True, loop_sims=500),
-        _ok_row("off", 3, mid_fail=False, loop_sims=500),
+        _ok_row("off", 2, mid_fail=True, total_outer_iterations=4),
+        _ok_row("off", 3, mid_fail=False, total_outer_iterations=4),
     ]
     check = check_accuracy(off_rows, [
-        _ok_row("on", 1, mid_fail=False, loop_sims=550),
-        _ok_row("on", 2, mid_fail=False, loop_sims=550),
-        _ok_row("on", 3, mid_fail=False, loop_sims=550),
+        _ok_row("on", 1, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 2, mid_fail=False, total_outer_iterations=5),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=5),
     ])
     assert check["off_fail_count"] == 1  # 탈락 행은 안 셌다
+
+
+# ---------------------------------------------------------------------------
+# v2 신설: P2(측정이 가능했는가) - 어느 팔이든 관측 런이 0건이면 void
+# ---------------------------------------------------------------------------
+
+def test_p2_void_when_on_arm_never_observed():
+    """v1이 실제로 겪은 경로: OFF는 사건을 1건 관측했다(P1 성립)지만 ON은
+    3런 모두 상한에 걸려 죽어 한 번도 관측되지 않았다. v1 규칙으로는 이것이
+    accuracy에서 "on_fail=3(탈락은 사건으로 셈)"으로 흘러 `rejected`가
+    나왔다(실제 v1 결과 문서의 판정). v2는 P2가 먼저 이것을 잡아 `void`를
+    낸다."""
+    off_rows = [
+        _ok_row("off", 1, mid_fail=True, total_outer_iterations=4),
+        _dropped_row("off", 2, "killed_by_cap"),
+        _dropped_row("off", 3, "killed_by_cap"),
+    ]
+    on_rows = [
+        _dropped_row("on", 1, "killed_by_cap"),
+        _dropped_row("on", 2, "killed_by_cap"),
+        _dropped_row("on", 3, "killed_by_cap"),
+    ]
+
+    result = judge(off_rows, on_rows)
+
+    assert result["verdict"] == "void"
+    assert result["measurability"]["holds"] is False
+    assert result["measurability"]["on_runs_observed"] == 0
+    assert result["measurability"]["off_runs_observed"] == 1
+    # P1은(OFF가 1건 관측됐고 그 안에 사건이 있으므로) 성립한다 - P2 단독으로
+    # void를 유발했다는 것을 보인다.
+    assert result["precondition"]["holds"] is True
+
+
+def test_p2_void_when_off_arm_never_observed():
+    off_rows = [_dropped_row("off", i, "killed_by_cap") for i in (1, 2, 3)]
+    on_rows = [_ok_row("on", i, mid_fail=False, total_outer_iterations=4) for i in (1, 2, 3)]
+
+    result = judge(off_rows, on_rows)
+
+    assert result["verdict"] == "void"
+    assert result["measurability"]["holds"] is False
+    assert result["measurability"]["off_runs_observed"] == 0
+
+
+def test_check_measurability_holds_when_both_arms_have_at_least_one_observed_run():
+    off_rows = [
+        _ok_row("off", 1, mid_fail=True, total_outer_iterations=4),
+        _dropped_row("off", 2, "killed_by_cap"),
+        _dropped_row("off", 3, "killed_by_cap"),
+    ]
+    on_rows = [
+        _dropped_row("on", 1, "killed_by_cap"),
+        _dropped_row("on", 2, "killed_by_cap"),
+        _ok_row("on", 3, mid_fail=False, total_outer_iterations=5),
+    ]
+    check = check_measurability(off_rows, on_rows)
+    assert check["holds"] is True
+    assert check["off_runs_observed"] == 1
+    assert check["on_runs_observed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# v2: 정확성은 단일 절 - 둘째 절("OFF 보다 적다")이 있었다면 거절했을 입력이
+# v2에서는 통과함을 직접 보인다(변이 감지: 이 시험은 v1 수식으로 되돌리면
+# 깨진다).
+# ---------------------------------------------------------------------------
+
+def test_accuracy_holds_on_zero_on_fail_regardless_of_off_fail_count():
+    """`check_accuracy`는 `off_rows`/`on_rows`를 직접 받으므로 선행 조건 P1을
+    거치지 않고도 `off_fail_count == 0`인 입력을 만들 수 있다(실제
+    `judge()` 경로에서는 P1이 이를 막지만, 함수 자체의 계약을 시험한다).
+    v1 수식이었다면 `holds = on_fail==0 and on_fail<off_fail`이므로
+    `0 < 0`이 거짓이라 여기서 기각됐을 것이다 - v2는 그 절이 없으므로
+    채택된다."""
+    off_rows = [_ok_row("off", i, mid_fail=False, total_outer_iterations=4) for i in (1, 2, 3)]
+    on_rows = [_ok_row("on", i, mid_fail=False, total_outer_iterations=4) for i in (1, 2, 3)]
+
+    check = check_accuracy(off_rows, on_rows)
+
+    assert check["off_fail_count"] == 0
+    assert check["on_fail_count"] == 0
+    assert check["holds"] is True
+
+
+# ---------------------------------------------------------------------------
+# v2: 비용은 `total_outer_iterations` 로 계산 - `loop_sims`가 아니다(변이
+# 감지: `loop_sims`를 읽도록 되돌리면 이 시험의 비율이 반대로 나온다).
+# ---------------------------------------------------------------------------
+
+def test_cost_uses_total_outer_iterations_not_loop_sims():
+    """OFF는 `loop_sims`가 크고(1000) `total_outer_iterations`는 작다(4).
+    ON은 반대로 `loop_sims`가 작고(100) `total_outer_iterations`는 크다(10,
+    OFF의 2.5배 - 1.5배 문턱을 넘는다). `check_cost`가 여전히 `loop_sims`를
+    읽는다면 비율이 100/1000=0.1로 나와 채택 쪽으로 판정될 것이다 - 실제로는
+    반복 수 축을 읽으므로 기각돼야 한다."""
+    off_rows = [
+        {
+            "arm": "off", "index": i, "row_status": "ok",
+            "total_outer_iterations": 4, "loop_sims": 1000,
+        }
+        for i in (1, 2, 3)
+    ]
+    on_rows = [
+        {
+            "arm": "on", "index": i, "row_status": "ok",
+            "total_outer_iterations": 10, "loop_sims": 100,
+        }
+        for i in (1, 2, 3)
+    ]
+
+    check = check_cost(off_rows, on_rows)
+
+    assert check["off_median"] == 4
+    assert check["on_median"] == 10
+    assert check["ratio"] == pytest.approx(2.5)
+    assert check["holds"] is False
+
+
+# ---------------------------------------------------------------------------
+# total_outer_iterations - orchestration_attempt 이벤트들의 iterations_used
+# 합. 이벤트가 없으면 None(0으로 지어내지 않는다).
+# ---------------------------------------------------------------------------
+
+def test_total_outer_iterations_sums_across_reentries():
+    events = [
+        _ev("orchestration_attempt", attempt=0, status="PASS", iterations_used=4),
+        _ev("pvt_final_sweep", overall_pass=False),
+        _ev("corner_set_grown", attempt=1),
+        _ev("orchestration_attempt", attempt=1, status="PASS", iterations_used=2),
+        _ev("pvt_final_sweep", overall_pass=True),
+    ]
+    assert total_outer_iterations(events) == 6
+
+
+def test_total_outer_iterations_none_when_no_attempt_event():
+    """상한에 걸려 죽은 실행처럼 `orchestration_attempt` 이벤트가 하나도
+    없으면 `None` - "반복을 0회 했다"와 "이벤트가 없다"는 다른 사실이므로
+    0으로 지어내지 않는다(실측: 상한에 걸려 죽은 `off_1`은 이 이벤트가
+    0건이다)."""
+    assert total_outer_iterations([]) is None
+    assert total_outer_iterations([_ev("sim_cache", hit=True)]) is None
+
+
+def test_total_outer_iterations_treats_missing_field_as_zero_for_that_attempt():
+    events = [_ev("orchestration_attempt", attempt=0, status="PASS")]
+    assert total_outer_iterations(events) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +506,7 @@ def test_build_row_labels_missing_result_json(tmp_path):
     assert row["row_status"] == "dropped"
     assert row["drop_reason"] == "no_result_json"
     assert row["mid_pass_sweep_fail"] is None  # 지어내지 않는다
+    assert row["total_outer_iterations"] is None  # 탈락 행은 반복 수도 None
 
 
 def test_build_row_labels_killed_by_cap_even_if_result_json_exists(tmp_path):
@@ -373,11 +536,11 @@ def test_build_row_reads_a_real_result_and_history(tmp_path):
     events = [
         {"step": "sim_cache", "hit": False},
         {"step": "pvt_baseline_sweep", "overall_pass": False},
-        {"step": "orchestration_attempt", "attempt": 0, "status": "PASS"},
+        {"step": "orchestration_attempt", "attempt": 0, "status": "PASS", "iterations_used": 3},
         {"step": "sim_cache", "hit": False},
         {"step": "pvt_final_sweep", "overall_pass": False, "summary": "x"},
         {"step": "corner_set_grown", "attempt": 1},
-        {"step": "orchestration_attempt", "attempt": 1, "status": "PASS"},
+        {"step": "orchestration_attempt", "attempt": 1, "status": "PASS", "iterations_used": 2},
         {"step": "sim_cache", "hit": False},
         {"step": "pvt_final_sweep", "overall_pass": True, "summary": "ok"},
     ]
@@ -397,6 +560,8 @@ def test_build_row_reads_a_real_result_and_history(tmp_path):
     assert row["mid_pass_sweep_fail_attempts"] == 1
     assert row["reentry_count"] == 1
     assert row["loop_sims"] == 3
+    # 재진입 포함 총 바깥 반복 수: attempt 0의 3 + attempt 1(재진입)의 2 = 5.
+    assert row["total_outer_iterations"] == 5
     assert row["corner_confirmed"] is True
     assert row["landed_netlist_paths"] == {"dc_tc": "runs/x/netlist_v2.cir"}
 
@@ -513,20 +678,20 @@ def test_secondary_fields_do_not_change_judge_output():
     """M2 요구: 세 부수 필드를 바꿔도 `judge`의 출력이 바뀌지 않는다.
 
     두 판정 표본을 만든다 - 판정에 쓰이는 필드(`row_status`,
-    `mid_pass_sweep_fail`, `loop_sims`)는 완전히 같고, 세 부수 필드만 다르게
-    채운다. `judge`의 출력이 바이트 단위로 같아야 한다."""
+    `mid_pass_sweep_fail`, `total_outer_iterations`)는 완전히 같고, 세 부수
+    필드만 다르게 채운다. `judge`의 출력이 바이트 단위로 같아야 한다."""
     def _rows(secondary):
         off = [
             {
                 "arm": "off", "index": i, "row_status": "ok",
-                "mid_pass_sweep_fail": (i == 1), "loop_sims": 500, **secondary,
+                "mid_pass_sweep_fail": (i == 1), "total_outer_iterations": 4, **secondary,
             }
             for i in (1, 2, 3)
         ]
         on = [
             {
                 "arm": "on", "index": i, "row_status": "ok",
-                "mid_pass_sweep_fail": False, "loop_sims": 550, **secondary,
+                "mid_pass_sweep_fail": False, "total_outer_iterations": 5, **secondary,
             }
             for i in (1, 2, 3)
         ]

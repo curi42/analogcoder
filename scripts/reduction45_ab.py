@@ -1,6 +1,10 @@
-"""45코너 코너 축소 A/B 하니스 - `docs/superpowers/specs/2026-08-03-reduction45-benefit-design.md`
-가 정한 두 팔(OFF/ON)을 각 3회, `off_1, on_1, off_2, on_2, off_3, on_3` 순서로
-돌린다. **판정은 여기서 하지 않는다** - `scripts/reduction45_aggregate.py`가
+"""45코너 코너 축소 A/B 하니스 - v2 재측정
+(`docs/superpowers/specs/2026-08-03-reduction45-benefit-v2-design.md`)가 정한
+두 팔(OFF/ON)을 각 3회, **짝 단위 병렬 3파동**으로 돌린다:
+`(off_1 ∥ on_1) -> (off_2 ∥ on_2) -> (off_3 ∥ on_3)`. 한 파동 안에서 두 런이
+동시에 시작하고 **둘 다** 끝나야 다음 파동으로 간다 - v1의 직렬
+`off_1, on_1, off_2, on_2, off_3, on_3`에서 바뀐 점이다(§실행 방식). **판정은
+여기서 하지 않는다** - `scripts/reduction45_aggregate.py`가
 `result.json`/`history.jsonl`을 읽어 잠긴 규칙을 적용한다. 이 스크립트는
 실행만 한다.
 
@@ -9,7 +13,12 @@
 LLM 에이전트를 인프로세스로 부르면 한 run의 크래시가 하니스 전체를 죽이고,
 macOS에 coreutils의 `timeout`이 없어(이번 세션에서 `which timeout`/`which
 gtimeout` 둘 다 없음을 확인했다) 상한을 코드로 직접 감시해야 하는데 그것도
-자식 프로세스가 있어야 성립한다.
+자식 프로세스가 있어야 성립한다. 한 파동의 두 자식은 각각 독립된 감시견
+스레드(`run_pair_with_cap`)로 지켜진다 - 한쪽이 상한에 걸려 죽어도 다른 쪽
+감시는 멈추지 않고 계속 돈다.
+
+두 자식 모두 `ANALOGCODER_SIM_WORKERS=5`를 받는다(§실행 방식: "2런 × 5 = 10
+으로 코어 수와 같다 ... 양쪽 팔에 같은 값을 준다").
 
 이 파일은 `src/analogcoder/`를 import하지 않는다 - 실행 하니스는 그 경계
 밖에 있어야 한다(스펙을 읽어 팔 전환 정규식을 적용하는 것과 서브프로세스를
@@ -23,6 +32,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 SLOT_SPEC = "benchmarks/bandgap/spec_seed_buf0_droop_45.yaml"
@@ -41,18 +51,30 @@ ENABLED_TRUE_RE = re.compile(r"^(\s*enabled:\s*)true\s*$", re.MULTILINE)
 RUN_ROOT = "runs/reduction45"
 INVOCATIONS_PATH = os.path.join(RUN_ROOT, "invocations.jsonl")
 
-# 사전 등록: "상한: 실행 하나가 40분을 넘기면 timeout으로 기록하고 다음으로
-# 간다."
-CAP_SECONDS_DEFAULT = 40 * 60
+# v2 사전 등록 §상한: "런당 120분. 반복당 약 10분 ... MAX_OUTER_ITERATIONS가
+# 10이므로 상한이 아니라 반복 예산이 먼저 걸리는 것이 정상 종료 경로가
+# 된다." v1의 40분(실행당 15-25분으로 잡았던 잘못된 비용 모형)에서 바뀐
+# 값 - 플래그 자체는 그대로, 기본값만 바뀐다.
+CAP_SECONDS_DEFAULT = 120 * 60
 # 브리프: "SIGTERM -> 5초 -> SIGKILL"
 GRACE_SECONDS = 5.0
 POLL_INTERVAL_S = 0.5
 
 ANALOGCODER_BIN = os.path.join(".venv", "bin", "analogcoder")
 
-# 실행 순서. off_1, on_1, off_2, on_2, off_3, on_3 - "한 팔을 몰아서 돌리면
-# 환경 드리프트가 팔과 섞인다."
-ARM_SEQUENCE = [(arm, i) for i in (1, 2, 3) for arm in ("off", "on")]
+# v2 사전 등록 §실행 방식: "워커를 ANALOGCODER_SIM_WORKERS=5로 고정한다.
+# 2런 × 5 = 10으로 코어 수와 같다 ... 양쪽 팔에 같은 값을 준다."
+SIM_WORKERS = "5"
+
+
+def _child_env() -> dict:
+    """짝 파동의 두 자식에게 줄 환경 - 부모 환경 그대로에
+    `ANALOGCODER_SIM_WORKERS`만 얹는다. 호출마다 새 dict를 만들어 두 자식이
+    서로 다른 dict 객체를 받게 한다(값은 같다) - 한쪽이 자기 환경을 바꿔도
+    다른 쪽에 번지지 않게."""
+    env = dict(os.environ)
+    env["ANALOGCODER_SIM_WORKERS"] = SIM_WORKERS
+    return env
 
 
 def write_off_copy(src_path: str, dst_path: str = OFF_COPY_PATH) -> str:
@@ -77,23 +99,33 @@ def write_off_copy(src_path: str, dst_path: str = OFF_COPY_PATH) -> str:
     return dst_path
 
 
-def run_with_cap(cmd: list[str], cap_s: float, *, cwd: str | None = None) -> dict:
+def run_with_cap(
+    cmd: list[str],
+    cap_s: float,
+    *,
+    cwd: str | None = None,
+    env: dict | None = None,
+) -> dict:
     """자식을 백그라운드로 띄우고 경과를 재다가 상한을 넘기면 죽이는 감시견.
 
     브리프: "macOS 에 coreutils 의 timeout 이 없다(이번 세션에서 확인했다 -
-    which timeout 도 gtimeout 도 없다). 상한 40분은 감시견을 직접 써야 한다:
+    which timeout 도 gtimeout 도 없다). 상한은 감시견을 직접 써야 한다:
     자식을 백그라운드로 띄우고 경과를 재다가 SIGTERM -> 5초 -> SIGKILL 한다."
 
     자식을 새 프로세스 그룹으로 띄운다(`start_new_session=True`) - `analogcoder`가
     내부에서 ngspice를 서브프로세스로 또 띄우므로, 자식 하나만 죽이면 손자
     프로세스가 남을 수 있다. 신호는 그룹 전체(`os.killpg`)로 보낸다.
 
+    `env`가 `None`이면 `Popen` 기본값대로 부모 환경을 그대로 물려받는다(기존
+    호출부·시험과의 호환). v2 짝 파동 실행은 `_child_env()`가 만든
+    `ANALOGCODER_SIM_WORKERS=5`가 실린 dict를 넘긴다.
+
     반환: `{"exit": int | None, "killed_by_cap": bool, "elapsed_s": float}`.
     `exit`은 강제 종료된 경우에도 `proc.wait()`가 돌려주는 값을 그대로
     싣는다(음수 = 신호로 죽음) - 죽였다는 사실 자체는 `killed_by_cap`이 말한다.
     """
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
     killed = False
     try:
         while True:
@@ -149,30 +181,88 @@ def append_jsonl(path: str, record: dict) -> None:
         f.write(json.dumps(record, sort_keys=True) + "\n")
 
 
-def run_one(
-    arm: str,
+def run_pair_with_cap(
+    off_cmd: list[str],
+    on_cmd: list[str],
+    cap_s: float,
+    *,
+    off_env: dict | None = None,
+    on_env: dict | None = None,
+) -> dict:
+    """짝 파동 하나: `off_cmd`와 `on_cmd`를 **동시에** 띄우고 각각에 독립된
+    감시견을 스레드로 붙인다(`run_with_cap`을 그대로 재사용).
+
+    v2 사전 등록 §실행 방식: "각 파동은 두 런이 동시에 시작하고 둘 다 끝나면
+    다음 파동으로 간다"와 브리프의 "감시견은 두 자식에 각각 걸려야 한다 -
+    한쪽이 상한에 걸려도 다른 쪽은 계속 돌아야 하고, 둘 다 `killed_by_cap`이
+    개별로 기록돼야 한다"를 그대로 구현한다. 스레드 두 개를 띄우는 이유는
+    `run_with_cap`이 자기 자식이 끝나거나 상한에 걸릴 때까지 블로킹하기
+    때문이다 - 한 스레드가 감시하는 동안 다른 스레드의 감시가 멈추지 않는다.
+    (`_terminate_then_kill`의 SIGTERM 유예 5초 동안 그 스레드는 블로킹되지만,
+    다른 스레드는 자신의 자식을 계속 폴링한다 - GIL은 I/O 대기 중(`poll`/
+    `sleep`)에는 풀리므로 두 감시가 실질적으로 동시에 진행된다.)
+
+    반환: `{"off": {"exit", "killed_by_cap", "elapsed_s"}, "on": {...}}` -
+    `run_with_cap`의 반환 모양을 팔 이름으로 감싼 것.
+    """
+    outcomes: dict[str, dict] = {}
+
+    def _watch(arm: str, cmd: list[str], env: dict | None) -> None:
+        outcomes[arm] = run_with_cap(cmd, cap_s, env=env)
+
+    threads = [
+        threading.Thread(target=_watch, args=("off", off_cmd, off_env)),
+        threading.Thread(target=_watch, args=("on", on_cmd, on_env)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return outcomes
+
+
+def run_wave(
     index: int,
-    spec_path: str,
+    off_spec_path: str,
+    on_spec_path: str,
     *,
     run_root: str = RUN_ROOT,
     cap_s: float = CAP_SECONDS_DEFAULT,
     analogcoder_bin: str = ANALOGCODER_BIN,
 ) -> dict:
-    """런 하나: `<run_root>/<arm>_<index>`에 `analogcoder`를 서브프로세스로
-    띄우고 상한 안에서 감시한다. `invocations.jsonl` 한 줄의 모양을 그대로
-    돌려준다: `{arm, index, spec, exit, killed_by_cap, elapsed_s, run_dir}`
-    (브리프 Step 2)."""
-    run_dir = os.path.join(run_root, f"{arm}_{index}")
-    cmd = [analogcoder_bin, "--spec", spec_path, "--run-dir", run_dir]
-    outcome = run_with_cap(cmd, cap_s)
+    """파동 하나: `<run_root>/off_<index>`와 `<run_root>/on_<index>`에
+    `analogcoder`를 동시에 띄운다. 두 자식 모두 `_child_env()`가 만든
+    `ANALOGCODER_SIM_WORKERS=5` 환경을 받는다(§실행 방식: "양쪽 팔에 같은
+    값을 준다").
+
+    반환: `{"off": {arm, index, spec, exit, killed_by_cap, elapsed_s, run_dir},
+    "on": {...}}` - `invocations.jsonl` 한 줄의 모양 두 개(브리프 Step 2의
+    모양을 그대로 유지한다)."""
+    off_run_dir = os.path.join(run_root, f"off_{index}")
+    on_run_dir = os.path.join(run_root, f"on_{index}")
+    off_cmd = [analogcoder_bin, "--spec", off_spec_path, "--run-dir", off_run_dir]
+    on_cmd = [analogcoder_bin, "--spec", on_spec_path, "--run-dir", on_run_dir]
+    env = _child_env()
+    outcomes = run_pair_with_cap(off_cmd, on_cmd, cap_s, off_env=env, on_env=env)
     return {
-        "arm": arm,
-        "index": index,
-        "spec": spec_path,
-        "exit": outcome["exit"],
-        "killed_by_cap": outcome["killed_by_cap"],
-        "elapsed_s": outcome["elapsed_s"],
-        "run_dir": run_dir,
+        "off": {
+            "arm": "off",
+            "index": index,
+            "spec": off_spec_path,
+            "exit": outcomes["off"]["exit"],
+            "killed_by_cap": outcomes["off"]["killed_by_cap"],
+            "elapsed_s": outcomes["off"]["elapsed_s"],
+            "run_dir": off_run_dir,
+        },
+        "on": {
+            "arm": "on",
+            "index": index,
+            "spec": on_spec_path,
+            "exit": outcomes["on"]["exit"],
+            "killed_by_cap": outcomes["on"]["killed_by_cap"],
+            "elapsed_s": outcomes["on"]["elapsed_s"],
+            "run_dir": on_run_dir,
+        },
     }
 
 
@@ -183,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--invocations", default=INVOCATIONS_PATH)
     parser.add_argument(
         "--cap-s", type=float, default=CAP_SECONDS_DEFAULT,
-        help="런 하나의 상한(초). 기본 40분 - 사전 등록값.",
+        help="런 하나의 상한(초). 기본 120분 - v2 사전 등록값(플래그 자체는 v1과 동일).",
     )
     parser.add_argument(
         "--analogcoder-bin", default=ANALOGCODER_BIN,
@@ -197,21 +287,22 @@ def main(argv: list[str] | None = None) -> int:
 
     off_spec_path = write_off_copy(args.slot, args.off_copy)
     try:
-        for arm, index in ARM_SEQUENCE:
-            spec_path = off_spec_path if arm == "off" else args.slot
-            record = run_one(
-                arm, index, spec_path,
+        for index in (1, 2, 3):
+            records = run_wave(
+                index, off_spec_path, args.slot,
                 run_root=args.run_root,
                 cap_s=args.cap_s,
                 analogcoder_bin=args.analogcoder_bin,
             )
-            append_jsonl(args.invocations, record)
-            print(
-                f"{arm}_{index}: exit={record['exit']} "
-                f"killed_by_cap={record['killed_by_cap']} "
-                f"elapsed_s={record['elapsed_s']:.1f}",
-                file=sys.stderr,
-            )
+            for arm in ("off", "on"):
+                record = records[arm]
+                append_jsonl(args.invocations, record)
+                print(
+                    f"{arm}_{index}: exit={record['exit']} "
+                    f"killed_by_cap={record['killed_by_cap']} "
+                    f"elapsed_s={record['elapsed_s']:.1f}",
+                    file=sys.stderr,
+                )
     finally:
         # 브리프: "실행이 끝나면 finally 로 지운다."
         if os.path.exists(args.off_copy):

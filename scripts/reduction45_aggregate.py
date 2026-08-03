@@ -1,9 +1,21 @@
-"""45코너 코너 축소 A/B 집계기 - `docs/superpowers/specs/2026-08-03-
-reduction45-benefit-design.md`(개정 1)가 정한 규칙을 그대로 코드로 옮긴다.
+"""45코너 코너 축소 A/B 집계기 - v2 재측정
+(`docs/superpowers/specs/2026-08-03-reduction45-benefit-v2-design.md`)가 정한
+규칙을 그대로 코드로 옮긴다.
 
 **규칙을 새로 정하지 않는다.** 값·격자·판정 규칙은 그 문서가 정했고, 여기는
 `result.json`/`history.jsonl`에서 그 규칙이 필요로 하는 값을 뽑아 규칙을
 그대로 적용하기만 한다. 각 함수의 독스트링에 옮긴 원문을 그대로 적는다.
+
+v1(`2026-08-03-reduction45-benefit-design.md` 개정 1)에서 v2로 바뀐 것은
+판정 규칙 셋이다: (1) 선행 조건에 P2("측정이 가능했는가")가 신설됐다 - 두
+팔 모두 관측 런이 1건 이상이어야 하고, 아니면 `void`다. (2) 정확성 규칙의
+둘째 절("OFF 보다 적다")을 삭제했다 - 선행 조건 P1이 이미
+`off_fail_count >= 1`을 보장하므로 그 절은 발화할 수 없었다(v1 결함 3).
+(3) 비용 축을 `loop_sims`에서 **총 바깥 반복 수**(`history.jsonl`의
+`orchestration_attempt` 이벤트들의 `iterations_used` 합, 재진입분 포함)로
+바꿨다 - `loop_sims`는 면적 단계가 최종 스윕 직전 같은 격자를 돌아 정의된
+"최종 스윕" 항이 캐시로 인해 항상 0이 될 수밖에 없었다(v1 결함 4).
+`loop_sims`/`area_phase_sims`는 부수 기록으로 계속 남긴다.
 
 읽는 것: `scripts/reduction45_ab.py`가 쓴 `runs/reduction45/invocations.jsonl`
 한 줄마다 하나의 `run_dir`, 그리고 그 안의 `result.json` / `history.jsonl`.
@@ -156,6 +168,36 @@ def reentry_count(events: list[dict]) -> int:
     return sum(1 for event in events if event.get("step") == "corner_set_grown")
 
 
+def total_outer_iterations(events: list[dict]) -> int | None:
+    """v2 사전 등록의 비용 축(§비용 축을 바꾼다): **"코너 확인된 판정에
+    이르기까지 소비한 바깥 반복 수"(재진입분을 모두 합산한다)**.
+
+    유도: `history.jsonl`의 `orchestration_attempt` 이벤트들의
+    `iterations_used`를 전부 더한다 - 재진입이 있으면 이 이벤트가 여러 건
+    난다(매 attempt마다 하나씩). `loop_sims`(시뮬 수)에서 이 축으로 바꾼
+    이유는 v1 결함 4 - 반복 하나가 약 10분인데 그중 시뮬은 수십 초라 LLM
+    지연이 지배적이고, 게다가 면적 단계가 최종 스윕 직전 같은 격자를 돌아
+    `loop_sims`가 정의한 "최종 스윕" 항이 캐시로 인해 구조적으로 0이 될 수밖에
+    없었다.
+
+    이 이벤트가 **하나도 없으면** `None`을 돌려준다 - "반복을 0회 했다"와
+    "이벤트 자체가 없다"는 다른 사실이고, 상한에 걸려 죽은 실행은 정확히 이
+    경우다(실측: 상한에 걸려 죽은 `off_1`은 `orchestration_attempt` 이벤트가
+    0건이고, 완주한 `off_3`/`on_3`은 1건에 `iterations_used=4`다 - 0으로
+    지어내지 않는다). 개별 attempt 이벤트에 `iterations_used`가 없으면(정상
+    경로에서는 항상 있지만) 그 attempt는 0으로 취급하고 나머지를 합산한다 -
+    이벤트 자체는 있었으니 `None`으로 뭉개지 않는다."""
+    attempts = [e for e in events if e.get("step") == "orchestration_attempt"]
+    if not attempts:
+        return None
+    total = 0
+    for attempt in attempts:
+        value = attempt.get("iterations_used")
+        if value is not None:
+            total += value
+    return total
+
+
 def area_optimization_summary(result: dict | None) -> dict:
     """사전 등록(개정 1)의 확인 사항: **"이 슬롯은 `pvt_corners`를 선언하므로
     `corner_capable`이 참이고, 그러면 면적 단계는 실측 여유분으로 수락하고
@@ -286,6 +328,7 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
         "result_reason": None,
         "mid_pass_sweep_fail": None,
         "mid_pass_sweep_fail_attempts": None,
+        "total_outer_iterations": None,
         "loop_sims": None,
         "area_phase_sims": None,
         "objective_phase_sims": None,
@@ -333,6 +376,7 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
     hits = mid_pass_sweep_fail_events(events)
     row["mid_pass_sweep_fail"] = len(hits) > 0
     row["mid_pass_sweep_fail_attempts"] = len(hits)
+    row["total_outer_iterations"] = total_outer_iterations(events)
     counts = sim_counts(events)
     row["loop_sims"] = counts["loop_sims"]
     row["area_phase_sims"] = counts["area_phase_sims"]
@@ -349,12 +393,12 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
 # ---------------------------------------------------------------------------
 
 def check_precondition(off_rows: list[dict]) -> dict:
-    """사전 등록: **"선행 조건(P): 축소를 끈 팔의 k 회 실행 중, 중간 루프가
-    PASS 로 나온 뒤 최종 스윕이 실패한 실행이 1 건 이상 있어야 한다. P 가
-    성립하지 않으면 이 측정은 void 다."**
+    """v2 사전 등록의 선행 조건 **P1(사건이 발생했는가)**: **"축소를 끈 팔의
+    관측 런 중 중간 루프가 PASS 로 나온 뒤 최종 스윕이 실패한 실행이 1 건
+    이상."** v1 에서 실증됐다(`off_3`).
 
     탈락한(`row_status != "ok"`) OFF 행은 사건을 확인할 수 없으므로 "일어난
-    실행"으로 세지 않는다 - 값을 모르는 것을 있었다고 세면 없는 증거로 P를
+    실행"으로 세지 않는다 - 값을 모르는 것을 있었다고 세면 없는 증거로 P1을
     통과시키는 것이 되어 위험한 방향이다."""
     observed = [r for r in off_rows if r["row_status"] == "ok"]
     hit_count = sum(1 for r in observed if r["mid_pass_sweep_fail"])
@@ -366,18 +410,45 @@ def check_precondition(off_rows: list[dict]) -> dict:
     }
 
 
+def check_measurability(off_rows: list[dict], on_rows: list[dict]) -> dict:
+    """v2 사전 등록이 신설한 선행 조건 **P2(측정이 가능했는가)**: **"두 팔
+    모두 관측 런이 1 건 이상. '관측' := 상한에 걸리지 않았고 `result.json`
+    과 `history.jsonl` 을 남겼다. 어느 팔이든 0 건이면 `void` 다."**
+
+    "관측"은 `build_row`가 이미 매기는 `row_status == "ok"` 그대로다(상한에
+    걸려 죽었거나 산출물이 없으면 `"dropped"`로 라벨이 붙어 여기서 관측으로
+    세지 않는다). v1은 이 조항이 없어, 처치(ON) 팔을 한 번도 못 본 상태가
+    `void`가 아니라 `rejected`라는 라벨로 나갔다(v1 결함 2,
+    `2026-08-03-reduction45-benefit-results.md`) - P2는 그 경로를 `void`로
+    바로잡는다."""
+    off_observed = sum(1 for r in off_rows if r["row_status"] == "ok")
+    on_observed = sum(1 for r in on_rows if r["row_status"] == "ok")
+    return {
+        "holds": off_observed >= 1 and on_observed >= 1,
+        "off_runs_observed": off_observed,
+        "on_runs_observed": on_observed,
+    }
+
+
 def _median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
 def check_accuracy(off_rows: list[dict], on_rows: list[dict]) -> dict:
-    """사전 등록: **"1. 정확성: ON 의 3 회 중 '중간 PASS 인데 최종 스윕 실패'가
-    0 건 이고, OFF 보다 적다."**
+    """v2 사전 등록: **"정확성: ON 의 관측 런에서 '중간 PASS 인데 최종 스윕
+    실패'가 0 건."**
+
+    v1의 둘째 절("OFF 보다 적다")은 **삭제됐다** - 선행 조건 P1이 이미
+    `off_fail_count >= 1`을 보장하므로, `on_fail_count == 0`이 참이면 그 절
+    (`on_fail < off_fail`, 즉 `0 < off_fail`)은 `off_fail >= 1`인 한 항상
+    참이었다. 즉 어떤 입력에서도 판정을 바꾸지 못하는 절이었다(v1 결함 3).
+    `off_fail_count`는 더 이상 채택 여부(`holds`)를 결정하지 않지만, 기록으로
+    남긴다.
 
     ON 쪽 탈락 행(`killed_by_cap` 포함)은 사건이 없었다고 확인할 수 없으므로
     **사건이 일어난 것으로 센다** - 사전 등록이 이미 명시한 규칙이다:
-    "timeout 은 채택 조건의 정확성 절을 만족시키지 못한다." OFF 쪽 탈락 행은
-    반대 방향으로 불리하게 둔다: 세지 않는다(즉 OFF 의 실패 건수를 부풀리지
+    "timeout 은 채택 조건을 만족시키지 못한다." OFF 쪽 탈락 행은 반대
+    방향으로 불리하게 둔다: 세지 않는다(즉 OFF 의 실패 건수를 부풀리지
     않는다) - 그래야 ON 이 이겨야 하는 기준선이 더 낮아지지 않는다(더
     관대해지지 않는다).
     """
@@ -390,7 +461,7 @@ def check_accuracy(off_rows: list[dict], on_rows: list[dict]) -> dict:
         if r["row_status"] == "ok" and r["mid_pass_sweep_fail"]
     )
     return {
-        "holds": on_fail == 0 and on_fail < off_fail,
+        "holds": on_fail == 0,
         "on_fail_count": on_fail,
         "off_fail_count": off_fail,
         "on_dropped": [r for r in on_rows if r["row_status"] != "ok"],
@@ -398,51 +469,82 @@ def check_accuracy(off_rows: list[dict], on_rows: list[dict]) -> dict:
 
 
 def check_cost(off_rows: list[dict], on_rows: list[dict]) -> dict:
-    """사전 등록: **"2. 비용: ON 의 총 시뮬레이션 수 중앙값이 OFF 의 1.5 배
-    이하."** (§비용 회계, 개정 1: 이 비는 루프 비용(`loop_sims`)으로 계산하고
-    면적/전류 단계 시뮬은 뺀다.)
+    """v2 사전 등록: **"비용: ON 의 총 바깥 반복 수 중앙값이 OFF 의 1.5 배
+    이하."**
 
-    탈락한 행은 시뮬 수를 모르므로 중앙값 표본에서 뺀다(0 이나 무한대로
-    지어내지 않는다). 어느 쪽이든 관측된 표본이 하나도 없으면 비를 낼 수
-    없으므로 기각된다(채택에 불리한 기본값)."""
-    on_sims = [r["loop_sims"] for r in on_rows if r["row_status"] == "ok"]
-    off_sims = [r["loop_sims"] for r in off_rows if r["row_status"] == "ok"]
-    on_median = _median(on_sims)
-    off_median = _median(off_sims)
+    v1은 이 비를 시뮬 수(`loop_sims`)로 계산했으나 결함 4로 무효화됐다 - 면적
+    단계가 최종 스윕 직전 같은 격자를 전량 재시뮬레이션하는데(실측:
+    `off_3`에서 면적 진입 스윕 0 적중/225 불발, 그 직후 최종 스윕이 225
+    적중/0 불발) 그 최종 스윕은 `loop_sims`의 정의상 캐시로 전량 적중되어
+    항상 0을 더한다 - 정의된 항이 어떤 입력에서도 0이 아닌 값을 낼 수 없었다.
+    v2는 이 축을 `total_outer_iterations`(총 바깥 반복 수, 재진입분 포함)로
+    바꾼다 - 반복 수는 LLM 호출 수에 비례하고(실제 비용의 대부분), 환경
+    독립적이며(벽시계와 달리 기계 부하에 흔들리지 않는다), 축소가 정말
+    비싸지는 경로(코너 목표를 쫓느라 반복이 더 필요해짐)를 그대로 잡는다.
+    문턱 1.5배는 그대로다(재진입 한 번이 대략 +25~50%라는 근거는 바뀌지
+    않았다).
+
+    탈락한 행이나 `total_outer_iterations`를 모르는 행(이벤트 자체가 없는
+    경우)은 중앙값 표본에서 뺀다(0 이나 무한대로 지어내지 않는다). 어느
+    쪽이든 관측된 표본이 하나도 없으면 비를 낼 수 없으므로 기각된다(채택에
+    불리한 기본값)."""
+    on_iters = [
+        r["total_outer_iterations"] for r in on_rows
+        if r["row_status"] == "ok" and r["total_outer_iterations"] is not None
+    ]
+    off_iters = [
+        r["total_outer_iterations"] for r in off_rows
+        if r["row_status"] == "ok" and r["total_outer_iterations"] is not None
+    ]
+    on_median = _median(on_iters)
+    off_median = _median(off_iters)
     if on_median is None or off_median is None or off_median == 0:
         return {
             "holds": False, "on_median": on_median, "off_median": off_median,
-            "ratio": None, "on_n": len(on_sims), "off_n": len(off_sims),
+            "ratio": None, "on_n": len(on_iters), "off_n": len(off_iters),
         }
     ratio = on_median / off_median
     return {
         "holds": ratio <= COST_RATIO_LIMIT,
         "on_median": on_median, "off_median": off_median, "ratio": ratio,
-        "on_n": len(on_sims), "off_n": len(off_sims),
+        "on_n": len(on_iters), "off_n": len(off_iters),
     }
 
 
 def judge(off_rows: list[dict], on_rows: list[dict]) -> dict:
-    """사전 등록의 판정 규칙 전체를 그대로 적용한다:
+    """v2 사전 등록의 판정 규칙 전체를 그대로 적용한다:
 
-    **"P 를 먼저 보고, 성립할 때만 아래 채택 규칙을 적용한다."**
-    **"채택 := ON 이 아래 둘을 모두 만족한다. ... 기각 := 위를 만족하지
-    못한다."** **"동률·부분 성립은 기각이다. 규칙이 둘이 되지 않게 한다."**
+    **"선행 조건을 둘 다 먼저 본다. 하나라도 불성립이면 `void` 이고 채택
+    규칙을 적용하지 않는다."** (P1: 사건이 발생했는가. P2: 측정이
+    가능했는가 - v2 신설.)
+    **"둘 다 성립하면: 채택 := ON 이 아래 둘을 모두 만족한다. ... 기각 := 위를
+    만족하지 못한다."** **"동률·부분 성립은 기각이다. 규칙이 둘이 되지 않게
+    한다."**
 
-    반환: `{"verdict": "void" | "accepted" | "rejected", "precondition":
-    ..., "accuracy": ..., "cost": ...}`. `accuracy`/`cost`는 `precondition`이
-    성립하지 않으면 계산하지 않는다(사전 등록: "P 가 성립하지 않으면 이
-    측정은 void 다" - void 는 규칙 두 절을 적용하기 전의 산출물이다).
+    반환: `{"verdict": "void" | "accepted" | "rejected", "measurability":
+    ..., "precondition": ..., "accuracy": ..., "cost": ...}`. `measurability`
+    (P2)와 `precondition`(P1)은 항상 계산해 둘 다 남긴다 - 어느 쪽이 `void`를
+    유발했는지 결과 문서가 구분해 적어야 하기 때문이다. `accuracy`/`cost`는
+    P1·P2 가 둘 다 성립하지 않으면 계산하지 않는다(`void`는 채택 규칙을
+    적용하기 전의 산출물이다).
     """
+    measurability = check_measurability(off_rows, on_rows)
     precondition = check_precondition(off_rows)
-    if not precondition["holds"]:
-        return {"verdict": "void", "precondition": precondition, "accuracy": None, "cost": None}
+    if not measurability["holds"] or not precondition["holds"]:
+        return {
+            "verdict": "void",
+            "measurability": measurability,
+            "precondition": precondition,
+            "accuracy": None,
+            "cost": None,
+        }
 
     accuracy = check_accuracy(off_rows, on_rows)
     cost = check_cost(off_rows, on_rows)
     accepted = accuracy["holds"] and cost["holds"]
     return {
         "verdict": "accepted" if accepted else "rejected",
+        "measurability": measurability,
         "precondition": precondition,
         "accuracy": accuracy,
         "cost": cost,
