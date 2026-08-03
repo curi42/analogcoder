@@ -718,9 +718,26 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
   **8 simulated points out of a 9-corner grid, per testbench**. The loop is
   testbenches-outside, so 5 testbenches make it **40 direct simulations per
   iteration** (~250 s) against 5 before. The saving against the full grid is one
-  point per testbench. Enabling this on `spec_pvt.yaml` projects to ~125 direct sims
-  per iteration — which can cost *more* than the sweep it pre-empts; a `max_corners`
-  ceiling is a prerequisite there. Re-entry fired **zero** times. Of 22 criteria, 5
+  point per testbench. **The follow-on claim here — that a 45-corner grid projects
+  to ~125 direct sims per iteration, can cost more than the sweep it pre-empts, and
+  needs a `max_corners` ceiling first — was measured and is wrong.** On
+  `spec_corner_reduction_45.yaml` the seed is **10** corners → 12 points/testbench →
+  **60 sims per iteration, 0.267× the 225-sim full sweep**. The ceiling is not a
+  prerequisite on this deck and grid. What stays true is the other comparison: with
+  reduction off the mid loop simulates one nominal point per testbench, so enabling
+  it is **5 → 60, a 12× mid-loop cost**, bought against catching corner failures
+  early. `2026-08-03-reduction45-precondition.md`.
+  - **That benefit has never been measured, and no shipped spec can measure it.**
+    The one 45-corner spec declaring reduction **passes all 45 corners at baseline**,
+    so a run ends PASS at iteration 0 with the machinery never exercised. And of 20
+    recorded `result.json`s, 7 have a final sweep, **5 of those already had reduction
+    on**, leaving **n = 1** with it off (`pvt_sonnet_1`, which ended FAIL). Read that
+    as condition-not-present, never as "reduction buys nothing" — D1's `0.000` is the
+    same shape. Measuring it needs a seeded 45-corner slot; the screen of the three
+    `spec_seed_*` variants against the 45-corner worst case (no new simulation) puts
+    `spec_seed_buf0_droop` first — spread `19.9324 → 31.6032` (**1.59×**), and it is
+    already verified localised and solvable.
+  Re-entry fired **zero** times. Of 22 criteria, 5
   drifted between entry and verdict sweep and **all 5 landed on corners already
   inside the set**. Pinned in `test_corner_reduction_bandgap_ngspice.py`.
   **Those 6 corners do not cover all 22 criteria**: three two-sided windows mean
@@ -733,9 +750,14 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
   (entry, verdict) deck pair: **9 of 242** fire on the 9-corner grid, and they are
   **argmax 0, coverage 9**. Projected onto 45 corners: **43 of 242, argmax 21,
   coverage 22** — the seed tracks *criteria* while the grid does not, so 36 corners
-  sit outside. That row is a **projection, not a measurement** (neither 45-corner
-  spec declares `corner_reduction:`). Read it as: enable reduction on a 45-corner
-  grid and re-entry stops being dead code.
+  sit outside. Read it as: enable reduction on a 45-corner grid and re-entry stops
+  being dead code. That row was labelled "a projection, not a measurement (neither
+  45-corner spec declares `corner_reduction:`)"; **`spec_corner_reduction_45.yaml`
+  now declares it, and the label was misleading anyway** —
+  `reentry_feasibility.py` calls `seed_from_sweep`, which never reads the
+  `corner_reduction` block, so re-running it on the declaring spec reproduces
+  43/242 exactly. What the declaration changed is that a *production* loop can now
+  reach the regime; the script's number was always the script's own output.
   **Firing needs all three conditions, and "the mid loop exits PASS" is a property
   of the run, not of one criterion** — a first pass checked only the third
   (29 firings), a second checked one per criterion (25), and only the global form
