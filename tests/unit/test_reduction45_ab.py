@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"
 
 from reduction45_ab import (  # noqa: E402
     ENABLED_TRUE_RE,
+    _terminate_then_kill,
     run_with_cap,
     write_off_copy,
 )
@@ -22,8 +23,11 @@ from reduction45_aggregate import (  # noqa: E402
     check_accuracy,
     check_cost,
     check_precondition,
+    corner_seed_dropped,
     judge,
+    landed_deck_sha256,
     mid_pass_sweep_fail_events,
+    probe_promoted_count,
     reentry_count,
     sim_counts,
 )
@@ -99,6 +103,19 @@ def test_watchdog_lets_a_fast_process_finish_normally():
 
     assert outcome["killed_by_cap"] is False
     assert outcome["exit"] == 0
+
+
+def test_terminate_then_kill_survives_a_process_that_already_exited():
+    """M1: `poll()` 직후의 좁은 경합 창에서 자식이 방금 끝났으면
+    `os.getpgid(proc.pid)`가 `ProcessLookupError`를 낼 수 있다 - `killpg`
+    호출들과 같은 방식으로 감싸지 않으면 감시견 자신이 죽어 남은 런이
+    통째로 실행되지 않는다. 이미 끝나고 `wait()`까지 돼 완전히 회수된
+    프로세스에 `_terminate_then_kill`을 직접 불러 예외 없이 조용히
+    반환하는지 확인한다."""
+    proc = subprocess.Popen(["true"], start_new_session=True)
+    proc.wait()  # 완전히 회수 - pid가 이제 유효하지 않다.
+
+    _terminate_then_kill(proc)  # 여기서 예외가 나면 이 시험이 실패한다.
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +399,149 @@ def test_build_row_reads_a_real_result_and_history(tmp_path):
     assert row["loop_sims"] == 3
     assert row["corner_confirmed"] is True
     assert row["landed_netlist_paths"] == {"dc_tc": "runs/x/netlist_v2.cir"}
+
+
+# ---------------------------------------------------------------------------
+# M2: 부수 기록 (corner_seed.dropped / 탐침 승격 수 / 착지 덱 SHA-256) -
+# 판정에 안 흘러들어간다.
+# ---------------------------------------------------------------------------
+
+def test_corner_seed_dropped_none_when_no_seed_was_drawn():
+    assert corner_seed_dropped({"corner_reduction": {"seed": None}}) is None
+    assert corner_seed_dropped({"corner_reduction": {}}) is None
+    assert corner_seed_dropped(None) is None
+
+
+def test_corner_seed_dropped_reads_the_seed_record():
+    result = {"corner_reduction": {"seed": {"mode": "argmax", "dropped": []}}}
+    assert corner_seed_dropped(result) == []
+
+    result_coverage = {
+        "corner_reduction": {"seed": {"mode": "coverage", "dropped": ["ss/1.62/-40"]}}
+    }
+    assert corner_seed_dropped(result_coverage) == ["ss/1.62/-40"]
+
+
+def test_probe_promoted_count_none_when_probe_never_ran():
+    """탐침 이벤트가 아예 없으면(탐침이 안 돎) None - "0건 승격"과 다른 사실."""
+    events = [_ev("orchestration_attempt", attempt=0, status="PASS")]
+    assert probe_promoted_count(events) is None
+
+
+def test_probe_promoted_count_zero_when_probe_ran_but_never_promoted():
+    events = [
+        _ev("corner_probe", corner="tt/1.8/27", failed=False, promoted=False),
+        _ev("corner_probe", corner="ss/1.62/-40", failed=False, promoted=False),
+    ]
+    assert probe_promoted_count(events) == 0
+
+
+def test_probe_promoted_count_counts_only_promoted_true():
+    events = [
+        _ev("corner_probe", corner="tt/1.8/27", failed=False, promoted=False),
+        _ev("corner_probe", corner="ss/1.62/-40", failed=True, promoted=True),
+        _ev("corner_probe", corner="ff/1.98/125", error="timeout", failed=False, promoted=False),
+        _ev("corner_probe", corner="sf/1.62/125", failed=True, promoted=True),
+    ]
+    assert probe_promoted_count(events) == 2
+
+
+def test_landed_deck_sha256_none_when_no_paths():
+    assert landed_deck_sha256(None) is None
+    assert landed_deck_sha256({}) is None
+
+
+def test_landed_deck_sha256_none_when_a_file_is_unreadable(tmp_path):
+    assert landed_deck_sha256({"dc_tc": str(tmp_path / "does-not-exist.cir")}) is None
+
+
+def test_landed_deck_sha256_hashes_content_deterministically(tmp_path):
+    import hashlib
+
+    p1 = tmp_path / "a.cir"
+    p2 = tmp_path / "b.cir"
+    p1.write_text("* deck A\n")
+    p2.write_text("* deck B\n")
+    paths = {"tb_b": str(p2), "tb_a": str(p1)}
+
+    got = landed_deck_sha256(paths)
+
+    expected = hashlib.sha256()
+    for name in sorted(paths):  # 이름순 - 딕셔너리 순서에 안 기댄다
+        expected.update(name.encode("utf-8") + b"\n" + open(paths[name], "rb").read() + b"\n")
+    assert got == expected.hexdigest()
+
+    # 파일 내용이 바뀌면 해시도 바뀐다.
+    p1.write_text("* deck A, changed\n")
+    assert landed_deck_sha256(paths) != got
+
+
+def test_build_row_fills_the_three_secondary_fields(tmp_path):
+    run_dir = tmp_path / "on_1"
+    run_dir.mkdir()
+    netlist = run_dir / "netlist_v1.cir"
+    netlist.write_text("* deck\n")
+    result = {
+        "status": "PASS",
+        "failure_reason": None,
+        "final_netlist_paths": {"dc_tc": str(netlist)},
+        "corner_reduction": {"seed": {"mode": "argmax", "dropped": []}},
+        "area_optimization": {"corner_confirmed": True, "final_netlist_paths": {"dc_tc": str(netlist)}},
+    }
+    (run_dir / "result.json").write_text(json.dumps(result))
+    events = [
+        {"step": "corner_probe", "corner": "ss/1.62/-40", "failed": True, "promoted": True},
+        {"step": "orchestration_attempt", "attempt": 0, "status": "PASS"},
+        {"step": "pvt_final_sweep", "overall_pass": True, "summary": "ok"},
+    ]
+    with open(run_dir / "history.jsonl", "w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+
+    invocation = {
+        "arm": "on", "index": 1, "spec": "x.yaml", "exit": 0,
+        "killed_by_cap": False, "elapsed_s": 100.0, "run_dir": str(run_dir),
+    }
+    row = build_row(invocation)
+
+    assert row["corner_seed_dropped"] == []
+    assert row["probe_promoted_count"] == 1
+    assert row["landed_deck_sha256"] == landed_deck_sha256({"dc_tc": str(netlist)})
+
+
+def test_secondary_fields_do_not_change_judge_output():
+    """M2 요구: 세 부수 필드를 바꿔도 `judge`의 출력이 바뀌지 않는다.
+
+    두 판정 표본을 만든다 - 판정에 쓰이는 필드(`row_status`,
+    `mid_pass_sweep_fail`, `loop_sims`)는 완전히 같고, 세 부수 필드만 다르게
+    채운다. `judge`의 출력이 바이트 단위로 같아야 한다."""
+    def _rows(secondary):
+        off = [
+            {
+                "arm": "off", "index": i, "row_status": "ok",
+                "mid_pass_sweep_fail": (i == 1), "loop_sims": 500, **secondary,
+            }
+            for i in (1, 2, 3)
+        ]
+        on = [
+            {
+                "arm": "on", "index": i, "row_status": "ok",
+                "mid_pass_sweep_fail": False, "loop_sims": 550, **secondary,
+            }
+            for i in (1, 2, 3)
+        ]
+        return off, on
+
+    off_a, on_a = _rows({
+        "corner_seed_dropped": None, "probe_promoted_count": None, "landed_deck_sha256": None,
+    })
+    off_b, on_b = _rows({
+        "corner_seed_dropped": ["ss/1.62/-40"], "probe_promoted_count": 3,
+        "landed_deck_sha256": "deadbeef" * 8,
+    })
+
+    result_a = judge(off_a, on_a)
+    result_b = judge(off_b, on_b)
+
+    assert result_a == result_b
+    assert result_a["verdict"] == "accepted"

@@ -115,8 +115,14 @@ def run_with_cap(cmd: list[str], cap_s: float, *, cwd: str | None = None) -> dic
 def _terminate_then_kill(proc: subprocess.Popen) -> None:
     """SIGTERM -> 최대 `GRACE_SECONDS` 대기 -> 여전히 살아있으면 SIGKILL.
 
-    둘 다 프로세스 그룹 전체로 보낸다."""
-    pgid = os.getpgid(proc.pid)
+    둘 다 프로세스 그룹 전체로 보낸다. `os.getpgid`도 `killpg`와 같은 방식으로
+    감싼다 - `poll()` 직후의 좁은 경합 창에서 자식이 방금 끝났으면
+    `ProcessLookupError`가 여기서도 날 수 있고, 감싸지 않으면 감시견 자신이
+    죽어 남은 런이 통째로 실행되지 않는다(코드 리뷰 M1)."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
     try:
         os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:

@@ -18,6 +18,7 @@ reduction45-benefit-design.md`(개정 1)가 정한 규칙을 그대로 코드로
 """
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -175,6 +176,76 @@ def area_optimization_summary(result: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 부수 기록(판정에 안 쓴다) - 사전 등록: "부수적으로 기록하되 판정에 쓰지
+# 않는다 ... corner_seed 의 dropped, 탐침이 승격시킨 코너 수, 그리고 각
+# 실행이 착지한 덱의 SHA-256." **이 셋은 `judge`/`check_precondition`/
+# `check_accuracy`/`check_cost` 어디에도 안 흘러들어간다** -
+# `test_secondary_fields_do_not_change_judge_output`이 그것을 못박는다.
+# ---------------------------------------------------------------------------
+
+def corner_seed_dropped(result: dict | None) -> list | None:
+    """`corner_seed`의 `dropped`(부수 기록). `cli.py`는 `seed_record`를 그대로
+    `result["corner_reduction"]["seed"]`에 옮긴다(cli.py의 "corner_seed는
+    seed_record를 그대로 옮긴다" 주석). `corner_selection.seed_from_sweep`이
+    항상 `dropped` 키를 채운다(argmax 모드는 `[]`, coverage 모드는 실제
+    탈락 목록).
+
+    씨앗을 아예 안 뽑았으면(축소가 꺼졌거나 재개된 실행이 이번 회차에 다시
+    안 뽑았으면) `seed`가 `None`이다 - 그때 이 함수도 `None`을 돌려준다.
+    `[]`(뽑았고 하나도 안 버렸다)와 `None`(안 뽑았다)은 다른 사실이다."""
+    seed = (result or {}).get("corner_reduction", {}).get("seed")
+    if seed is None:
+        return None
+    return seed.get("dropped")
+
+
+def probe_promoted_count(events: list[dict]) -> int | None:
+    """탐침이 승격시킨 코너 수(부수 기록). `corner_sim.py`는 탐침을 쓸 때마다
+    `corner_probe` 이벤트를 남기고 `promoted` 필드에 그 탐침이 코너 집합을
+    실제로 키웠는지(`True`/`False`)를 싣는다(corner_sim.py 351~373줄) - 그래서
+    `promoted is True`인 이벤트 수가 승격된 코너 수다.
+
+    `corner_probe` 이벤트가 **하나도 없으면** `None`을 돌려준다(탐침 자체가
+    이 실행에서 한 번도 안 돎 - 축소가 꺼졌거나 탐침이 꺼졌거나 진입 스윕
+    전에 실행이 끝남). 이벤트는 있었지만 전부 `promoted=False`이면 `0`을
+    돌려준다 - "아무것도 승격 안 됐다"(0)와 "탐침 자체가 없었다"(`None`)는
+    다른 사실이다(브리프의 요구)."""
+    probes = [event for event in events if event.get("step") == "corner_probe"]
+    if not probes:
+        return None
+    return sum(1 for probe in probes if probe.get("promoted") is True)
+
+
+def landed_deck_sha256(paths: dict | None) -> str | None:
+    """각 실행이 착지한 덱의 SHA-256(부수 기록). `result["final_netlist_paths"]`
+    (테스트벤치 이름 -> 파일 경로)는 `orchestrator.py`가 자기 반환값에 항상
+    싣고(`"final_netlist_paths": state.current_netlist_paths()`) `cli.py`의
+    이른 실패 경로도 항상 싣는 키다(I-3 키 존재 계약) - 그래서 `result.json`이
+    있는 실행이면 언제나 값이 있다.
+
+    "덱"은 테스트벤치 여러 개로 이뤄지므로, 테스트벤치 이름으로 정렬해
+    `"<이름>\\n<그 파일 내용>\\n"`을 이어붙인 뒤 그 전체를 SHA-256으로
+    해싱한다 - 경로 문자열이 아니라 **내용**을 해싱한다(이 저장소의 시뮬
+    캐시가 경로가 아니라 덱 텍스트를 키에 넣는 것과 같은 이유: 경로는 실행마다
+    임의로 바뀔 수 있지만 내용이 실제로 재현 가능한 사실이다).
+
+    `paths`가 `None`이거나 어느 파일이든 지금 읽을 수 없으면(런 디렉터리가
+    이미 정리됐거나 하는 경우) `None`을 돌려준다 - 못 잰 것을 빈 해시나
+    가짜 해시로 지어내지 않는다."""
+    if not paths:
+        return None
+    digest = hashlib.sha256()
+    try:
+        for name in sorted(paths):
+            with open(paths[name], "rb") as f:
+                content = f.read()
+            digest.update(name.encode("utf-8") + b"\n" + content + b"\n")
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # 실행 하나를 행으로: 탈락 경로에 라벨을 붙인다.
 # ---------------------------------------------------------------------------
 
@@ -224,6 +295,10 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
         "iterations_used": None,
         "corner_confirmed": None,
         "landed_netlist_paths": None,
+        # 부수 기록(판정에 안 쓴다) - 위 "부수 기록" 절 참조.
+        "corner_seed_dropped": None,
+        "probe_promoted_count": None,
+        "landed_deck_sha256": None,
     }
 
     if invocation.get("killed_by_cap"):
@@ -245,6 +320,8 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
     area = area_optimization_summary(result)
     row["corner_confirmed"] = area["corner_confirmed"]
     row["landed_netlist_paths"] = area["landed_netlist_paths"]
+    row["corner_seed_dropped"] = corner_seed_dropped(result)
+    row["landed_deck_sha256"] = landed_deck_sha256(result.get("final_netlist_paths"))
 
     history_path = os.path.join(run_dir, "history.jsonl")
     if not os.path.exists(history_path):
@@ -263,6 +340,7 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
     row["cache_hits"] = counts["cache_hits"]
     row["cache_misses"] = counts["cache_misses"]
     row["reentry_count"] = reentry_count(events)
+    row["probe_promoted_count"] = probe_promoted_count(events)
     return row
 
 
