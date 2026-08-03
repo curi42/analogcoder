@@ -135,8 +135,8 @@ directly (see the deterministic-derivation section).
     `KeyError` from `judge_tools._OPERATORS` in the middle of a 45-corner sweep,
     and `cli.py`'s bare-`Exception` guard cited that as its third example.
     (Enumerating exception types is guessing — and that list losing a member is the
-    proof.) Zero shipped specs are affected: all **210** criteria across the 14
-    benchmark specs are `>=` or `<=`.
+    proof.) Zero shipped specs are affected: all **217** criteria across the 15
+    benchmark specs are `>=` or `<=` (117 / 100).
     - **A fourth consumer implements `==` correctly, and the refusal withdraws it.**
       `curation._at_least_as_good` reads `==` as "at least as good when inside a
       two-sided band", with `COMPARISON_REL_TOLERANCE = 1e-3` — the tolerance
@@ -323,6 +323,19 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   structurally forbids a value, and a deterministic search decides how far to move
   each one (`×0.9` per step for a geometry, `±1` for a count) and measures the
   result.
+- **Which search runs is swappable (`OptimizerAgents.search_strategy`), and the
+  seam has one rule: a strategy proposes, it never judges.** `SearchRun` exposes
+  `spend_step`/`knob_state`/`attempt`/`exhausted`/`log_event` and nothing that
+  writes the tallies — `accepted`/`rejected`/`best_objective` are read-only, so the
+  numbers describing the returned netlist never pass through a strategy.
+  `log_event` is the **only** door to `history.jsonl`, and it prefixes the phase
+  label itself (`f"{phase.label}_{suffix}"`); the parameter is named `suffix` so a
+  call site cannot mistake it for a full event name. Before that, a strategy could
+  emit an unlabelled event, which is indistinguishable between the area and
+  objective phases when both run — `mads.py`'s three call sites had exactly that
+  defect and one fix closed both. **Consequence: `runs/search_ab/` artifacts written
+  before 2026-08-03 carry `mads_poll`, not `optimize_mads_poll`.** A renamed event
+  leaves old artifacts wearing the old name.
 - **Measured on real ngspice runs (2026-08-02).** `benchmarks/bandgap/spec.yaml`:
   19.19% area reduction (1.10546e-08 → 8.93292e-09), 16 steps accepted / 4
   rejected, ~123.5s. `benchmarks/two_stage_opamp/spec.yaml`: UNCHANGED, 0 accepted
@@ -1140,6 +1153,60 @@ recorded rather than deleted.
   design variable. Two-stage design: a 3×3 screen then a 7×7 confirm taking the
   **median** of all interior 2×2 contrasts (a max lets one step through). Full
   numbers: `2026-07-30-knob-coupling-scan.md`.
+- **Bandgap's coupling was then measured too, and it crosses block boundaries.**
+  The scan above covers one deck, so a strategy tested only on bandgap would be
+  tested where no coupling had been measured. On `amp_loops` (**not** `canonical`
+  — see below) 66/66 stage-1 candidates advanced and **15/15 confirmed at stage 2,
+  9 of them across blocks**: `ERRAMP.Xcc × BGR_CORE.Xcc` (×4),
+  `TRIMAMP.Xcc × BANDGAP.XRl2` (×4), `TRIMAMP.Xcc × BGR_CORE.Xcc` (×1).
+  `TRIMAMP.Xcc.L × W` moves 27.7° per axis but **66.0° jointly**. The prediction
+  that four instances of the same block would couple weakly was **falsified**.
+  Two limits are on the record: 51 pairs went untested (capped by stage-1 max
+  `I_rel`, never alphabetically), and only 2 of bandgap's 5 testbenches were
+  measured. `2026-08-02-bandgap-coupling-precondition.md`.
+  - **Running that scan on `spec.canonical` could not have returned a different
+    answer.** Bandgap's canonical is `dc_tc`, a DC temperature sweep, and 10 of the
+    12 top-ranked knobs are compensation capacitors — inert there by construction
+    (verified with 7 single-knob probes: six outputs byte-identical, with
+    `BANDGAP.XRl2.w` as a moving control). The brief that specified `canonical` was
+    the controller's, and the sub-agent caught it. **Choosing the testbench is
+    choosing whether the metric can move.**
+- **Stage 4a (compound steps, `_compound_fallback`): rejected**, tagged
+  `single_deck`. `partners ∈ {1,3}` each failed **both** acceptance clauses
+  independently, so the 1.0 %p effect size is not what decided it. The useful part
+  is *why*, and it is arithmetic, not statistics: **the strategy proposes candidates
+  whose objective cannot change.** `_next_value` moves a knob `×0.9` down and
+  `/0.9` up, so pairing a device's `L` with its own `W` gives
+  `0.9L × W/0.9 = LW` — **area exactly unchanged** (measured difference `0.0`).
+  And the partner *is* always that same device: `rank_by_area_gain` gives `L` and
+  `W` identical gain, so sorting puts them adjacent — **83 of 83 devices on slot A,
+  no exceptions** — and `_try_partners` takes `knobs[i+1:i+1+partners]`. So every
+  `partners=1` candidate is area-neutral, `accept_step` requires the objective to
+  fall, and the 5 acceptances came from the proposal being written at **6
+  significant figures** (relative `2.7e-07`); the pair whose rounding went the other
+  way was refused as *"not below the current best"*. **Acceptance was decided by
+  rounding direction, not by search.** Slot A's apparent +0.855 %p win is not a
+  search win either: its nominal landing (9.6274e-09) is *worse* than the control's
+  (8.8898e-09), and it only led on the final number because the control's extra
+  steps failed corner confirmation and bisection discarded six. 11 cross-device
+  compound attempts fired and **all 11 were rejected**, and none of them reached the
+  block-crossing pairs above. Full numbers:
+  `2026-08-02-compound-step-search-results.md`.
+  - **The pre-registration's precondition counted acceptances without asking
+    whether they moved the objective**, so it was satisfied by those five
+    rounding-residue steps. Applied literally, as the rules require; recorded as
+    the defect the next pre-registration must fix.
+  - **Reparametrization (option a) was rejected on measurement, before this ran**:
+    of the 38 valid confirmed pairs, 5 are same-device, 26 are cross-device and 7
+    involve a top-level testbench element, so rewriting a device's `(w, l)` as
+    `(area, aspect)` would decouple **5 of the 31 DUT pairs — 16%**.
+  - Reopening needs a **new** pre-registration whose partner rule does not read the
+    ranking's neighbours (the `w × l × m` symmetry guarantees that neighbour is the
+    same device), which excludes same-device dimension pairs outright, and whose
+    slot baselines are verified on **the grid the verdict uses**. The
+    `compound_fallback_1`/`_3` entries stay in `SEARCH_STRATEGIES` — reachable only
+    by an explicit `search_strategy`, never by a default path — so that
+    pre-registration can re-run them without rebuilding the arm.
 - **Repair-loop block ordering: layer 1 passed its rule but the pass carries almost
   no information.** A distance-based block *render order* (ordering only, never
   filtering) scored 2·2·2 against a baseline of 5·5·4 — yet **552 of 720 random
@@ -1262,6 +1329,17 @@ baseline — a genuine model capability gap, not a pipeline defect.
     `Cc`+`M6.W` together, a combination outside the original Cc-only sweep. The
     mechanism is still verified correct; this benchmark just is not a guaranteed
     trigger. See `2026-07-25-topology-swap-tuning-design.md`.
+  - `spec_search_slot.yaml` — `spec_pvt.yaml` byte-for-byte except `phase_margin`
+    `60.0 → 30.0`, authored as a search-strategy validation slot (the same kind of
+    thing `spec_curate_slot.yaml` is for curation). **It does not work, and the
+    reason is the entry in this file two sections up.** Its baseline passes all 7
+    criteria at nominal and fails all 7 across the 45-corner grid — `dc_gain`
+    3.13783 dB at `fs/1.98/125` (nominal 71.0861) and **four criteria measure
+    `NaN`**, which no threshold can admit. Lowering one threshold fixed the nominal
+    failure and could not touch the corner one. **Do not quote an area number from
+    this slot as shipped-spec performance, and do not lower more thresholds to
+    "fix" it** — the corner failure is not a threshold problem. Left in place as the
+    artifact of a rejected measurement.
 - `benchmarks/bandgap/` — five-block Kuijk bandgap reference chain (`BGR_CORE` +
   `ERRAMP` → `TRIMAMP` → resistor ladder → `BUF_N`/`BUF_P`), producing `vbg1`=1.2V
   and `vbg0`=0.5V. Unlike every other benchmark this one is **multi-block**, and
@@ -1521,12 +1599,12 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-02: 1548
-  passed, 2 skipped, 9 deselected, 97.75 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-03: 1573
+  passed, 2 skipped, 9 deselected, 98.66 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548), so do not treat a single timing as a regression
-  signal. A
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573), so do not treat a single timing as a
+  regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
   when you add a real-simulator test** — it has drifted four times now
@@ -1536,7 +1614,7 @@ baseline — a genuine model capability gap, not a pipeline defect.
   the two new test functions it adds).
 - **A drift guard is updated in one order only**: confirm the new inputs pass the
   gate, *then* raise the count.
-  `test_every_shipped_benchmark_control_block_is_accepted` counts 52 control blocks
-  across 14 specs (42 → 47 → 52); each bump verified 0 rejections first. Reverse
-  the order and the guard stops preventing unaudited additions and becomes a
-  comment that follows a number.
+  `test_every_shipped_benchmark_control_block_is_accepted` counts 56 control blocks
+  across 15 specs (42 → 47 → 52 → 56); each bump verified 0 rejections first.
+  Reverse the order and the guard stops preventing unaudited additions and becomes
+  a comment that follows a number.

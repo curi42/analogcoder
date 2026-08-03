@@ -765,7 +765,7 @@ def test_an_operator_the_repo_does_not_implement_consistently_is_refused(operato
 @pytest.mark.parametrize("operator", [">=", ">", "<=", "<"])
 def test_the_four_implemented_operators_load(operator):
     """거절이 너무 넓지 않다는 쪽도 고정한다 - 이 넷은 세 소비자가 모두
-    같은 뜻으로 구현한다. 출하된 벤치마크 14개 스펙의 기준 210개가 전부
+    같은 뜻으로 구현한다. 출하된 벤치마크 15개 스펙의 기준 217개가 전부
     `>=` 아니면 `<=`이므로, 이 게이트는 오늘 아무것도 막지 않는다."""
     from analogcoder.spec import _load_criteria
 
