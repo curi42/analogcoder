@@ -1,0 +1,2427 @@
+{
+ "spec": "benchmarks/two_stage_opamp/spec_pvt.yaml",
+ "n_corners": 45,
+ "n_criteria": 7,
+ "overall_pass": false,
+ "passing_corners": [],
+ "rows": [
+  {
+   "corner": "tt/1.62/-40.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.1819,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1312400.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 37.4481,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 11.2852,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -5.76616,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.03133e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.01313e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.62/27.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.5239,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1567480.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 35.1974,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -9.67621,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -2.24537,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.04834e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.03323e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.62/125.0",
+   "process": "tt",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 69.3064,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1640980.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.4037,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -33.6699,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -2.19866,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.67066e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.89806e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.8/-40.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.8968,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1851550.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 35.0226,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -9.31865,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -1.70812,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.88247e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 2.65798e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.8/27.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.0861,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 2079550.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 34.5636,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -15.4047,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.43298,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.46659e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.26099e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.8/125.0",
+   "process": "tt",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 7.37607,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 40186500.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 98.4305,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 7.70995,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -19.3215,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00362e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00335e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.98/-40.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 72.9588,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 26403900.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 29.5777,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -0.700893,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 3.48392,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00341e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00332e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.98/27.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.2747,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 26171200.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 30.0194,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -0.777463,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 4.78272,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00363e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.0035e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "tt/1.98/125.0",
+   "process": "tt",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 5.09637,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 35805200.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 111.886,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 8.12342,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -12.9601,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.62/-40.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.7222,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 953853.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 37.1199,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 17.3627,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -15.3483,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.4084e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.38329e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.62/27.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.2469,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1270190.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 34.1432,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -6.06043,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -2.31488,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.09681e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.06576e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.62/125.0",
+   "process": "ss",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 23.7699,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 41821400.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 64.1172,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 10.5847,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -10.0232,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00856e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00811e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.8/-40.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 72.7093,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1404280.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 33.5562,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -9.28631,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -2.32791,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 3.63597e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 3.33233e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.8/27.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.963,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1674250.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 33.3715,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -13.3803,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.41203,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.87029e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 3.06363e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.8/125.0",
+   "process": "ss",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.7655,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 2145480.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.1965,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -24.2196,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -0.574429,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.28835e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.46709e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.98/-40.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 73.3984,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1889080.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 32.5332,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -13.7654,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.73613,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.90536e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 3.07327e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.98/27.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.5597,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 31885700.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 28.78,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 1.52128,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 6.01685,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 2.45123e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.61117e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ss/1.98/125.0",
+   "process": "ss",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 5.15502,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 35099100.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 110.703,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 7.33368,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -22.9882,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.62/-40.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.0998,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1359690.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 37.5226,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 4.23584,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -3.40563,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.44198e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.31071e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.62/27.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 69.305,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1614250.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 36.3194,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -10.3221,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.78846,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.89804e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 2.63694e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.62/125.0",
+   "process": "ff",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 67.1954,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 24441300.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.4494,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 7.81865,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 6.63762,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00624e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00595e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.8/-40.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.8123,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 21899800.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.1244,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 8.13449,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 3.49494,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00505e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00487e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.8/27.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.303,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 22228300.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.2532,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 0.95819,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 3.92058,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00446e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00432e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.8/125.0",
+   "process": "ff",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 67.7642,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 22895500.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 30.8785,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -0.550263,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 5.65654,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00247e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00218e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.98/-40.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 72.1252,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 19504200.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 30.409,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -3.50248,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 2.22514,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.00305e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00299e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.98/27.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.7103,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 19877200.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.0909,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -2.65325,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 3.67885,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.0032e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00304e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "ff/1.98/125.0",
+   "process": "ff",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 5.01082,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 36438200.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 113.012,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 8.60722,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -9.59139,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.62/-40.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 72.0007,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 1740600.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 42.9537,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 26.2352,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -1.6699,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.62513e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.61372e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.62/27.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.5132,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 2507220.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 34.5995,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -0.165857,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -2.70264,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 2.32078e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.53001e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.62/125.0",
+   "process": "sf",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.3148,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 2805680.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 31.0667,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -21.7509,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.75003,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.99524e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.12786e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.8/-40.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 72.8672,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 25029300.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 35.7712,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 24.3597,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 9.53353,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 2.30445e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.16635e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.8/27.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 71.9352,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 3383150.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 33.761,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -14.3723,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -1.4339,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.92116e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 2.00623e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.8/125.0",
+   "process": "sf",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 12.9031,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 49718000.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 78.2459,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 7.525,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -27.744,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00536e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00512e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.98/-40.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 73.1665,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 25627100.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 30.8827,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 1.90269,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": 4.56143,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_hi": {
+     "actual": 1.82588e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.72479e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.98/27.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 26.383,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 84467500.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 57.7302,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 10.6329,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -5.69193,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.004e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.0039e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "sf/1.98/125.0",
+   "process": "sf",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 5.76413,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 41686300.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 105.174,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 6.74362,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -23.9822,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00224e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00196e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.62/-40.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 69.1634,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 676710.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 37.3413,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -5.54881,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -5.32847,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 3.08263e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 3.04682e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.62/27.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 68.8495,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 845292.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 36.3188,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -15.509,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -3.45163,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.0213e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.0142e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.62/125.0",
+   "process": "fs",
+   "voltage": 1.62,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 9.33282,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 33732700.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 92.7924,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 9.19316,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -9.61393,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00588e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00549e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.8/-40.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 70.3472,
+     "nan": false,
+     "pass": true
+    },
+    "unity_gain_bandwidth": {
+     "actual": 920505.0,
+     "nan": false,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": 36.0344,
+     "nan": false,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": -15.7771,
+     "nan": false,
+     "pass": true
+    },
+    "psr_minus": {
+     "actual": -3.82325,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 4.6741e-06,
+     "nan": false,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": 4.23877e-06,
+     "nan": false,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.8/27.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 18.5309,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 70817300.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 66.692,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 10.6401,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -9.85674,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00461e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00443e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.8/125.0",
+   "process": "fs",
+   "voltage": 1.8,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 5.44374,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 28754400.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 111.685,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 9.00353,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -8.04312,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.98/-40.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": -40.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 22.2326,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "phase_margin": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "psr_plus": {
+     "actual": 12.3498,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -4.44081,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.00318e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.00306e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last"
+   ]
+  },
+  {
+   "corner": "fs/1.98/27.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": 27.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 8.56888,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 61509500.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 93.6673,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 9.22272,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -11.152,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": 1.0024e-06,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_lo": {
+     "actual": 1.0022e-06,
+     "nan": false,
+     "pass": true
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "t_hi_last",
+    "t_lo_last",
+    "ugbw_hz"
+   ]
+  },
+  {
+   "corner": "fs/1.98/125.0",
+   "process": "fs",
+   "voltage": 1.98,
+   "temperature": 125.0,
+   "overall_pass": false,
+   "criteria": {
+    "dc_gain": {
+     "actual": 3.13783,
+     "nan": false,
+     "pass": false
+    },
+    "unity_gain_bandwidth": {
+     "actual": 22060000.0,
+     "nan": false,
+     "pass": true
+    },
+    "phase_margin": {
+     "actual": 127.419,
+     "nan": false,
+     "pass": true
+    },
+    "psr_plus": {
+     "actual": 8.51452,
+     "nan": false,
+     "pass": false
+    },
+    "psr_minus": {
+     "actual": -7.43866,
+     "nan": false,
+     "pass": true
+    },
+    "settling_time_hi": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    },
+    "settling_time_lo": {
+     "actual": null,
+     "nan": true,
+     "pass": false
+    }
+   },
+   "degn": null,
+   "measured_names": [
+    "gain_db",
+    "phase_margin_deg",
+    "psr_minus_db",
+    "psr_plus_db",
+    "ugbw_hz"
+   ]
+  }
+ ]
+}
