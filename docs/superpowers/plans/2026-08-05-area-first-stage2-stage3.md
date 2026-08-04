@@ -501,7 +501,7 @@ def test_normalize_without_alternatives_is_todays_behaviour():
 아니라 "호출부가 그 결과로 무엇을 하는가"의 변경이다. 함수를 바꾸면 최적화 단계와
 큐레이션이 쓰는 같은 함수의 의미가 함께 움직인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```python
 @pytest.mark.asyncio
@@ -530,14 +530,14 @@ async def test_an_area_rejection_no_longer_burns_a_retry(tmp_path):
     assert retries["by_reason"]["area"] == 0
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
-- [ ] **Step 3: 구현한다** — `if not area_ok: ... continue`를 삭제하고,
+- [x] **Step 2: 실패를 확인한다**
+- [x] **Step 3: 구현한다** — `if not area_ok: ... continue`를 삭제하고,
       `area_check` 이벤트에 `"blocking": False`를 더한다.
       `REJECTION_REASONS`에서 `"area"`는 **지우지 않는다** — 과거 실행의
       `history.jsonl`이 그 코드를 싣고 있고 `attempt_log` 렌더가 그것을 읽는다.
       대신 새 실행에서는 발생하지 않는다는 것이 테스트로 핀된다.
-- [ ] **Step 4: 통과 확인**
-- [ ] **Step 5: 커밋** — `feat: 면적 게이트를 거부에서 알림으로 강등`
+- [x] **Step 4: 통과 확인**
+- [x] **Step 5: 커밋** — `feat: 면적 게이트를 거부에서 알림으로 강등`
 
 ---
 
@@ -554,7 +554,7 @@ async def test_an_area_rejection_no_longer_burns_a_retry(tmp_path):
 - Consumes: `alternatives.normalize` / `alternatives.select`, Task 2의 `violation_sum`.
 - Produces: `tuning_alternatives` 이벤트 (아래).
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```python
 @pytest.mark.asyncio
@@ -598,8 +598,8 @@ async def test_verify_post_runs_once_on_the_winner_only(tmp_path):
     assert verify_post_calls == 1
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
-- [ ] **Step 3: 구현한다**
+- [x] **Step 2: 실패를 확인한다**
+- [x] **Step 3: 구현한다**
 
 재시도 루프의 본문을 이렇게 바꾼다(구조만 — 이름은 위 인터페이스를 따른다):
 
@@ -675,8 +675,8 @@ break
 3. `Measured.area_after`는 `total_area`가 `counted == 0`을 낼 수 있다. 그때는
    `None`이지 `0.0`이 아니다(Task 3의 테스트가 핀한다).
 
-- [ ] **Step 4: 통과 확인** — `pytest -m "not slow"` 전체
-- [ ] **Step 5: 커밋** — `feat: 대안 셋을 재고 규칙으로 고른다`
+- [x] **Step 4: 통과 확인** — `pytest -m "not slow"` 전체
+- [x] **Step 5: 커밋** — `feat: 대안 셋을 재고 규칙으로 고른다`
 
 ---
 
@@ -689,7 +689,7 @@ break
 **게이트와 프롬프트가 어긋나면 승인될 제안이 실행을 끝낸다.** 면적 게이트가
 강등됐으므로 프롬프트가 그것을 **제약이 아니라 사실로** 제시해야 한다.
 
-- [ ] **Step 1: 테스트를 쓴다**
+- [x] **Step 1: 테스트를 쓴다**
 
 ```python
 def test_the_prompt_asks_for_alternatives_and_says_they_are_optional():
@@ -714,7 +714,7 @@ def test_the_prompt_does_not_promise_that_area_blocks():
     assert "rejected by a deterministic area gate" not in TUNER_SYSTEM_PROMPT
 ```
 
-- [ ] **Step 2~4: 실패 확인 → 프롬프트 수정 → 통과 확인**
+- [x] **Step 2~4: 실패 확인 → 프롬프트 수정 → 통과 확인**
 
 프롬프트에 더할 문단(요지):
 
@@ -728,7 +728,7 @@ def test_the_prompt_does_not_promise_that_area_blocks():
 > **It does not block anything.** The number is a fact about your proposal, in
 > the same way the past-attempt table is a fact about this run.
 
-- [ ] **Step 5: 커밋** — `feat: 튜너 프롬프트 - 대안 요청과 면적 사실 제시`
+- [x] **Step 5: 커밋** — `feat: 튜너 프롬프트 - 대안 요청과 면적 사실 제시`
 
 ---
 

@@ -199,6 +199,42 @@ directly (see the deterministic-derivation section).
   - **The gate never blocks shrinking** (`evaluate_area_growth` short-circuits on
     `ratio <= 1.0`). Any code describing a symmetric `[baseline/M, baseline*M]`
     window as "the area gate's allowance" is wrong on the low half.
+- **The tuner may offer up to three alternatives, and they are measured before
+  one is chosen** (2026-08-05, `2026-08-05-area-first-stage2-stage3.md`).
+  `alternatives` is optional in `TUNER_SCHEMA` — **a proposal with one change set
+  takes a path byte-identical to before**, including simulating exactly once,
+  because there is nothing to choose between. Screening only happens at 2+.
+  - **The order is gates → `verify_pre` → simulate → choose, and `verify_pre`
+    before simulation is the load-bearing part.** Picking by measurement lets
+  cheating win: scaling `Vin`'s AC amplitude lifts `gain_db` 20 → 60 with the
+  circuit untouched, and shrinking `Cload` improves phase margin and UGBW at once.
+  - **The choice rule has two branches and both must stay alive.** If any
+    alternative passes, the smallest total area among the passing ones wins; if
+    none passes, the largest improvement wins. Improvement alone would make the
+    area computation a gate that never changes a decision; area alone would keep
+    picking tiny changes that never converge. `alternatives.py` holds the rule as
+    a pure function so both branches are pinned without the orchestrator.
+  - **`area_after is None` means "could not measure", never area 0**, so it can
+    never win by default; when *every* passing candidate is unmeasurable the rule
+    name itself says so (`max_improvement_area_unmeasurable`) — otherwise "nothing
+    passed" and "area was unmeasurable" would read identically in the log.
+  - **`tuning_alternatives` is written every retry, and `screened` is the
+    denominator.** A retry with one candidate had no choice to make; a retry that
+    screened and found ≤1 passing candidate did. Collapsing them makes "the
+    multi-pass branch fired 0 times" unreadable — and 0 firings is the
+    pre-registered signal to revert this whole change.
+  - **Screening does not use the simulator agent** (`cli.screen_simulate`). The
+    agent converges a control block, and a control block is a property of the
+    *testbench*, not of the parameter values — which is why `corner_sim` reuses
+    one across 45 corners. The design spec's cost paragraph assumed `simulate`
+    was a SPICE call; it is an LLM agent fanned out per testbench, so screening
+    through it would take bandgap from 5 to 15 simulator LLM calls per iteration
+    on the axis this repo has measured to dominate wall clock. Two consequences
+    are recorded rather than fixed: screening measures **the text it is handed**
+    (`simulate_fn` reads `state.current_netlist_paths()` instead), and screening
+    stays at **nominal even when corner reduction is active** — running the corner
+    wrapper would advance the probe rotation for a candidate that may be discarded.
+    Screening chooses; the winner is re-measured by `simulate` and judged there.
 - `topologies.py` / `topology_match.py` — a small curated library of pre-verified
   amplifier bodies the orchestrator can swap in as a last resort after repeated
   rollbacks (`TOPOLOGY_SWITCH_THRESHOLD`), instead of only ever changing values.
@@ -1816,11 +1852,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `OPAMP2STAGE.Rdeg.value`/`Rstart.value` became `OPAMP2STAGE.Rbias.value` (7 → 6).
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1635
-  passed, 2 skipped, 9 deselected, 98.08 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1646
+  passed, 2 skipped, 9 deselected, 101.61 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635 → 1646), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line

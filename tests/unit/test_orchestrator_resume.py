@@ -302,6 +302,10 @@ async def test_the_abandoned_iteration_events_are_dropped_not_deleted(tmp_path):
         "param_check",
         "stimulus_check",
         "verify_pre",
+        # 2026-08-05: 대안 정렬이 들어오면서 재시도마다 하나씩 더 나간다.
+        # **대안이 1개일 때도** 나가는 것이 요점이다 - 발화 0 을 보려면 분모가
+        # 로그에 있어야 한다.
+        "tuning_alternatives",
         "attempt_log",
     ]
     # 재개하면 같은 이터레이션이 다시 돌아 **글자 그대로 같은** 이벤트를 또

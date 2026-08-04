@@ -354,3 +354,33 @@ async def test_the_swap_prompt_renders_how_each_candidate_entry_was_verified():
     # them is decoration the agent cannot act on.
     assert "verified_at: corners" in TOPOLOGY_TUNER_SYSTEM_PROMPT
     assert "prefer the one verified at corners" in TOPOLOGY_TUNER_SYSTEM_PROMPT
+
+
+def test_the_prompt_asks_for_alternatives_and_says_they_are_optional():
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert "ALTERNATIVES" in TUNER_SYSTEM_PROMPT
+    assert "optional" in TUNER_SYSTEM_PROMPT
+
+
+def test_the_prompt_no_longer_promises_that_the_area_gate_blocks():
+    """게이트와 프롬프트가 어긋나면 승인될 제안이 실행을 끝낸다. 면적 게이트가
+    강등됐으므로 "다시 막힌다"는 문장이 남아 있으면 프롬프트가 게이트와
+    모순된다 - `verify_pre`가 `Xq1.m` 케이스를 거부하도록 지시받고 있던 것과
+    같은 모양이다."""
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    assert '"area", "refdes", "param", and\n"stimulus" are deterministic gates' not in TUNER_SYSTEM_PROMPT
+    assert "It does NOT block" in TUNER_SYSTEM_PROMPT
+
+
+def test_the_prompt_presents_area_as_a_fact_not_a_restriction():
+    """시도 기록과 같은 규율이다. 제약으로 쓰면 초점이 틀렸을 때 답을 지운다 -
+    bandgap 의 `vbg0_min` 초점이 `{BUF_P}` 인데 유일한 해법이 접힌 `BANDGAP`
+    블록에 있던 것이 그 전례다."""
+    from analogcoder.agents.tuner import TUNER_SYSTEM_PROMPT
+
+    lowered = TUNER_SYSTEM_PROMPT.lower()
+    for banned in ("do not grow", "must not increase the area", "stay under"):
+        assert banned not in lowered
+    assert "a fact about your proposal" in TUNER_SYSTEM_PROMPT

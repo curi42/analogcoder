@@ -24,7 +24,14 @@ def make_spec(*testbench_names):
         for n in testbench_names
     ]
     return SimpleNamespace(
-        circuit_name="fake", testbenches=testbenches, canonical=testbenches[0]
+        circuit_name="fake",
+        testbenches=testbenches,
+        canonical=testbenches[0],
+        # 실제 `TargetSpec`이 갖는 필드다. 대안 선별이 개선량을 계산할 때
+        # `spec.all_criteria`를 읽으므로 가짜 spec도 갖춰야 한다 - 여기서는
+        # 비어 있고(위 테스트벤치들의 criteria가 전부 []), 그러면 개선량은
+        # 0이 되어 선택이 면적 분기로만 갈린다.
+        all_criteria=[c for tb in testbenches for c in tb.criteria],
     )
 
 
@@ -2321,3 +2328,204 @@ async def test_exhaustion_by_gate_rejections_alone_is_labelled_escalate_and_the_
         assert event["verify_pre_rejected"] is False
         # 제안 하나에 변경이 둘인데도 사유별 개수는 재시도 수와 같다.
         assert event["by_reason"] == {**ALL_REASONS_ZERO, "refdes": 3}
+
+
+# --- 대안 정렬 (2026-08-05, 2단계 Task 5) -------------------------------------
+
+TWO_KNOB_NETLIST = "* netlist\nRf vminus vout 10k\nRg vplus 0 5k\n.end\n"
+
+
+def _judge_fail_then_pass():
+    """첫 판정만 FAIL. 그 뒤(선별 후보들과 튜닝 후 판정)는 전부 PASS 이므로
+    루프가 한 이터레이션에 착지한다."""
+    calls = {"n": 0}
+
+    async def judge(measurements, spec):
+        calls["n"] += 1
+        return FAIL_JUDGE if calls["n"] == 1 else PASS_JUDGE
+
+    return judge
+
+
+
+def _alt_proposal(*specs):
+    """`specs`는 `(refdes, new_value)` 튜플들. 첫 번째가 1차 제안이다."""
+    (r0, v0), *rest = specs
+    return {
+        "proposed_changes": [
+            {"refdes": r0, "param": "value", "old_value": "10k",
+             "new_value": v0, "reasoning": "p"}
+        ],
+        "alternatives": [
+            {"changes": [{"refdes": r, "param": "value", "old_value": "10k",
+                          "new_value": v, "reasoning": "a"}], "reasoning": "a"}
+            for r, v in rest
+        ],
+        "overall_reasoning": "x",
+        "confidence": 90,
+    }
+
+
+def _alt_events(state):
+    return [
+        json.loads(line)
+        for line in open(state.history_path)
+        if json.loads(line)["step"] == "tuning_alternatives"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_alternatives_event_is_written_even_when_the_tuner_offers_one(tmp_path):
+    """"이 분기가 아무것도 안 할 때 로그가 어떻게 보이는가" - 이 저장소의 첫
+    번째 상비 질문이다. 발화 0을 읽으려면 분모가 로그에 있어야 하므로 대안이
+    하나뿐인 재시도에도 이벤트가 나간다."""
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    events = _alt_events(state)
+    assert events
+    first = events[0]
+    assert first["offered"] == 1
+    assert first["dropped_over_cap"] == 0
+    assert first["survived_gates"] == 1
+    assert first["survived_verify_pre"] == 1
+    # 고를 것이 없으므로 재지 않는다 - 오늘 1회인 시뮬이 2회가 되면 안 된다.
+    assert first["screened"] is False
+    assert first["simulated"] == 0
+    assert first["passing_count"] is None
+    assert first["rule"] is None
+    assert first["multi_pass_branch_fired"] is False
+    assert first["winner_source"] == "primary"
+
+
+@pytest.mark.asyncio
+async def test_a_single_alternative_never_reaches_the_screening_simulator(tmp_path):
+    """대안이 없으면 오늘 동작과 바이트 동일해야 한다. 선별 시뮬레이터가 한
+    번도 안 불리는 것이 그 증거다."""
+    screen_calls = {"n": 0}
+
+    async def screen(netlist_texts, spec):
+        screen_calls["n"] += 1
+        return {"measurements": {"gain_db": 20.0}, "status": "success"}
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE))
+    agents.screen_simulate = screen
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert screen_calls["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_one_alternative_failing_a_hard_gate_drops_only_that_alternative(tmp_path):
+    """오늘은 게이트에 걸린 제안 하나가 재시도를 통째로 태운다. 대안별로
+    돌면 걸린 것만 버린다."""
+    async def tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        # 두 번째가 없는 refdes - refdes 게이트가 그것만 버려야 한다.
+        return _alt_proposal(("Rf", "11k"), ("Znope", "12k"), ("Rg", "13k"))
+
+    async def screen(netlist_texts, spec):
+        return {"measurements": {"gain_db": 20.0}, "status": "success"}
+
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
+    agents.screen_simulate = screen
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_KNOB_NETLIST}, FAKE_SPEC, state, agents)
+
+    first = _alt_events(state)[0]
+    assert first["offered"] == 3
+    assert first["survived_gates"] == 2
+    assert first["survived_verify_pre"] == 2
+    assert first["screened"] is True
+
+
+@pytest.mark.asyncio
+async def test_verify_pre_runs_on_every_survivor_before_any_screening_simulation(tmp_path):
+    """측정값으로 고르면 `Cload` 축소 같은 치팅이 1등을 한다. verify_pre 는
+    재기 **전에** 있어야 한다."""
+    order = []
+
+    async def tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return _alt_proposal(("Rf", "11k"), ("Rg", "6k"))
+
+    async def verify_pre(structure_view, judge_result, proposal, netlist_view):
+        order.append("verify_pre")
+        return {"approved": True, "concerns": [], "feedback": "ok"}
+
+    async def screen(netlist_texts, spec):
+        order.append("screen")
+        return {"measurements": {"gain_db": 20.0}, "status": "success"}
+
+    agents = make_agents(
+        judge=lambda m, s: _async(FAIL_JUDGE), tune=tune, verify_pre=verify_pre
+    )
+    agents.screen_simulate = screen
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_KNOB_NETLIST}, FAKE_SPEC, state, agents)
+
+    # 첫 재시도의 앞 네 항목: verify_pre 둘이 screen 둘보다 **모두** 앞선다.
+    assert order[:4] == ["verify_pre", "verify_pre", "screen", "screen"]
+
+
+@pytest.mark.asyncio
+async def test_when_two_alternatives_pass_the_smaller_area_wins_end_to_end(tmp_path):
+    """선택 규칙의 면적 분기가 오케스트레이터를 통해 실제로 착지점을 바꾼다.
+    `Rg` 를 5k -> 1k 로 줄이는 쪽이 면적이 작으므로 이긴다."""
+    async def tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return {
+            "proposed_changes": [
+                {"refdes": "Rf", "param": "value", "old_value": "10k",
+                 "new_value": "99k", "reasoning": "크게"}
+            ],
+            "alternatives": [
+                {"changes": [{"refdes": "Rg", "param": "value", "old_value": "5k",
+                              "new_value": "1k", "reasoning": "작게"}], "reasoning": "a"}
+            ],
+            "overall_reasoning": "x",
+            "confidence": 90,
+        }
+
+    async def screen(netlist_texts, spec):
+        return {"measurements": {"gain_db": 20.0}, "status": "success"}
+
+    # 선별 판정은 둘 다 통과, 최종 judge 도 통과시켜 실행을 끝낸다.
+    agents = make_agents(judge=_judge_fail_then_pass(), tune=tune)
+    agents.screen_simulate = screen
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_KNOB_NETLIST}, FAKE_SPEC, state, agents)
+
+    first = _alt_events(state)[0]
+    assert first["screened"] is True
+    assert first["simulated"] == 2
+
+
+@pytest.mark.asyncio
+async def test_verify_post_runs_once_on_the_winner_only(tmp_path):
+    """승자에 대해서만 돈다 - 대안마다 돌면 LLM 호출이 대안 수만큼 는다."""
+    calls = {"n": 0}
+
+    async def tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        return _alt_proposal(("Rf", "11k"), ("Rg", "6k"))
+
+    async def screen(netlist_texts, spec):
+        return {"measurements": {"gain_db": 20.0}, "status": "success"}
+
+    async def verify_post(prev_judge, new_judge, applied_changes):
+        calls["n"] += 1
+        return {"improved": True, "regressed_criteria": [], "recommendation": "keep", "feedback": "ok"}
+
+    agents = make_agents(
+        judge=_judge_fail_then_pass(), tune=tune, verify_post=verify_post
+    )
+    agents.screen_simulate = screen
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": TWO_KNOB_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert calls["n"] == 1

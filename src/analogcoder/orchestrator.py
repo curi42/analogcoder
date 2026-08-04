@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from typing import Callable
 
 from analogcoder.agents.backend import AgentExecutionError
+from analogcoder.alternatives import Measured, normalize, select
 from analogcoder.area_limits import evaluate_area_growth, index_baseline_components
 from analogcoder.attempt_log import ATTEMPT_RENDER_LIMIT, Attempt, deltas_between, regressed_between, render_attempts
 from analogcoder.checkpoint import LoopProgress, snapshot_progress
+from analogcoder.judge_tools import violation_sum
+from analogcoder.area import total_area
 from analogcoder.control_block import measurement_nets
 from analogcoder.netlist import (
     apply_changes,
@@ -36,6 +39,23 @@ class OrchestratorAgents:
     verify_pre: Callable
     verify_post: Callable
     propose_topology: Callable
+    # 대안 **선별**용 시뮬레이션. `simulate`와 계약(`(netlist_texts, spec)`)은
+    # 같지만 시뮬레이터 **에이전트를 거치지 않는** 것이 존재 이유다: 에이전트의
+    # 일은 컨트롤 블록을 수렴·복구하는 것이고, 컨트롤 블록은 테스트벤치의
+    # 성질이지 파라미터 값의 성질이 아니다(그래서 `corner_sim`이 한 번 수렴한
+    # 것을 45 코너에 재사용한다). 선별에 에이전트를 쓰면 bandgap 기준 iteration
+    # 당 시뮬레이터 LLM 호출이 5 -> 15가 되고, 이 저장소는 LLM 지연이 벽시계를
+    # 지배한다는 것을 이미 실측했다.
+    #
+    # `None`이면 `simulate`로 떨어진다 - 그것이 설계 스펙 본문의 동작이고,
+    # 배선하지 않은 호출부에서도 정확히 오늘처럼 돈다.
+    #
+    # **알려진 비대칭:** 코너 축소가 활성일 때 `simulate`는 축소 집합의 최악값을
+    # 내지만, 배선된 `screen_simulate`가 그 래퍼를 거치지 않으면 선별은 명목
+    # 한 점으로 판정한다. 선별은 **후보를 고르는 일**이지 판정이 아니고, 고른
+    # 승자는 아래에서 `simulate`로 다시 재어 판정된다 - 그래서 어긋남의 대가는
+    # "덜 좋은 후보를 골랐다"이지 "틀린 판정"이 아니다.
+    screen_simulate: Callable | None = None
 
 
 # `Attempt.outcome`이 가질 수 있는 값 전부. 집계를 **0으로 채워** 내보내기
@@ -138,6 +158,77 @@ def _outcome_counts(attempts: list[Attempt]) -> dict[str, int]:
     for attempt in attempts:
         counts[attempt.outcome] = counts.get(attempt.outcome, 0) + 1
     return counts
+
+
+def _hard_gates(
+    netlist_text: str, changes: list[dict], log: Callable
+) -> tuple[bool, str | None, str | None]:
+    """강등되지 **않은** 세 게이트를 순서대로 돌린다.
+
+    이 셋은 "정당한가"가 아니라 **"적용 자체가 되는가"**를 묻는다 - 없는
+    refdes에 변경을 적용하면 에러 없이 아무 일도 일어나지 않는다. 그래서
+    면적 게이트와 달리 강등 대상이 아니다.
+
+    반환은 `(통과 여부, 사유 코드, 피드백)`. 통과면 뒤의 둘은 `None`이다.
+
+    **세 게이트는 각각 자기 이벤트를 낸다.** 하나로 뭉치면 `refdes_check`와
+    `param_check`가 로그에서 구별되지 않고, 사유 코드는 결정되는 자리에서
+    기록되며 `history.jsonl`에서 되찾을 수 없다(둘 다 `feedback` 키를 쓴다).
+    첫 실패에서 멈추는 것도 오늘 그대로다 - 뒤의 게이트는 돌지도 로그되지도
+    않는다.
+
+    원본 전문을 넘긴다 - 이 게이트들은 초점과 무관하게 판정해야 한다."""
+    for reason, check in (
+        ("refdes", check_refdes_resolution),
+        ("param", check_param_applicability),
+        ("stimulus", check_stimulus_untouched),
+    ):
+        ok, feedback = check(netlist_text, changes)
+        log(f"{reason}_check", ok, feedback)
+        if not ok:
+            return False, reason, feedback
+    return True, None, None
+
+
+def _alternatives_event(
+    outer_iter: int,
+    retry: int,
+    alts: list,
+    dropped_over_cap: int,
+    surviving: list,
+    approved: list,
+    selection,
+) -> dict:
+    """`tuning_alternatives` 이벤트. **매 재시도, 대안이 1개일 때도** 나간다.
+
+    이 저장소의 첫 번째 상비 질문이 "이 게이트가 아무것도 안 할 때 로그가
+    어떻게 보이는가"다. 대안 정렬의 존재 이유는 **여러 대안이 다 통과할 때
+    면적으로 착지점을 고르는 것**이므로, 그 분기가 한 번도 발화하지 않으면
+    면적 정렬은 무력하고 정직한 결론은 되돌리는 것이다. 그것을 보려면
+    발화 0도 기록돼야 한다.
+
+    `screened`가 분모다: 후보가 하나뿐이라 고를 것이 없었던 재시도와, 골랐는데
+    통과가 1개 이하였던 재시도는 다른 사실이다. 둘을 가르지 않으면 "발화 0"이
+    "기회가 없었다"인지 "기회가 있었는데 안 걸렸다"인지 알 수 없다."""
+    screened = selection is not None
+    return {
+        "outer_iter": outer_iter,
+        "retry": retry,
+        "offered": len(alts),
+        "dropped_over_cap": dropped_over_cap,
+        "survived_gates": len(surviving),
+        "survived_verify_pre": len(approved),
+        "screened": screened,
+        "simulated": len(selection.candidates) if screened else 0,
+        "passing_count": selection.passing_count if screened else None,
+        "rule": selection.rule if screened else None,
+        "winner": selection.winner.index if screened else (approved[0].index if approved else None),
+        "winner_source": (
+            selection.winner.source if screened else (approved[0].source if approved else None)
+        ),
+        # 무조건 싣는다. 0이면 튜너 단계의 면적 정렬은 무력하다.
+        "multi_pass_branch_fired": bool(screened and selection.passing_count >= 2),
+    }
 
 
 def _record_rejected(
@@ -602,122 +693,175 @@ async def run_orchestration(
                 )
                 state.log_event("tuning_proposal", {"outer_iter": outer_iter, "retry": retry, **proposal})
 
-                area = evaluate_area_growth(baseline_components, proposal["proposed_changes"])
-                area_ok, area_feedback = area.approved, area.feedback
-                # states는 승인 여부와 별개로 **게이트가 무엇을 볼 수 있었는지**를
-                # 남긴다. 이것 없이는 "볼 것이 없어서 통과"(nf)와 "정의가 include
-                # 안에만 있어 볼 수 없어서 통과"(blind)가 로그에서 구별되지
-                # 않는다 - 면적 게이트가 조용히 무력해진 두 번의 전례가 모두
-                # 실행 로그로는 알아챌 수 없었던 이유다.
-                state.log_event(
-                    "area_check",
-                    {
-                        "outer_iter": outer_iter,
-                        "retry": retry,
-                        # 계산 결과는 그대로다. 바뀐 것은 그 결과로 무엇을
-                        # 하는가뿐이다 - `evaluate_area_growth`는 한 줄도
-                        # 건드리지 않았고, 최적화 단계와 큐레이션이 쓰는 같은
-                        # 함수의 의미가 함께 움직이면 안 되기 때문이다.
-                        "approved": area_ok,
-                        "feedback": area_feedback,
-                        "states": area.states,
-                        # **무조건** 싣는다. 키의 부재와 `false`가 구별되어야
-                        # "강등됐다"와 "이 계측이 사라졌다"가 갈린다.
-                        "blocking": False,
-                    },
-                )
-                # 면적 게이트는 **거부하지 않는다**(2026-08-05 강등). 상한 숫자에
-                # 근거가 없다는 것이 이유이고, 성장은 통과 직후 면적 최소화
-                # 단계가 되돌린다. 계산·기록·통보는 전부 남는다 - 게이트를
-                # 지우면 성장이 보이지 않게 되고, 그것은 조용히 무력한 게이트의
-                # 반대 방향 실수다.
-                #
-                # `REJECTION_REASONS`에서 `"area"`는 **지우지 않는다**: 과거
-                # 실행의 `history.jsonl`이 그 코드를 싣고 있고 `attempt_log`
-                # 렌더가 그것을 읽는다. 새 실행에서 0이 되는 것과 키가 사라지는
-                # 것은 다른 사실이다.
+                # 튜너는 1차 제안 + 최대 2개의 대안을 낸다. `alternatives`가
+                # 없으면 목록은 1개이고 아래 경로는 오늘과 **동작이 같다**.
+                alts, dropped_over_cap = normalize(proposal)
+                canonical_text = netlist_texts[canonical_name]
 
-                refdes_ok, refdes_feedback = check_refdes_resolution(
-                    netlist_texts[canonical_name], proposal["proposed_changes"]
-                )
-                state.log_event(
-                    "refdes_check",
-                    {"outer_iter": outer_iter, "retry": retry, "approved": refdes_ok, "feedback": refdes_feedback},
-                )
-                if not refdes_ok:
-                    rejection_feedback = refdes_feedback
-                    _record_rejected(tuning_history, outer_iter, retry, proposal, "refdes", refdes_feedback)
-                    continue
-
-                # 원본 전문을 넘긴다 - 이 게이트는 초점과 무관하게 판정해야
-                # 한다 (area_check/refdes_check와 동일한 원칙).
-                param_ok, param_feedback = check_param_applicability(
-                    netlist_texts[canonical_name], proposal["proposed_changes"]
-                )
-                state.log_event(
-                    "param_check",
-                    {"outer_iter": outer_iter, "retry": retry, "approved": param_ok, "feedback": param_feedback},
-                )
-                if not param_ok:
-                    rejection_feedback = param_feedback
-                    _record_rejected(tuning_history, outer_iter, retry, proposal, "param", param_feedback)
-                    continue
-
-                # 최상위 자극원/전원을 건드리는 제안은 "회로를 안 고친 채
-                # 측정만 바꾸는" 제안이다 - 앞의 세 게이트 어느 것도 그것을
-                # 막지 않고, judge는 모든 기준이 좋아졌으니 통과시킨다.
-                stimulus_ok, stimulus_feedback = check_stimulus_untouched(
-                    netlist_texts[canonical_name], proposal["proposed_changes"]
-                )
-                state.log_event(
-                    "stimulus_check",
-                    {
-                        "outer_iter": outer_iter,
-                        "retry": retry,
-                        "approved": stimulus_ok,
-                        "feedback": stimulus_feedback,
-                    },
-                )
-                if not stimulus_ok:
-                    rejection_feedback = stimulus_feedback
-                    _record_rejected(tuning_history, outer_iter, retry, proposal, "stimulus", stimulus_feedback)
-                    continue
-
-                misses = focus_misses(focus, proposal["proposed_changes"], netlist_texts[canonical_name])
-                if misses:
-                    # 기록만 하고 흐름은 막지 않는다 - 초점이 틀렸다는 증거이지
-                    # 제안이 틀렸다는 증거가 아니다.
+                # --- 게이트: 대안별로 돌고, 걸린 것만 버린다 -----------------
+                # 오늘은 게이트에 걸린 제안 하나가 재시도를 통째로 태운다.
+                surviving: list = []
+                feedbacks: list[str] = []
+                for alt in alts:
+                    area = evaluate_area_growth(baseline_components, alt.changes)
                     state.log_event(
-                        "focus_miss",
-                        {"outer_iter": outer_iter, "retry": retry, "refdes": misses},
+                        "area_check",
+                        {
+                            "outer_iter": outer_iter,
+                            "retry": retry,
+                            "alternative": alt.index,
+                            # 계산 결과는 그대로다. 바뀐 것은 그 결과로 무엇을
+                            # 하는가뿐이다 - `evaluate_area_growth`는 한 줄도
+                            # 건드리지 않았고, 최적화 단계와 큐레이션이 쓰는
+                            # 같은 함수의 의미가 함께 움직이면 안 되기 때문이다.
+                            "approved": area.approved,
+                            "feedback": area.feedback,
+                            "states": area.states,
+                            # **무조건** 싣는다. 키의 부재와 `false`가 구별되어야
+                            # "강등됐다"와 "이 계측이 사라졌다"가 갈린다.
+                            "blocking": False,
+                        },
+                    )
+                    # 면적 게이트는 **거부하지 않는다**(2026-08-05 강등). 상한
+                    # 숫자에 근거가 없다는 것이 이유이고, 성장은 통과 직후 면적
+                    # 최소화 단계가 되돌린다. 계산·기록·통보는 전부 남는다 -
+                    # 게이트를 지우면 성장이 보이지 않게 되고, 그것은 조용히
+                    # 무력한 게이트의 반대 방향 실수다.
+                    #
+                    # `REJECTION_REASONS`에서 `"area"`는 **지우지 않는다**: 과거
+                    # 실행의 `history.jsonl`이 그 코드를 싣고 있고 `attempt_log`
+                    # 렌더가 그것을 읽는다. 새 실행에서 0이 되는 것과 키가
+                    # 사라지는 것은 다른 사실이다.
+
+                    def _log_gate(step, ok, feedback, _alt=alt):
+                        state.log_event(
+                            step,
+                            {
+                                "outer_iter": outer_iter,
+                                "retry": retry,
+                                "alternative": _alt.index,
+                                "approved": ok,
+                                "feedback": feedback,
+                            },
+                        )
+
+                    gate_ok, gate_reason, gate_feedback = _hard_gates(
+                        canonical_text, alt.changes, _log_gate
+                    )
+                    if gate_ok:
+                        surviving.append(alt)
+                        continue
+                    feedbacks.append(gate_feedback or "")
+                    _record_rejected(
+                        tuning_history, outer_iter, retry, alt.as_proposal(),
+                        gate_reason, gate_feedback or "",
                     )
 
-                # verify_pre에는 초점을 제안이 실제로 지목한 블록까지 넓혀
-                # 넘긴다. 원래 초점만 넘기면, 비초점 서브회로는 본문이 접혀
-                # "* ... (N components elided)"로만 보이는데도 verify_pre의
-                # 프롬프트는 "넷리스트 위의 컴포넌트 줄에 없는 refdes/param은
-                # 거부하라"고 지시한다 - 접힌 블록을 지목한, 게이트를 이미
-                # 통과한 정상적인 제안이 그 문장 그대로 거부 대상처럼 보이게
-                # 되어 verify_pre가 초점 오류를 튜너의 잘못으로 오판한다.
-                # 튜너 쪽 뷰(netlist_view)는 그대로 둔다 - 넓혀야 하는 쪽은
-                # 지금 판정 중인 제안을 실제로 봐야 하는 verifier뿐이다.
-                resolved_blocks = resolve_change_scopes(
-                    netlist_texts[canonical_name], proposal["proposed_changes"]
-                )
-                verify_netlist_view = render_netlist(netlist_texts[canonical_name], focus | resolved_blocks)
+                if not surviving:
+                    rejection_feedback = "\n".join(f for f in feedbacks if f)
+                    state.log_event(
+                        "tuning_alternatives",
+                        _alternatives_event(outer_iter, retry, alts, dropped_over_cap,
+                                            surviving, [], None),
+                    )
+                    continue
 
-                review = await agents.verify_pre(structure_view, judge_result, proposal, verify_netlist_view)
-                state.log_event("verify_pre", {"outer_iter": outer_iter, "retry": retry, **review})
+                # --- verify_pre: 재기 **전에**, 살아남은 전부에 -------------
+                # "시뮬 먼저 하고 이긴 것만 verify_pre"는 싸 보이지만 위험하다.
+                # `Vin`의 AC 진폭을 100으로 바꾸면 회로를 하나도 안 바꾸고
+                # `gain_db`가 20 -> 60으로 뛰고, `Cload`를 줄이면 위상여유와
+                # UGBW가 함께 좋아진다. **측정값으로 고르면 이런 치팅이 1등을
+                # 한다.** 그것을 막는 것이 verify_pre이므로 재기 전에 있어야 한다.
+                approved_alts: list = []
+                for alt in surviving:
+                    misses = focus_misses(focus, alt.changes, canonical_text)
+                    if misses:
+                        # 기록만 하고 흐름은 막지 않는다 - 초점이 틀렸다는
+                        # 증거이지 제안이 틀렸다는 증거가 아니다.
+                        state.log_event(
+                            "focus_miss",
+                            {"outer_iter": outer_iter, "retry": retry,
+                             "alternative": alt.index, "refdes": misses},
+                        )
+                    # verify_pre에는 초점을 제안이 실제로 지목한 블록까지 넓혀
+                    # 넘긴다. 원래 초점만 넘기면, 비초점 서브회로는 본문이 접혀
+                    # "* ... (N components elided)"로만 보이는데도 verify_pre의
+                    # 프롬프트는 "넷리스트 위의 컴포넌트 줄에 없는 refdes/param은
+                    # 거부하라"고 지시한다 - 접힌 블록을 지목한, 게이트를 이미
+                    # 통과한 정상적인 제안이 그 문장 그대로 거부 대상처럼 보이게
+                    # 되어 verify_pre가 초점 오류를 튜너의 잘못으로 오판한다.
+                    resolved_blocks = resolve_change_scopes(canonical_text, alt.changes)
+                    verify_netlist_view = render_netlist(canonical_text, focus | resolved_blocks)
+                    review = await agents.verify_pre(
+                        structure_view, judge_result, alt.as_proposal(), verify_netlist_view
+                    )
+                    state.log_event(
+                        "verify_pre",
+                        {"outer_iter": outer_iter, "retry": retry,
+                         "alternative": alt.index, **review},
+                    )
+                    if review["approved"]:
+                        approved_alts.append(alt)
+                        continue
+                    verify_pre_rejected_any = True
+                    feedbacks.append(review["feedback"])
+                    _record_rejected(
+                        tuning_history, outer_iter, retry, alt.as_proposal(),
+                        "verify_pre", review["feedback"],
+                    )
 
-                if review["approved"]:
-                    approved_proposal = proposal
-                    approved_retry = retry
-                    break
-                verify_pre_rejected_any = True
-                rejection_feedback = review["feedback"]
-                _record_rejected(
-                    tuning_history, outer_iter, retry, proposal, "verify_pre", review["feedback"]
+                if not approved_alts:
+                    rejection_feedback = "\n".join(f for f in feedbacks if f)
+                    state.log_event(
+                        "tuning_alternatives",
+                        _alternatives_event(outer_iter, retry, alts, dropped_over_cap,
+                                            surviving, approved_alts, None),
+                    )
+                    continue
+
+                # --- 선별 ---------------------------------------------------
+                # **후보가 하나면 재지 않는다.** 고를 것이 없는데 재면 오늘
+                # 1회인 시뮬레이션이 2회가 된다 - `alternatives`가 없을 때
+                # 오늘 동작과 바이트 동일해야 한다는 제약이 이 분기다.
+                selection = None
+                if len(approved_alts) > 1:
+                    screen = agents.screen_simulate or agents.simulate
+                    measured: list[Measured] = []
+                    for alt in approved_alts:
+                        candidate_texts = _apply_to_all(netlist_texts, alt.changes)
+                        candidate_sim = await screen(candidate_texts, spec)
+                        # **새 판정 경로를 만들지 않는다** - 루프가 오늘 쓰는
+                        # `agents.judge`를 그대로 부른다.
+                        candidate_judge = await agents.judge(candidate_sim["measurements"], spec)
+                        vs = violation_sum(
+                            spec.all_criteria,
+                            sim_result["measurements"],
+                            candidate_sim["measurements"],
+                        )
+                        area_total = total_area(candidate_texts[canonical_name])
+                        measured.append(
+                            Measured(
+                                alt=alt,
+                                passed=candidate_judge["overall_pass"],
+                                # `counted == 0`은 면적 0이 아니라 "못 쟀다"다.
+                                area_after=None if area_total.counted == 0 else area_total.area,
+                                improvement=vs.improvement,
+                            )
+                        )
+                    selection = select(measured)
+                    winner = selection.winner
+                else:
+                    winner = approved_alts[0]
+
+                state.log_event(
+                    "tuning_alternatives",
+                    _alternatives_event(outer_iter, retry, alts, dropped_over_cap,
+                                        surviving, approved_alts, selection),
                 )
+
+                approved_proposal = winner.as_proposal()
+                approved_retry = retry
+                break
 
             # **계측만이다 - 아래 분기의 동작은 한 줄도 바뀌지 않았다.**
             #

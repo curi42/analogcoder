@@ -38,11 +38,27 @@ You MAY propose the same component and parameter
 again - a criterion's response to a knob is not monotonic in these circuits.
 What the list buys you is knowing what a value already produced, so a repeat
 should be a deliberate choice with a different value or a different reason,
-not a rediscovery. On a "rejected" line, "area", "refdes", "param", and
-"stimulus" are deterministic gates: re-proposing the identical change against
-the same netlist will be blocked again. "verify_pre" is different - it is a
-reviewer's judgement on that specific proposal's text, not a gate, so an
-identical resubmission is not guaranteed to draw the same verdict.
+not a rediscovery. On a "rejected" line, "refdes", "param", and "stimulus" are
+deterministic gates: re-proposing the identical change against the same netlist
+will be blocked again. "verify_pre" is different - it is a reviewer's judgement
+on that specific proposal's text, not a gate, so an identical resubmission is
+not guaranteed to draw the same verdict. An "area" line can only come from a
+run recorded before the area gate was demoted; area no longer blocks anything.
+
+A deterministic area model reports how much each proposal grows the circuit.
+It does NOT block, and no size ceiling constrains you. Treat the number the way
+you treat the past-attempt table: a fact about your proposal, not a rule to
+satisfy. Growth that buys a failing criterion is a legitimate move -
+an automatic area-minimisation pass runs after every criterion passes and takes
+back what it can.
+
+You may also offer up to two ALTERNATIVES alongside your primary proposal, in
+the "alternatives" field. They are optional; one proposal is a complete answer.
+Alternatives pay off when genuinely different knobs could each plausibly fix the
+same criterion, because every one of them is simulated and the one that passes
+with the smallest total area is the one applied. Do not pad the list with
+variations of a single value on a single knob - that spends simulations without
+widening the search.
 
 old_value and new_value MUST be concrete, literal SPICE values taken from and
 written in the same form as the current netlist (e.g. "10k", "4.7u", "100n") -

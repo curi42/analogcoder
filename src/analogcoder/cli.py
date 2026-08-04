@@ -29,7 +29,7 @@ from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_area_optimization, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, _attempt_summary, run_orchestration
-from analogcoder.pvt import run_full_pvt_sweep
+from analogcoder.pvt import _simulate_rendered, run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
 from analogcoder.simulators.cache import CachingSimulator
 from analogcoder.simulators.ngspice import NgspiceBackend
@@ -170,6 +170,46 @@ def _argmax_drift(entry_sweep: dict, verdict_sweep: dict) -> dict:
         "measurability_changed_count": _count("measurability_changed"),
         "unpaired_count": _count("unpaired"),
     }
+
+
+def screen_simulate(netlist_texts: dict[str, str], spec_arg, sim_backend) -> dict:
+    """대안 **선별**용 시뮬레이션. 시뮬레이터 에이전트를 거치지 않는다.
+
+    에이전트의 기여는 정확히 둘이다 - 수렴하는 컨트롤 블록을 찾는 것과
+    status를 보고하는 것. 컨트롤 블록은 **테스트벤치의 성질이지 파라미터
+    값의 성질이 아니고**(그래서 `corner_sim`이 한 번 수렴한 것을 45 코너에
+    재사용한다), 선별은 같은 테스트벤치의 같은 컨트롤 블록으로 파라미터만
+    다른 덱 셋을 재는 일이다. 에이전트를 쓰면 bandgap 기준 iteration당
+    시뮬레이터 LLM 호출이 5 -> 15가 되고, LLM 지연이 벽시계를 지배한다는
+    것은 이 저장소가 이미 실측했다.
+
+    **`simulate_fn`과 다른 점이 하나 더 있다: 인자로 받은 텍스트를 잰다.**
+    `simulate_fn`은 `state.current_netlist_paths()`를 읽으므로 디스크에
+    올라간 **현재 버전**을 재는데, 선별은 아직 적용하지 않은 후보를 재야
+    한다. 그래서 `_simulate_rendered`로 각자의 임시 디렉터리에서 돈다 -
+    최상위 `.include`는 이 시점에 이미 절대 경로이므로(위 `resolve_includes`)
+    디렉터리를 옮겨도 깨지지 않는다.
+
+    **코너 축소가 활성이어도 이 경로는 명목 한 점이다.** 축소 래퍼를
+    태우면 탐침 회전이 선별 때문에 돌고 코너 로그가 후보 수만큼 불어난다 -
+    선별은 **후보를 고르는 일**이지 판정이 아니고, 고른 승자는
+    오케스트레이터가 `simulate`로 다시 재어 판정한다.
+    """
+    merged_measurements = {}
+    by_testbench = {}
+    status = "success"
+    for tb in spec_arg.testbenches:
+        result = _simulate_rendered(
+            sim_backend, netlist_texts[tb.name], tb.control_block
+        )
+        merged_measurements.update(result.measurements)
+        by_testbench[tb.name] = {
+            "status": result.status,
+            "measurements": result.measurements,
+        }
+        if status == "success" and result.status != "success":
+            status = result.status
+    return {"status": status, "measurements": merged_measurements, "by_testbench": by_testbench}
 
 
 def _reduction_off_reason(corner_capable: bool, reduction) -> str:
@@ -447,6 +487,9 @@ async def _run(args) -> dict:
                 status = tb_status
         return {"status": status, "measurements": merged_measurements, "by_testbench": by_testbench}
 
+    async def screen_simulate_fn(netlist_texts, spec_arg):
+        return screen_simulate(netlist_texts, spec_arg, sim_backend)
+
     async def judge_fn(measurements, spec_arg):
         """판정은 LLM이 아니다 - `evaluate_criteria`를 그대로 부른다.
 
@@ -693,6 +736,7 @@ async def _run(args) -> dict:
         state.log_event("corner_reduction_inactive", {"reason": reduction_reason})
 
     agents = OrchestratorAgents(
+        screen_simulate=screen_simulate_fn,
         simulate=simulate_for_run,
         judge=judge_fn,
         tune=tune_fn,
