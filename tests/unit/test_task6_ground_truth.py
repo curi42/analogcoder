@@ -214,7 +214,12 @@ def test_the_focus_baseline_the_metric_has_to_beat_is_pinned_too(scorer):
         "bandgap_seed_buf0_droop": 32,
         "bandgap_seed_tc": 103,
         "bandgap_seed_trim_pm": 65,
-        "two_stage_opamp_phase_margin": 30,
+        # 2026-08-04: 30 -> 27. `two_stage_opamp` 의 바이어스가 자기바이어스 베타
+        # 배율기에서 저항+다이오드로 바뀌면서 소자가 셋 줄고 하나 늘었다
+        # (Xp4 의 L·W, Rdeg·Rstart 의 value 가 빠지고 Rbias 의 value 가 들어온다).
+        # 이 케이스는 블록이 하나뿐이라 초점이 항상 전체이므로 초점 노브 수는
+        # 덱의 전체 노브 수와 같이 움직인다. bandgap 셋은 안 건드렸다.
+        "two_stage_opamp_phase_margin": 27,
     }
 
 

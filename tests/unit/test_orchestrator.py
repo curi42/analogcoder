@@ -790,7 +790,7 @@ async def test_the_swap_event_records_which_refdes_the_area_gate_can_no_longer_b
     assert "AMP.Xn1" not in unconstrained
     assert "AMP.Xcc" not in unconstrained
     assert stale == {"AMP.Xn1", "AMP.Xcc"}
-    assert {"AMP.Rz", "AMP.Xp3", "AMP.Xp4", "AMP.Xn2"} <= unconstrained
+    assert {"AMP.Rz", "AMP.Xp3", "AMP.Rbias", "AMP.Xn2"} <= unconstrained
 
 
 @pytest.mark.asyncio
@@ -967,12 +967,18 @@ async def test_a_kept_swap_reaches_the_result_with_its_block_topology_and_area_c
         # a run that swapped in a `verified_at="nominal"` entry from one that
         # swapped in a corner-verified one - which is the entire reason F2
         # added these two fields to Topology.
+        # 2026-08-04: 이 값은 "corners" 였다. 바이어스 수정과 함께 이 항목의
+        # 코너 주장이 실측으로 반증되어 "nominal" 로 내려갔다 - 이 테스트가
+        # 계속 못박는 것은 **필드가 스왑 기록을 타고 흐른다는 것**이다.
+        # 다만 이제 두 값을 가르는 대비는 folded_cascode 항목들에만 남아 있다.
         "provenance": "extracted",
-        "verified_at": "corners",
-        # miller_nulling_resistor's body has 16 components; Xn1 and Xcc share
-        # a refdes with GENERIC_5PORT_SWAPPABLE_BODY (so they keep a - now
-        # stale - baseline entry), the other 14 were never indexed at all.
-        "unconstrained_refdes": 14,
+        "verified_at": "nominal",
+        # miller_nulling_resistor's body has 14 components (16 until the
+        # 2026-08-04 bias change dropped Xp4/Rdeg/Rstart and added Rbias);
+        # Xn1 and Xcc share a refdes with GENERIC_5PORT_SWAPPABLE_BODY (so
+        # they keep a - now stale - baseline entry), the other 12 were never
+        # indexed at all.
+        "unconstrained_refdes": 12,
         "stale_baseline_refdes": 2,
         "outcome": "kept",
     }]

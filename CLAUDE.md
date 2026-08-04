@@ -1262,6 +1262,13 @@ recorded rather than deleted.
   design variable. Two-stage design: a 3×3 screen then a 7×7 confirm taking the
   **median** of all interior 2×2 contrasts (a max lets one step through). Full
   numbers: `2026-07-30-knob-coupling-scan.md`.
+  - **That scan ran on the pre-2026-08-04 deck, i.e. on a circuit with three DC
+    solutions, and the whole "bistability deviation" filter exists because of it.**
+    The qualitative conclusion survives — coupling was confirmed on pairs where the
+    operating state provably did not move, and it was independently confirmed on
+    bandgap. **The specific pairs and `I_rel` values do not**: they were measured on
+    a bias chain that no longer exists. Re-run the scan before quoting a number from
+    it, and note that the filter itself is now unnecessary.
 - **Bandgap's coupling was then measured too, and it crosses block boundaries.**
   The scan above covers one deck, so a strategy tested only on bandgap would be
   tested where no coupling had been measured. On `amp_loops` (**not** `canonical`
@@ -1412,49 +1419,104 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `Cc` improves phase margin but reduces UGBW. Starts with phase margin failing by
   design, so it exercises the tune → verify → re-simulate loop. See
   `2026-07-25-two-stage-opamp-benchmark-design.md`.
-  - **Its bias chain has TWO stable DC solutions, and which one the solver lands on
-    flips chaotically with device size and with corner.** `Xn2`+`Rdeg` is a
-    self-biased beta-multiplier and `Rstart` its start-up element; **both**
-    solutions carry current, so this is not the zero-current degenerate case.
-    State A: `degn` 0.0119 V (~0.6 µA). State B: 0.0626 V (~3.1 µA), **5.3×**,
-    which takes `ugbw_hz` from 2.08e6 to **2.70e7 — 13×**. `vout` is 0.55 V in
-    both, so **the DC output cannot tell them apart; only the AC response can.**
-    Isolated single widths flip it — `X6.W` 5.999999 fine, **6.0 flips**, 6.000001
-    fine — so it is neither a model bin nor non-determinism. **The shipped
-    45-corner data is already affected at the shipped `X6.W=8`: 127 measurements
-    change under a `.nodeset` that steers to state A**, while `overall_pass` stays
-    False either way. So every number quoted from this deck has an unverified
-    operating state behind it, and **the tuner changes device sizes, so it can flip
-    the state mid-run with no record.** A `.nodeset` fixes every anomalous width
-    and leaves every correct one byte-identical, but applying it changes 127
-    documented measurements and "which state was intended" is a design question —
-    so it is **not applied**. Full diagnosis and the four decisions this needs:
-    `2026-07-30-two-stage-opamp-bistable-bias.md`.
+  - **Its bias chain had THREE DC solutions and was replaced on 2026-08-04. Any
+    number quoted from this deck before that date carries an unidentified operating
+    state.** The old chain was a self-biased beta-multiplier (`Xp4`/`Xn1`/`Xn2` +
+    `Rdeg` 20k, `Rstart` 3Meg as start-up). Measured by counting zero crossings of
+    the current a swept `nbias` source must supply — a count no solver path can
+    bias — it had **exactly 3 self-consistent solutions at all 45 corners**, and the
+    corner only decided *which one the solver landed on*: A `degn` 0.0119 V
+    (~0.6 µA, 20 corners), B 0.0626 V (~3.1 µA, 11), C **0.85 V (~42.5 µA, 14)**, a
+    latched-high state where `gain_db` collapses to 3–26 dB. `X6.W` 5.999999 →
+    **6.0** → 6.000001 flipped `ugbw_hz` 2.07e6 → **2.70e7** → 2.07e6 on a 1e-6
+    change, so **the tuner could flip the state mid-run with no record.**
+    Diagnosis: `2026-08-03-tso-third-bias-state.md`.
+    - **The replacement is a resistor+diode reference (`Rbias` 1Meg into the
+      diode-connected `Xn2`), and the single solution is arithmetic, not luck**: the
+      resistor's current falls monotonically in `V(nbias)` while the diode's rises,
+      so there is exactly one crossing. Measured **1 crossing at all 45 corners** and
+      at all 8 swept `X6.W` values, where 5.999999 / 6.0 / 6.000001 now give
+      byte-identical `gain` 72.0156 / `ugbw` 3000750 / `pm` 33.4184.
+    - **Direction was decided by theory before measurement, and the measurement
+      agreed.** A self-biased loop determines itself, so its fixed points are
+      multiple by construction — which is *why* a beta-multiplier needs a start-up
+      element. Adding devices cannot make it single-solution. Measured accordingly:
+      an anti-latch clamp gated on `degn` left 3/45 untouched at W=1 **and** W=4
+      (the latch survives because `pbias` bottoms out, opening `Xp4` to ~240 µA —
+      more than any clamp sinks), and weakening the PMOS mirror reached only 20/45.
+    - **The clamp contributed nothing, and only a single-variable control showed
+      it**: `clamp_rdeg_3k` and `rdeg_3k` have *identical* histograms, as do
+      `pmos_l8` and `pmos_l8_clamp`. Ship two changes together and the effect gets
+      attributed to the wrong one. Same control killed a second false attribution:
+      `si_lowI` (narrow-long NMOS + `Rdeg` 200k) is 45/45, but so is `rdeg_200k`
+      **alone** — the resizing was doing nothing.
+    - **A single DC solution is necessary, not sufficient.** `Rdeg` ≥ 100k also gives
+      1/45 and **destroys the amplifier**: `dc_gain` 34.9 dB at every corner and
+      `psr_plus` **+13.9 dB (positive — it amplifies supply noise)**. Judge a bias
+      fix on the amplifier, never on the solution count alone.
+    - **The fix moved nothing that defines the benchmark and improved everything
+      else**, which is why **no threshold was changed**: nominal `dc_gain`
+      71.0861 → 71.4929 and `phase_margin` 34.5636 → 33.9776 (still failing by
+      design), while corners with `dc_gain < 60` went **14/45 → 0/45**, `psr_plus`
+      10 → **32/45**, `psr_minus` 34 → **42/45**, and **NaN 11 → 0**. The
+      supply-independence loss was expected to cost PSRR and **measurably did not** —
+      most old PSR failures were the latch. `2026-08-04-tso-bias-fix-results.md`.
+    - **`TOPOLOGY_LIBRARY` carried the same bias block twice and had to change in the
+      same commit.** `miller_basic` and `miller_nulling_resistor` both embedded the
+      old chain, so a topology swap would have **reinstated the defect**. Fixing both
+      also preserves `identical_body` (`miller_basic` ≡ `OPAMP2STAGE`, so the deck
+      still offers 1 candidate, not 2).
   - `spec.yaml` also declares two PSR testbenches (`psr_plus`, `psr_minus`) with
-    the AC stimulus moved to `Vdd`/`Vss`. Baseline `psr_plus_db=-15.12dB` (passes),
-    `psr_minus_db=-3.36dB` (fails `<=-8dB` — `M6`'s NMOS source sits directly on
-    `vss` with no cascode). Increasing `M6.W` improves `psr_minus` but regresses
+    the AC stimulus moved to `Vdd`/`Vss`. Nominal baseline after the 2026-08-04 bias
+    fix: `psr_plus_db=-12.7692` against `<=-10.0` and `psr_minus_db=-0.951585`
+    against `<=0.0` — **both pass**; what `psr_minus` costs shows up at corners
+    (32/45 and 42/45 respectively), because `M6`'s NMOS source sits directly on
+    `vss` with no cascode. **The numbers this line used to carry (`-15.12` / `-3.36`
+    "fails `<=-8dB`") were doubly stale**: pre-fix, and quoting a threshold no
+    committed spec has — `spec.yaml` and `spec_pvt.yaml` both say `-10.0` / `0.0`.
+    Increasing `M6.W` improves `psr_minus` but regresses
     `phase_margin` and, with an `M7.W` change, `psr_plus` too — the real motivation
     for verifying every testbench every iteration. See
     `2026-07-25-psr-verification-design.md`.
-  - `spec_topology_required.yaml` raises `phase_margin` to 65°, which no value of
+  - `spec_topology_required.yaml` raises `phase_margin` to **62°** (this line said
+    65° until 2026-08-04; the file has always said 62.0), which no value of
     `Cc` alone reaches without failing UGBW — the motivation for topology-swap
     tuning. **Caveat, found by a real run:** it does not reliably force the swap
     for a strong model — a live Claude run solved it in 2 iterations via
     `Cc`+`M6.W` together, a combination outside the original Cc-only sweep. The
     mechanism is still verified correct; this benchmark just is not a guaranteed
     trigger. See `2026-07-25-topology-swap-tuning-design.md`.
+    - **`miller_nulling_resistor`'s `Rz` is 160k, re-derived after the bias change,
+      and the entry is now marginal here.** Optimal `Rz ≈ 1/gm6` tracks the bias
+      current, so the old 220k gives `pm` **57.38° — under the 62° threshold**.
+      The swept optimum is 160k at 62.34° / 4.05 MHz / 71.49 dB: it meets all three
+      criteria with **0.34° of margin** on a flat peak (150k → 62.13, 170k → 62.20).
+    - **`verified_at="corners"` on both miller entries was false from the day they
+      shipped, and it is `"nominal"` now.** `agents/tuner.py` puts this field in the
+      tuner prompt, so it is a claim, not a note. Measured across 45 corners:
+      *before* the bias change (old bias, `Rz`=220k) `pm >= 62` held at 12/45 with
+      **7 NaN** and a range of 3.98–132.12° — and 132° is not a good corner, it is
+      the latched state where the amplifier became a follower. *After* (`Rz`=160k)
+      it is 6/45 with **0 NaN** over 46.17–72.11°: **the count fell and the meaning
+      appeared.** `miller_basic` is simpler still — it *is* the deck's body, and the
+      deck has never passed `spec_pvt.yaml` at 45 corners (0/45). The two bandgap
+      entries were **not** measured and were **not** touched: downgrading an
+      unmeasured claim is the same kind of assertion as upgrading one.
   - `spec_search_slot.yaml` — `spec_pvt.yaml` byte-for-byte except `phase_margin`
     `60.0 → 30.0`, authored as a search-strategy validation slot (the same kind of
-    thing `spec_curate_slot.yaml` is for curation). **It does not work, and the
-    reason is the entry in this file two sections up.** Its baseline passes all 7
-    criteria at nominal and fails all 7 across the 45-corner grid — `dc_gain`
-    3.13783 dB at `fs/1.98/125` (nominal 71.0861) and **four criteria measure
-    `NaN`**, which no threshold can admit. Lowering one threshold fixed the nominal
-    failure and could not touch the corner one. **Do not quote an area number from
-    this slot as shipped-spec performance, and do not lower more thresholds to
-    "fix" it** — the corner failure is not a threshold problem. Left in place as the
-    artifact of a rejected measurement.
+    thing `spec_curate_slot.yaml` is for curation). **It was abandoned as unusable
+    and the 2026-08-04 bias fix revived it, with no threshold touched.** It used to
+    pass all 7 criteria at nominal and fail all 7 across the 45-corner grid —
+    `dc_gain` 3.13783 dB at `fs/1.98/125` against a nominal 71.0861, and **four
+    criteria measuring `NaN`**, which no threshold can admit. That was the three-DC-
+    solution bias, not the spec: after the fix the same file passes **25 of 45
+    corners** with `dc_gain` and `phase_margin` at **45/45** and **zero NaN**.
+    **The lesson that survives is the one that was right at the time** — lowering a
+    threshold fixed the nominal failure and could not touch the corner one, because
+    the corner failure was never a threshold problem. Do not lower thresholds to
+    "fix" a slot; find out what the circuit is doing. Whether 25/45 makes this a
+    *good* search-strategy slot is a separate question needing its own
+    pre-registration.
 - `benchmarks/bandgap/` — five-block Kuijk bandgap reference chain (`BGR_CORE` +
   `ERRAMP` → `TRIMAMP` → resistor ladder → `BUF_N`/`BUF_P`), producing `vbg1`=1.2V
   and `vbg0`=0.5V. Unlike every other benchmark this one is **multi-block**, and
@@ -1528,8 +1590,8 @@ baseline — a genuine model capability gap, not a pipeline defect.
     Ahuja body for `TRIMAMP` gives **REJECT**, dominated by the swept point
     `TRIMAMP.XRz.l = 25.98` at **99.90° vs 89.42°**, with `addresses` narrowed to
     `['trim_phase_margin']`. 120 simulations, 2 min 41 s.
-  - **Bandgap is not contaminated by the bistability that affects
-    `two_stage_opamp`, and that was measured.** `scripts/dc_solution_uniqueness.py`
+  - **Bandgap is not contaminated by the multi-solution bias that affected
+    `two_stage_opamp` (fixed 2026-08-04), and that was measured independently.** `scripts/dc_solution_uniqueness.py`
     pushes the bias chain's initial guess five ways — including explicitly to the
     off state — across four device sizes and **four of the six testbench decks**:
     all six probes come back identical every time. `netlist_seed_topology.cir` is
@@ -1719,6 +1781,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   two_stage_opamp ~24 s over 4) — it measures `optimizer.run_area_optimization`
   against both benchmarks and its numbers are the 2단계 baseline table in
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
+  **That table's two_stage_opamp row was measured before the 2026-08-04 bias fix and
+  the plan is left as the historical record, so re-measure rather than quote it**:
+  what still holds is `UNCHANGED`, 0 accepted / 20 rejected, ~23 s / 21 sims; what
+  moved is the area (2.38037e-10 → 2.37037e-10) and the zero-gain knob list, where
+  `OPAMP2STAGE.Rdeg.value`/`Rstart.value` became `OPAMP2STAGE.Rbias.value` (7 → 6).
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
 - **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-04: 1613

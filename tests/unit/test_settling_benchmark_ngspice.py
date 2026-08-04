@@ -25,11 +25,14 @@ def test_spec_declares_four_testbenches_including_settling_time():
 
 
 def test_baseline_netlist_matches_validated_settling_measurements():
-    # These are the real ngspice measurements recorded in
-    # docs/superpowers/specs/2026-07-26-sky130-pdk-migration-design.md's
-    # Validation section for the sky130 miller_basic subckt (Cc MiM cap,
-    # w=12.05/l=12.05). This test exists to catch unintentional drift in
-    # the committed .cir file - not to re-derive the thresholds.
+    # Real ngspice measurements re-taken on 2026-08-04, after the bias chain
+    # was changed from a self-biased beta-multiplier to a resistor+diode
+    # reference - see docs/superpowers/specs/2026-08-04-tso-bias-fix-results.md.
+    # The earlier numbers (2.4666e-6 / 2.2610e-6) came from the sky130 PDK
+    # migration's Validation section and no longer describe this deck: they
+    # were measured on a circuit with three DC solutions, so which one they
+    # described was never established. This test exists to catch unintentional
+    # drift in the committed .cir file - not to re-derive the thresholds.
     spec = _load_two_stage_opamp_spec()
     settling = next(tb for tb in spec.testbenches if tb.name == "settling_time")
     backend = NgspiceBackend()
@@ -37,8 +40,8 @@ def test_baseline_netlist_matches_validated_settling_measurements():
     result = backend.run(settling.netlist_path, {"control_block": settling.control_block})
 
     assert result.status == "success"
-    assert 2.4e-6 <= result.measurements["t_hi_last"] <= 2.55e-6
-    assert 2.2e-6 <= result.measurements["t_lo_last"] <= 2.32e-6
+    assert 1.95e-6 <= result.measurements["t_hi_last"] <= 2.07e-6
+    assert 2.05e-6 <= result.measurements["t_lo_last"] <= 2.17e-6
 
 
 def test_settling_subckt_body_matches_other_three_testbenches():

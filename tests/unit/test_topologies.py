@@ -3,7 +3,10 @@ import pytest
 from analogcoder.netlist import parse_netlist
 from analogcoder.topologies import TOPOLOGY_LIBRARY, Topology
 
-_SELF_BIAS_REFDES = {"Xp3", "Xp4", "Xn1", "Xn2", "Rdeg", "Rstart"}
+# 2026-08-04: 자기바이어스 베타 배율기(Xp4/Rdeg/Rstart)가 저항+다이오드
+# 기준(Rbias)으로 바뀌었다. 이름도 함께 바꾼다 - 더 이상 자기바이어스가
+# 아니고, 그것이 이 변경의 요점이다(DC 해 3 -> 1).
+_BIAS_REFDES = {"Xp3", "Xn1", "Xn2", "Rbias"}
 _INPUT_PAIR_REFDES = {"X1", "X2", "X3", "X4", "X5", "X6", "X7"}
 _MIM_CAP_REFDES = {"Xcc", "Xca"}
 
@@ -25,7 +28,7 @@ def test_miller_basic_body_has_expected_components():
     wrapped = f".subckt TEST vinp vinn vout vdd vss\n{body}.ends TEST\n"
     parsed = parse_netlist(wrapped)
     refdes = {c.refdes for c in parsed.subckts["TEST"].components}
-    assert refdes == _SELF_BIAS_REFDES | _INPUT_PAIR_REFDES | _MIM_CAP_REFDES
+    assert refdes == _BIAS_REFDES | _INPUT_PAIR_REFDES | _MIM_CAP_REFDES
 
 
 def test_miller_nulling_resistor_body_has_rz_in_series_with_cc():
@@ -34,12 +37,12 @@ def test_miller_nulling_resistor_body_has_rz_in_series_with_cc():
     parsed = parse_netlist(wrapped)
     subckt = parsed.subckts["TEST"]
     refdes = {c.refdes for c in subckt.components}
-    assert refdes == _SELF_BIAS_REFDES | _INPUT_PAIR_REFDES | _MIM_CAP_REFDES | {"Rz"}
+    assert refdes == _BIAS_REFDES | _INPUT_PAIR_REFDES | _MIM_CAP_REFDES | {"Rz"}
     cc = next(c for c in subckt.components if c.refdes == "Xcc")
     rz = next(c for c in subckt.components if c.refdes == "Rz")
     assert cc.nodes[1] == rz.nodes[0]  # Xcc's second node feeds directly into Rz's first node
     assert rz.nodes[1] == "vout"
-    assert rz.value == "220000"
+    assert rz.value == "160000"
 
 
 def test_miller_nulling_resistor_addresses_phase_margin():

@@ -15,11 +15,9 @@
 
 .subckt OPAMP2STAGE vinp vinn vout vdd vss
 Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
-Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
 Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
-Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
-Rdeg degn vss 20k
-Rstart vdd nbias 3Meg
+Xn2 nbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rbias vdd nbias 1Meg
 
 X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
 X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8

@@ -115,36 +115,6 @@
         },
         {
           "ctype": "X",
-          "device_class": "pfet",
-          "model": "sky130_fd_pr__pfet_01v8",
-          "nodes": [
-            "nbias",
-            "pbias",
-            "vdd",
-            "vdd"
-          ],
-          "refdes": "OPAMP2STAGE.Xp4",
-          "terminals": [
-            [
-              "d",
-              "drive"
-            ],
-            [
-              "g",
-              "sense"
-            ],
-            [
-              "s",
-              "drive"
-            ],
-            [
-              "b",
-              "bulk"
-            ]
-          ]
-        },
-        {
-          "ctype": "X",
           "device_class": "nfet",
           "model": "sky130_fd_pr__nfet_01v8",
           "nodes": [
@@ -180,7 +150,7 @@
           "nodes": [
             "nbias",
             "nbias",
-            "degn",
+            "vss",
             "vss"
           ],
           "refdes": "OPAMP2STAGE.Xn2",
@@ -208,30 +178,10 @@
           "device_class": null,
           "model": null,
           "nodes": [
-            "degn",
-            "vss"
-          ],
-          "refdes": "OPAMP2STAGE.Rdeg",
-          "terminals": [
-            [
-              "1",
-              "drive"
-            ],
-            [
-              "2",
-              "drive"
-            ]
-          ]
-        },
-        {
-          "ctype": "R",
-          "device_class": null,
-          "model": null,
-          "nodes": [
             "vdd",
             "nbias"
           ],
-          "refdes": "OPAMP2STAGE.Rstart",
+          "refdes": "OPAMP2STAGE.Rbias",
           "terminals": [
             [
               "1",
@@ -529,11 +479,6 @@
         "drive",
         "sense"
       ]
-    },
-    "vss": {
-      "OPAMP2STAGE": [
-        "drive"
-      ]
     }
   },
   "patterns": [
@@ -565,8 +510,8 @@
       "current_mirror",
       "OPAMP2STAGE",
       [
-        "OPAMP2STAGE.Xp3",
-        "OPAMP2STAGE.Xp4"
+        "OPAMP2STAGE.Xn1",
+        "OPAMP2STAGE.Xn2"
       ]
     ],
     [
@@ -598,11 +543,7 @@
       "value"
     ],
     [
-      "OPAMP2STAGE.Rdeg",
-      "value"
-    ],
-    [
-      "OPAMP2STAGE.Rstart",
+      "OPAMP2STAGE.Rbias",
       "value"
     ],
     [
@@ -707,14 +648,6 @@
     ],
     [
       "OPAMP2STAGE.Xp3",
-      "W"
-    ],
-    [
-      "OPAMP2STAGE.Xp4",
-      "L"
-    ],
-    [
-      "OPAMP2STAGE.Xp4",
       "W"
     ]
   ]

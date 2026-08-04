@@ -15,8 +15,11 @@ class Topology:
     # 어떤 검증 절차에 태울지 이 필드로 가른다 - 파일에서 값을 추측하지 않는다.
     provenance: str
     # 이 본문이 어느 수준까지 검증됐는가 - "nominal"(한 지점) | "corners"
-    # (다지점 PVT 스윕). 오늘의 네 항목은 전부 45-코너 스윕을 통과한 덱에서
-    # 뽑았으므로 "corners"다.
+    # (다지점 PVT 스윕). **네 항목이 전부 "corners"였고, 2026-08-04 에 그중 둘이
+    # 실측으로 반증되어 "nominal"로 내려갔다** - `miller_basic` 과
+    # `miller_nulling_resistor`. 두 bandgap 항목은 재지 않았으므로 그대로 두었다:
+    # 재지 않은 것을 내리는 것도 재지 않은 것을 올리는 것과 같은 종류의 주장이다.
+    # 이 필드는 `agents/tuner.py` 가 튜너 프롬프트에 그대로 싣는다.
     verified_at: str
 
 
@@ -28,14 +31,18 @@ TOPOLOGY_LIBRARY: dict[str, Topology] = {
         ports=["vinp", "vinn", "vout", "vdd", "vss"],
         assumes_scale=1e-6,
         provenance="extracted",
-        verified_at="corners",
+        # 2026-08-04: "corners" -> "nominal". 이 본문은 `two_stage_opamp` 자신의
+        # 본문이고, 그 덱은 `spec_pvt.yaml` 의 45 코너에서 **0/45** 로 전체 통과한
+        # 적이 없다 - 즉 "corners" 는 이 항목이 출하된 이래 참인 적이 없었다.
+        # 이 필드는 `agents/tuner.py` 가 튜너에게 그대로 보여주는 주장이므로
+        # 재지 않은 것을 크게 적어 둘 자리가 아니다. 근거:
+        # docs/superpowers/specs/2026-08-04-tso-bias-fix-results.md.
+        verified_at="nominal",
         subckt_body="""\
 Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
-Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
 Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
-Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
-Rdeg degn vss 20k
-Rstart vdd nbias 3Meg
+Xn2 nbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rbias vdd nbias 1Meg
 
 X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
 X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
@@ -54,7 +61,7 @@ Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
         id="miller_nulling_resistor",
         description=(
             "Two-stage Miller-compensated CMOS op-amp (sky130) with a nulling resistor Rz "
-            "(220kOhm, empirically validated - see the design spec's Rz sweep) in series "
+            "(160kOhm, re-derived by sweep on 2026-08-04 after the bias change) in series "
             "with Cc, cancelling the right-half-plane zero. On this sizing, improves phase "
             "margin AND unity-gain bandwidth simultaneously relative to no-Rz, rather than "
             "the usual bandwidth-for-phase-margin trade-off."
@@ -63,14 +70,19 @@ Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
         ports=["vinp", "vinn", "vout", "vdd", "vss"],
         assumes_scale=1e-6,
         provenance="extracted",
-        verified_at="corners",
+        # 2026-08-04: "corners" -> "nominal", 그리고 이것은 이번 변경이 깨뜨린 것이
+        # **아니다**. 변경 전(옛 바이어스 + Rz=220k)에도 45 코너 중 `phase_margin
+        # >= 62` 는 12 뿐이고 **NaN 이 7 개**, 범위가 3.98-132.12 도였다(132 도는
+        # 래치 상태에서 증폭기가 추종기가 된 것이라 좋은 코너가 아니다). 변경 후
+        # (Rz=160k)는 6/45 로 수는 줄지만 **NaN 0 개**, 범위 46.17-72.11 도로 모든
+        # 코너에서 일관된 증폭기다 - 숫자는 낮아지고 의미가 생겼다.
+        # 근거: docs/superpowers/specs/2026-08-04-tso-bias-fix-results.md.
+        verified_at="nominal",
         subckt_body="""\
 Xp3 pbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
-Xp4 nbias pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=2
 Xn1 pbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=2
-Xn2 nbias nbias degn vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
-Rdeg degn vss 20k
-Rstart vdd nbias 3Meg
+Xn2 nbias nbias vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
+Rbias vdd nbias 1Meg
 
 X1   n1   vinn tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
 X2   outA vinp tail vdd sky130_fd_pr__pfet_01v8 L=0.5 W=8
@@ -82,7 +94,7 @@ X6   vout outA vss vss sky130_fd_pr__nfet_01v8 L=0.5 W=8
 X7   vout pbias vdd vdd sky130_fd_pr__pfet_01v8 L=0.5 W=30
 
 Xcc outA cczz sky130_fd_pr__cap_mim_m3_1 w=12.05 l=12.05 mf=1
-Rz   cczz vout 220000
+Rz   cczz vout 160000
 Xca outA 0    sky130_fd_pr__cap_mim_m3_1 w=6.88 l=6.88 mf=1
 """,
     ),

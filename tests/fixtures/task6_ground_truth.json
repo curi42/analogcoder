@@ -773,7 +773,7 @@
    "case_id": "two_stage_opamp_phase_margin",
    "spec_path": "benchmarks/two_stage_opamp/spec.yaml",
    "canonical_netlist": "benchmarks/two_stage_opamp/netlist.cir",
-   "n_tunable_total": 33,
+   "n_tunable_total": 30,
    "scoreable": true,
    "block_level_discrimination": false,
    "failing_criteria": [
@@ -788,10 +788,10 @@
      "measurement_nets": [
       "vout"
      ],
-     "nominal_measured": 34.5636,
-     "nominal_evidence": "runs/measure/before/two_stage-1/history.jsonl 및 runs/measure/after/two_stage-{1,2}/history.jsonl 첫 judge actual=34.5636 (세 런 모두 동일)",
+     "nominal_measured": 33.9776,
+     "nominal_evidence": "2026-08-04 바이어스 수정 후 ngspice 재실행 (spec.yaml 의 ac_loop_gain 테스트벤치, 커밋된 netlist.cir). 이전 값 34.5636 은 runs/measure/... 의 런 로그에서 왔고 **DC 해가 셋인 덱**의 값이었다 - 어느 해의 숫자였는지 확인된 적이 없다. 자세히는 docs/superpowers/specs/2026-08-04-tso-bias-fix-results.md.",
      "provenance": [
-      "run_log"
+      "ngspice_rerun"
      ]
     }
    ],
@@ -1000,7 +1000,7 @@
       "value"
      ]
     ],
-    "denominator": 33,
+    "denominator": 30,
     "note": "블록이 하나라 블록 수준 채점은 무의미. 이 케이스는 '노브 수준 거리'만 채점한다. 어떤 런도 PASS 하지 못했으므로 'PASS 를 낸 채택 변경'이라는 최강 근거는 없다 — 반복 채택(kept)이 최선의 근거다.",
     "repair_sets": [
      [
@@ -1018,7 +1018,8 @@
     ],
     "repair_sets_derivation": "correct_set_refdes_param 그대로. 두 param 은 같은 소자의 것이고 런들이 항상 둘을 같은 값으로 움직인다 — 어느 쪽을 지목해도 그 소자에 도달한다.",
     "repair_sets_caveat": "이 케이스의 근거는 PASS 가 아니라 반복 채택(kept)이다. 어떤 런도 PASS 하지 못했다 — scoring.note 참조."
-   }
+   },
+   "deck_revision_note": "이 항목의 run_accepted_changes / correct_knobs / secondary_knobs 의 근거는 **2026-08-04 바이어스 수정 이전**의 덱에서 나온 런 로그다. 그 덱은 45 코너 전부에서 DC 해를 셋 가졌고 소자 폭 1e-6 변화로 동작 상태가 뒤집혔으므로, 거기서 인용한 **수치**는 어느 해의 것인지 확정되지 않는다. 살아남는 것은 노브 수준 주장(Miller 캡 Xcc 의 w/l 이 phase_margin 의 1차 노브다)이다 - 위상은 그대로이고 명목 위상여유도 34.5636 -> 33.9776 으로 거의 움직이지 않았다. 수치를 다시 쓰려면 새 덱에서 다시 돌려야 한다."
   },
   {
    "case_id": "bandgap_optimizer_iq_knob_ranking",

@@ -23,23 +23,6 @@
           "ctype": "X",
           "geometry_scale": 1e-06,
           "nodes": [
-            "nbias",
-            "pbias",
-            "vdd",
-            "vdd"
-          ],
-          "params": {
-            "L": "0.5",
-            "W": "2"
-          },
-          "refdes": "Xp4",
-          "scope": "OPAMP2STAGE",
-          "value": "sky130_fd_pr__pfet_01v8"
-        },
-        {
-          "ctype": "X",
-          "geometry_scale": 1e-06,
-          "nodes": [
             "pbias",
             "nbias",
             "vss",
@@ -59,7 +42,7 @@
           "nodes": [
             "nbias",
             "nbias",
-            "degn",
+            "vss",
             "vss"
           ],
           "params": {
@@ -74,25 +57,13 @@
           "ctype": "R",
           "geometry_scale": 1e-06,
           "nodes": [
-            "degn",
-            "vss"
-          ],
-          "params": {},
-          "refdes": "Rdeg",
-          "scope": "OPAMP2STAGE",
-          "value": "20k"
-        },
-        {
-          "ctype": "R",
-          "geometry_scale": 1e-06,
-          "nodes": [
             "vdd",
             "nbias"
           ],
           "params": {},
-          "refdes": "Rstart",
+          "refdes": "Rbias",
           "scope": "OPAMP2STAGE",
-          "value": "3Meg"
+          "value": "1Meg"
         },
         {
           "ctype": "X",
