@@ -1419,6 +1419,13 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `Cc` improves phase margin but reduces UGBW. Starts with phase margin failing by
   design, so it exercises the tune → verify → re-simulate loop. See
   `2026-07-25-two-stage-opamp-benchmark-design.md`.
+  - **`Cc` alone has never been able to pass `spec.yaml`, on either deck, and the
+    2026-08-04 bias fix made it 9° less short.** Measured by sweeping `Xcc.w`=`l`:
+    holding `ugbw >= 1.5 MHz` caps `Cc` at ≈15.8 before the fix (`phase_margin`
+    ≈45.8°) and ≈20.2 after (≈55.0°), against a 60° threshold — the trade-off is
+    monotone and clean in both, it just runs out. So any run that reaches PASS here
+    does it with `Cc` **plus** at least one more knob (the recorded runs kept
+    `Xcc` together with `X7.W`), and the benchmark got *easier*, not harder.
   - **Its bias chain had THREE DC solutions and was replaced on 2026-08-04. Any
     number quoted from this deck before that date carries an unidentified operating
     state.** The old chain was a self-biased beta-multiplier (`Xp4`/`Xn1`/`Xn2` +
