@@ -1,7 +1,7 @@
 # 면적 우선 최적화 2·3단계 구현 계획 — 게이트 강등 + 대안 정렬, 파레토 공선
 
 > **에이전트 작업자에게:** 필수 하위 스킬 — `superpowers:subagent-driven-development`
-> 로 태스크 단위로 구현한다. 각 단계는 체크박스(`- [ ]`)로 추적한다.
+> 로 태스크 단위로 구현한다. 각 단계는 체크박스(`- [x]`)로 추적한다.
 
 **목표:** 튜닝 루프가 착지하는 점을 면적 기준으로 고르게 만들고(2단계), 세 출처의
 수락점을 파레토 공선으로 보고한다(3단계).
@@ -85,7 +85,8 @@ Task 5를 시작하지 않는다. 거절되면 대안은 스펙대로 `agents.si
 - **드리프트 가드는 한 순서로만 갱신한다** — 새 입력이 게이트를 통과함을 먼저
   확인하고, 그 다음에 수를 올린다.
 - **테스트 수 실측 줄**(`CLAUDE.md`)은 실측한 값으로만 갱신한다.
-- 현재 기준선: `pytest -m "not slow"` → **1613 passed, 2 skipped, 9 deselected**.
+- 현재 기준선: `pytest -m "not slow"` → **1636 passed, 2 skipped, 9 deselected**
+  (Task 1~3 착지 후. 착수 시점은 1613 이었고 세 태스크가 23 개를 더했다).
 - **`two_stage_opamp`의 노브 수는 33이 아니라 30이다.** 스펙의 표는
   2026-08-04 바이어스 수정 이전 값이다(`2026-08-04-tso-bias-fix-results.md`).
   bandgap의 167은 그대로다.
@@ -128,7 +129,7 @@ Task 5를 시작하지 않는다. 거절되면 대안은 스펙대로 `agents.si
 - Produces: `TUNER_SCHEMA`가 `alternatives`를 optional array로 받는다. 각 원소는
   `proposed_changes`와 같은 모양의 `{changes, reasoning}`.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```python
 def test_tuner_schema_accepts_alternatives_and_does_not_require_them():
@@ -178,12 +179,12 @@ def test_an_alternative_change_obeys_the_same_refdes_and_param_patterns():
         jsonschema.validate(bad, TUNER_SCHEMA)
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 `.venv/bin/python -m pytest tests/unit/test_schemas.py -k alternatives -v`
 → 둘째 테스트가 FAIL (스키마가 `alternatives`를 모르므로 통과시킨다).
 
-- [ ] **Step 3: 스키마를 고친다**
+- [x] **Step 3: 스키마를 고친다**
 
 `_CHANGE_SCHEMA`를 밖으로 빼서 `proposed_changes`와 `alternatives[].changes`가
 **같은 객체를 참조**하게 한다 — 손으로 두 번 쓰면 갈라진다(`compose.py`가
@@ -231,8 +232,8 @@ TUNER_SCHEMA = {
 }
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
-- [ ] **Step 5: 커밋** — `feat: TUNER_SCHEMA 에 optional alternatives`
+- [x] **Step 4: 통과를 확인한다**
+- [x] **Step 5: 커밋** — `feat: TUNER_SCHEMA 에 optional alternatives`
 
 ---
 
@@ -252,7 +253,7 @@ TUNER_SCHEMA = {
 자로 재야 하므로 스케일이 `max(|threshold|, |actual_before|, |actual_after|)`여야
 한다. 이것이 스펙이 고정한 정의다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```python
 def test_violation_sum_uses_one_scale_for_before_and_after():
@@ -308,9 +309,9 @@ def test_a_missing_or_nan_measurement_is_counted_not_read_as_zero():
     assert r2.unmeasured_count == 1
 ```
 
-- [ ] **Step 2: 실패를 확인한다** — `ImportError: violation_sum`
+- [x] **Step 2: 실패를 확인한다** — `ImportError: violation_sum`
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 ```python
 @dataclass(frozen=True)
@@ -354,8 +355,8 @@ def violation_sum(criteria, before, after) -> ViolationSum:
     return ViolationSum(tb, ta, tb - ta, zero_scale, unmeasured)
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
-- [ ] **Step 5: 커밋** — `feat: 개선량 - 공통 스케일 정규화 위반량 합`
+- [x] **Step 4: 통과를 확인한다**
+- [x] **Step 5: 커밋** — `feat: 개선량 - 공통 스케일 정규화 위반량 합`
 
 ---
 
@@ -376,7 +377,7 @@ def violation_sum(criteria, before, after) -> ViolationSum:
     `Selection = (winner: Alternative, rule: str, passing_count: int)` with
     `rule ∈ {"min_area_among_passing", "max_improvement"}`.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다 — 양 분기 전부**
+- [x] **Step 1: 실패하는 테스트를 쓴다 — 양 분기 전부**
 
 스펙: "선택 규칙 양 분기 전부 — 통과 2개면 면적이 이기고, 통과 0개면 개선량이
 이긴다. 한쪽만 핀하면 나머지가 조용히 죽어도 모른다."
@@ -474,11 +475,11 @@ def test_normalize_without_alternatives_is_todays_behaviour():
     assert len(alts) == 1 and alts[0].source == "primary" and dropped == 0
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
-- [ ] **Step 3: 구현한다** — 위 시그니처 그대로. `select`는 순수 함수이고
+- [x] **Step 2: 실패를 확인한다**
+- [x] **Step 3: 구현한다** — 위 시그니처 그대로. `select`는 순수 함수이고
       시뮬레이션·LLM을 모르는 상태로 둔다.
-- [ ] **Step 4: 통과를 확인한다**
-- [ ] **Step 5: 커밋** — `feat: 대안 정규화와 선택 규칙 (양 분기)`
+- [x] **Step 4: 통과를 확인한다**
+- [x] **Step 5: 커밋** — `feat: 대안 정규화와 선택 규칙 (양 분기)`
 
 ---
 

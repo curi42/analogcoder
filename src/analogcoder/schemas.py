@@ -30,24 +30,43 @@ SIMULATION_SCHEMA = {
 # summary}`)은 스키마로 검증할 LLM 출력이 아니라 함수의 계약이다. 검증할 것이
 # 없는 스키마를 남겨 두면 "judge 출력은 검증된다"는 인상만 남는다.
 
+# 1차 제안과 대안이 **같은 객체를 참조**한다. 손으로 두 번 쓰면 갈라지고,
+# 느슨한 쪽을 통과한 변경은 뒤의 게이트가 잡아 대안 하나가 재시도를 태운다.
+# `compose.py`가 `netlist.py`의 include 규칙을 베껴 양방향으로 갈라진 전례가 있다.
+_TUNING_CHANGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "refdes": {
+            "type": "string",
+            "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$",
+        },
+        "param": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "old_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
+        "new_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["refdes", "param", "old_value", "new_value", "reasoning"],
+}
+
 TUNER_SCHEMA = {
     "type": "object",
     "properties": {
-        "proposed_changes": {
+        "proposed_changes": {"type": "array", "items": _TUNING_CHANGE_SCHEMA},
+        # `alternatives`는 **required가 아니다.** 약한 모델이 빠뜨린 필수 필드가
+        # 스펙 전체를 하드 FAIL시키는 것을 TOPOLOGY_SCHEMA의 `block_path`에서
+        # 이미 겪었다. 없거나 1개면 오늘 동작과 바이트 동일해야 한다.
+        # 상한 3은 스키마가 막는다 - 여기서 막지 않으면 정규화가 조용히 자르게
+        # 되고, 조용한 절단은 "전부 봤다"로 읽힌다.
+        "alternatives": {
             "type": "array",
+            "maxItems": 3,
             "items": {
                 "type": "object",
                 "properties": {
-                    "refdes": {
-                        "type": "string",
-                        "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$",
-                    },
-                    "param": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-                    "old_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
-                    "new_value": {"type": "string", "pattern": r"^-?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?[a-zA-Z]*$"},
+                    "changes": {"type": "array", "items": _TUNING_CHANGE_SCHEMA},
                     "reasoning": {"type": "string"},
                 },
-                "required": ["refdes", "param", "old_value", "new_value", "reasoning"],
+                "required": ["changes", "reasoning"],
             },
         },
         "overall_reasoning": {"type": "string"},

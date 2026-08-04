@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 
 from analogcoder.spec import Criterion
 
@@ -119,6 +120,78 @@ def relative_slack(criterion: Criterion, actual: float | None) -> float | None:
     if criterion.operator in _LOWER_BOUND:
         return (actual - criterion.threshold) / scale
     return (criterion.threshold - actual) / scale
+
+
+@dataclass(frozen=True)
+class ViolationSum:
+    """두 측정 지점 사이의 **정규화 위반량**과 그 차이.
+
+    `zero_scale_count`와 `unmeasured_count`는 합계에서 빠진 기준이 몇 건인지를
+    말한다. 둘을 세지 않으면 "기여가 0이었다"와 "잴 수 없어 빠졌다"가 같은
+    0으로 보인다 - 이 저장소가 `null`/`NaN`을 갈라 두는 이유와 같다."""
+
+    total_before: float
+    total_after: float
+    improvement: float
+    zero_scale_count: int
+    unmeasured_count: int
+
+
+def normalized_violation(criterion: Criterion, actual: float, scale: float) -> float:
+    """정규화 위반량. 통과했으면 0, 실패했으면 부족분을 `scale`로 나눈 값.
+
+    **스케일을 인자로 받는 것이 `relative_slack`과의 차이다.** 저쪽은
+    `max(|threshold|, |actual|)`로 점마다 계산하는데, 적용 전과 후를 비교하려면
+    두 점이 **같은 자**를 써야 한다 - 자가 다르면 개선량이 뜻을 잃는다.
+    호출부(`violation_sum`)가 `max(|threshold|, |before|, |after|)`를 준다.
+
+    통과한 기준은 `max(0, ...)`로 잘라 0을 낸다. 자르지 않으면 이미 통과한
+    기준을 더 통과시키는 변경이, 실패한 기준을 실제로 고치는 변경을 이긴다.
+
+    `scale == 0.0`이면 0을 낸다. 근거 없는 상수로 나누지 않는다 - 그 경우가
+    몇 건인지는 `violation_sum`이 센다."""
+    if scale == 0.0:
+        return 0.0
+    slack = (
+        actual - criterion.threshold
+        if criterion.operator in _LOWER_BOUND
+        else criterion.threshold - actual
+    )
+    return max(0.0, -slack / scale)
+
+
+def violation_sum(
+    criteria: list[Criterion],
+    before: dict[str, float],
+    after: dict[str, float],
+) -> ViolationSum:
+    """기준별 정규화 위반량의 합과 그 감소량.
+
+    측정이 **어느 쪽에서든** 없거나 NaN이면 그 기준은 합계에 넣지 않고
+    `unmeasured_count`로 센다. 0으로 읽으면 "재지 않았다"가 "위반이 없다"가
+    되는데, LLM judge가 없는 측정에 `actual=0`을 써 넣은 것이 그 에이전트를
+    제거한 이유다."""
+    total_before = total_after = 0.0
+    zero_scale = unmeasured = 0
+    for criterion in criteria:
+        a0 = before.get(criterion.measurement)
+        a1 = after.get(criterion.measurement)
+        if a0 is None or a1 is None or math.isnan(a0) or math.isnan(a1):
+            unmeasured += 1
+            continue
+        scale = max(abs(criterion.threshold), abs(a0), abs(a1))
+        if scale == 0.0:
+            zero_scale += 1
+            continue
+        total_before += normalized_violation(criterion, a0, scale)
+        total_after += normalized_violation(criterion, a1, scale)
+    return ViolationSum(
+        total_before=total_before,
+        total_after=total_after,
+        improvement=total_before - total_after,
+        zero_scale_count=zero_scale,
+        unmeasured_count=unmeasured,
+    )
 
 
 def corner_allowances(
