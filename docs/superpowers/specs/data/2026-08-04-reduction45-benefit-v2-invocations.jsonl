@@ -1,0 +1,6 @@
+{"arm": "off", "elapsed_s": 2469.916331500048, "exit": 1, "index": 1, "killed_by_cap": false, "run_dir": "runs/reduction45/off_1", "spec": "benchmarks/bandgap/.reduction45_off.yaml"}
+{"arm": "on", "elapsed_s": 5406.584925875068, "exit": 0, "index": 1, "killed_by_cap": false, "run_dir": "runs/reduction45/on_1", "spec": "benchmarks/bandgap/spec_seed_buf0_droop_45.yaml"}
+{"arm": "off", "elapsed_s": 1155.124514291063, "exit": 1, "index": 2, "killed_by_cap": false, "run_dir": "runs/reduction45/off_2", "spec": "benchmarks/bandgap/.reduction45_off.yaml"}
+{"arm": "on", "elapsed_s": 5985.3786326660775, "exit": 0, "index": 2, "killed_by_cap": false, "run_dir": "runs/reduction45/on_2", "spec": "benchmarks/bandgap/spec_seed_buf0_droop_45.yaml"}
+{"arm": "off", "elapsed_s": 69.6639014580287, "exit": 1, "index": 3, "killed_by_cap": false, "run_dir": "runs/reduction45/off_3", "spec": "benchmarks/bandgap/.reduction45_off.yaml"}
+{"arm": "on", "elapsed_s": 69.67566087516025, "exit": 1, "index": 3, "killed_by_cap": false, "run_dir": "runs/reduction45/on_3", "spec": "benchmarks/bandgap/spec_seed_buf0_droop_45.yaml"}

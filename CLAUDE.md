@@ -783,6 +783,53 @@ behaviour, and *why* it is off is logged (`corner_reduction_inactive`).
     derived from *saving* that 225-sim sweep. Threshold and metric point at different
     quantities. Check at pre-registration time that every clause — and every term of
     every metric — has an input it can take a non-trivial value on.
+  - **v2 re-ran it with those four fixed, observed both arms 2 vs 2, and it is
+    REJECTED again — but on the *cost* clause, with the accuracy clause passing.**
+    `2026-08-04-reduction45-benefit-v2-results.md`. Both preconditions held: OFF hit
+    "mid-loop PASS then final sweep fails" in **2 of 2** observed runs (`vbg0_droop`
+    22.9376 and 20.1424 against `<= 15`, plus `buf0_phase_margin` 78.7902 on one),
+    ON in **0 of 2**. Cost: ON's median outer iterations / OFF's = **2.5** counting
+    the dead runs, **1.571** excluding them — both over 1.5, so the verdict does not
+    depend on how the dead runs are read. **Do not read this as "reduction is
+    expensive"** — see the next bullet.
+  - **The cost clause's own justification is falsified by the code, and that is the
+    sixth pre-registration defect.** v2 chose outer iterations partly because "OFF's
+    failure path (re-entry) is captured in the iteration count too". It is not:
+    `cli.py:727` sets `retry_budget = … if reduction_active else 0` and `cli.py:1024`
+    breaks on `not reduction_active`, so **re-entry exists only in the ON arm** — all
+    four observed runs have `reentry_count = 0`. The metric therefore compares
+    *iterations to a wrong answer* against *iterations to a right answer*: `off_2`
+    stopped at 2 because it was **early and wrong**, not because it was cheap. Applied
+    literally anyway (editing a metric after results is what D1 paid for), and the
+    next pre-registration must either drive both arms to the same terminus
+    (corner-confirmed PASS) or drop the cost clause.
+  - **The verdict turns on a single iteration, and n=2 cannot carry that.** ON `[5,6]`
+    → median 5.5 over OFF `[5,2]` → 3.5 gives 1.571 against a 1.5 threshold — a 5%
+    gap on an axis whose grain is 1. One fewer ON iteration (`[4,6]` or `[5,5]`) gives
+    1.4286 and **adopts**.
+  - **The mechanism is now visible as a trajectory, not one data point.** The mid
+    loop's `vbg0_droop` starts at **19.932 with reduction off and 31.603 with it on**
+    — same deck, same moment; the first is nominal, the second the real 45-corner
+    worst at `ss/1.62/-40`. OFF optimises against a number **1.59× too optimistic**
+    and declares PASS the moment it crosses 15. v1's single `off_3` observation
+    (2.08×) reproduced **2 of 2**.
+  - **The fifth defect — "observed" not excluding a backend failure — was
+    non-decisive here, and the instrumentation lesson is separate.** Wave 3 died in
+    *both* arms at 69.66/69.68 s with `iterations_used: 0`, satisfying v2's literal
+    definition of observed (no cap hit, both artifacts written). Both readings reject,
+    so nothing moved. What did need fixing is attribution: the harness wrote no
+    per-run stderr, and `RuntimeError: aclose(): asynchronous generator is already
+    running` turns out to appear in the stderr of the **completed, PASSing `on_2`**
+    too — it is an at-exit asyncgen warning, not a failure signal. **The discriminator
+    is `orchestration_attempt.failure_reason`, which was in `history.jsonl` all
+    along**; a first pass claiming "no error event was written" was wrong.
+  - Side facts, not used in the verdict: seed is **9 corners → 11 points/testbench →
+    55 sims per iteration** on this slot (not the `spec_corner_reduction_45.yaml`
+    10/12/60 — different `vbg0_droop` threshold, not a contradiction), `covered 22/22`,
+    `dropped []`; probe promoted 6 and 8 corners. **The area phase makes wall clock
+    non-comparable**: OFF ran `UNCHANGED 0/0` both times (a deck failing at corners
+    lets `accept_step` accept nothing) while ON accepted 14/6 and 16/4 and ran its
+    confirming sweep — so much of ON's 90–100 min is work OFF never does.
 - **Re-entry is not reachable in the argmax regime on this benchmark, and that
   asymmetry is the useful fact.** Growth requires a *failing* criterion whose argmax
   sits outside the set — and if it is inside, the mid loop would have failed there
@@ -1674,11 +1721,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `docs/superpowers/plans/2026-08-02-area-optimization-phase.md`.
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-03: 1605
-  passed, 2 skipped, 9 deselected, 99.38 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-04: 1613
+  passed, 2 skipped, 9 deselected, 102.33 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line
