@@ -614,15 +614,28 @@ async def run_orchestration(
                     {
                         "outer_iter": outer_iter,
                         "retry": retry,
+                        # 계산 결과는 그대로다. 바뀐 것은 그 결과로 무엇을
+                        # 하는가뿐이다 - `evaluate_area_growth`는 한 줄도
+                        # 건드리지 않았고, 최적화 단계와 큐레이션이 쓰는 같은
+                        # 함수의 의미가 함께 움직이면 안 되기 때문이다.
                         "approved": area_ok,
                         "feedback": area_feedback,
                         "states": area.states,
+                        # **무조건** 싣는다. 키의 부재와 `false`가 구별되어야
+                        # "강등됐다"와 "이 계측이 사라졌다"가 갈린다.
+                        "blocking": False,
                     },
                 )
-                if not area_ok:
-                    rejection_feedback = area_feedback
-                    _record_rejected(tuning_history, outer_iter, retry, proposal, "area", area_feedback)
-                    continue
+                # 면적 게이트는 **거부하지 않는다**(2026-08-05 강등). 상한 숫자에
+                # 근거가 없다는 것이 이유이고, 성장은 통과 직후 면적 최소화
+                # 단계가 되돌린다. 계산·기록·통보는 전부 남는다 - 게이트를
+                # 지우면 성장이 보이지 않게 되고, 그것은 조용히 무력한 게이트의
+                # 반대 방향 실수다.
+                #
+                # `REJECTION_REASONS`에서 `"area"`는 **지우지 않는다**: 과거
+                # 실행의 `history.jsonl`이 그 코드를 싣고 있고 `attempt_log`
+                # 렌더가 그것을 읽는다. 새 실행에서 0이 되는 것과 키가 사라지는
+                # 것은 다른 사실이다.
 
                 refdes_ok, refdes_feedback = check_refdes_resolution(
                     netlist_texts[canonical_name], proposal["proposed_changes"]

@@ -154,16 +154,37 @@ directly (see the deterministic-derivation section).
       gate that now decides is `ALLOWED_OPERATORS` and it fires loudly at the
       boundary — an inert *stage* behind a live gate is not an inert gate. Total
       stays **12**.
-- `area_limits.py` — a deterministic gate run before every tuning proposal is
-  applied: rejects (with retryable feedback) proposals that grow a component
-  beyond a size-tiered limit relative to `netlist_v0`, since there is no PDK here
-  to derive a real area model. Motivated by a real run where a phase-margin
-  failure was "fixed" by widening a transistor 2.5×. Runs **before** the LLM
-  `verify_pre` call, so an obviously oversized proposal never spends an LLM call.
-  Exhausting all retries on area rejection alone is treated like a
-  parameter-tuning rollback, so repeated area-blocked tuning can escalate into a
-  topology swap instead of giving up. See
-  `2026-07-25-area-aware-tuning-design.md`.
+- `area_limits.py` — a deterministic size model run on every tuning proposal:
+  it computes how far a proposal grows a component past a size-tiered limit
+  relative to `netlist_v0`, since there is no PDK here to derive a real area
+  model. Motivated by a real run where a phase-margin failure was "fixed" by
+  widening a transistor 2.5×. See `2026-07-25-area-aware-tuning-design.md`.
+  - **It stopped rejecting on 2026-08-05 — it computes, records and reports, and
+    the proposal goes through.** The reason for the demotion is that the tier
+    ceilings are numbers with no derivation behind them, and the fix for growth
+    now exists downstream: the area-minimisation phase runs unconditionally after
+    PASS and takes it back. See
+    `2026-08-02-area-first-optimization-design.md` and
+    `2026-08-05-area-first-stage2-stage3.md`.
+  - **`evaluate_area_growth` itself was not touched, on purpose.** The optimizer
+    phase and curation call the same function, so changing what it *computes*
+    would move three consumers at once. What changed is one call site's reaction
+    to the result.
+  - **`area_check` now carries `blocking: false`, written unconditionally.** The
+    absence of the key and `false` must differ, or "the gate was demoted" and
+    "this instrumentation is gone" look identical — the same rule as
+    `tuning_retries` and `margin_floor_rule_applied`.
+  - **Deleting the gate outright was rejected**: then growth becomes invisible,
+    which is the silently-inert-gate mistake pointed the other way.
+  - **Two behaviours the demotion removed, both re-pinned through another gate.**
+    An oversized proposal used to be rejected *before* the LLM `verify_pre` call
+    (it now spends one), and exhausting all retries on area rejection alone used
+    to escalate into a topology swap. That escalation still exists — it just
+    needs `refdes`/`param`/`stimulus`, which still reject — and the tests that
+    pinned it were retargeted rather than deleted. `"area"` stays in
+    `REJECTION_REASONS`: past `history.jsonl` files carry the code and
+    `attempt_log` renders it, so a new run counting 0 and the key vanishing are
+    different facts.
   - Tiers are keyed on **scaled** geometry for PDK primitives (`W`/`w`/`l` times
     `.option scale`) and on the component's own value for generic M/C/R. Reading a
     bare `W=30` as absolute put every PDK device in the unbounded 1.5× tier. A
@@ -1795,11 +1816,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `OPAMP2STAGE.Rdeg.value`/`Rstart.value` became `OPAMP2STAGE.Rbias.value` (7 → 6).
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1636
-  passed, 2 skipped, 9 deselected, 98.23 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1635
+  passed, 2 skipped, 9 deselected, 98.08 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line

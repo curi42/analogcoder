@@ -1233,7 +1233,11 @@ async def test_a_deck_with_no_subckt_at_all_says_so_rather_than_just_no_candidat
 
 
 @pytest.mark.asyncio
-async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
+async def test_area_check_no_longer_blocks_but_the_record_survives(tmp_path):
+    """2026-08-05 강등. 예전에는 면적 게이트가 거부하고 `verify_pre`를 부르지도
+    않았다. 지금은 지나가되 **무엇을 얼마나 키웠는지가 그대로 남는다** -
+    게이트를 지우면 성장이 보이지 않게 되고, 그것은 조용히 무력한 게이트의
+    반대 방향 실수다."""
     verify_pre_calls = {"count": 0}
 
     async def counting_verify_pre(structure_view, judge_result, proposal, netlist_view):
@@ -1258,9 +1262,22 @@ async def test_area_check_rejects_without_calling_verify_pre(tmp_path):
 
     result = await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
 
-    assert verify_pre_calls["count"] == 0
-    assert result["status"] == "FAIL"
-    assert result["failure_reason"] == "max iterations reached"
+    # 강등: 거부하지 않으므로 LLM 검토자까지 간다.
+    assert verify_pre_calls["count"] > 0
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    area_events = [e for e in events if e["step"] == "area_check"]
+    assert area_events
+    for e in area_events:
+        # 계산 결과는 그대로다 - 2.5배는 여전히 티어를 넘는다.
+        assert e["approved"] is False
+        # **무조건** 실린다. 키의 부재와 false 가 구별되어야 "강등됐다"와
+        # "이 계측이 사라졌다"가 갈린다.
+        assert e["blocking"] is False
+        assert e["feedback"]
+
+    # 그리고 면적은 더 이상 거부 사유로 기록되지 않는다.
+    assert result["attempt_summary"]["rejected_by_reason"]["area"] == 0
 
 
 @pytest.mark.asyncio
@@ -1298,11 +1315,15 @@ async def test_area_check_mixed_with_verify_pre_rejection_hard_fails(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
-    async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+async def test_gate_rejection_eventually_triggers_topology_swap(tmp_path):
+    """결정론 게이트만으로 재시도가 소진되면 하드 FAIL 이 아니라 토폴로지
+    승격이다. 2026-08-05 이전에는 면적 게이트로 이것을 핀했는데 그 게이트가
+    강등되어 더 이상 거부하지 않으므로, **아직 거부하는** 게이트로 옮겼다 -
+    핀하는 동작은 그대로다."""
+    async def blocked_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         return {
             "proposed_changes": [
-                {"refdes": "Xm6", "param": "W", "old_value": "40", "new_value": "100", "reasoning": "x"}
+                {"refdes": "Znope", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"}
             ],
             "overall_reasoning": "x",
             "confidence": 90,
@@ -1317,7 +1338,7 @@ async def test_area_rejection_eventually_triggers_topology_swap(tmp_path):
 
     agents = make_agents(
         judge=lambda m, s: _async(FAIL_JUDGE),
-        tune=oversized_tune,
+        tune=blocked_tune,
         propose_topology=propose_topology_spy,
     )
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
@@ -1811,8 +1832,10 @@ def one_change(refdes, param, old_value, new_value):
 @pytest.mark.parametrize(
     "reason, netlist, proposal, reject_verify_pre",
     [
-        # 면적: 40u -> 100u 는 2.5x 로 티어를 넘는다 (기존 oversized_tune 와 동일)
-        ("area", AREA_TEST_NETLIST, one_change("M6", "W", "40u", "100u"), False),
+        # 면적 행은 2026-08-05 강등과 함께 빠졌다 - 그 게이트는 더 이상 거부하지
+        # 않으므로 사유 코드를 만들지 않는다. `REJECTION_REASONS`에는 남아 있고
+        # (과거 history.jsonl 이 그 코드를 싣는다) 강등 자체는
+        # `test_area_check_no_longer_blocks_but_the_record_survives`가 핀한다.
         # refdes: 어느 컴포넌트와도 안 맞는다
         ("refdes", BASE_NETLIST, one_change("Znope", "value", "1k", "2k"), False),
         # param: "width" 는 Rf 줄에도 동일 모델 peer 에도 없는 이름이다
@@ -1861,17 +1884,20 @@ async def test_a_gate_rejection_survives_into_the_next_outer_iteration(tmp_path)
 
     async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
         seen.append(attempts_view)
-        return one_change("M6", "W", "40u", "100u")  # 항상 면적 게이트에 막힌다
+        # 항상 refdes 게이트에 막힌다. 면적 게이트를 쓰던 것을 2026-08-05
+        # 강등과 함께 옮겼다 - 핀하는 것은 "거부가 이터레이션 경계를 넘어
+        # 살아남는가"이지 어느 게이트가 거부했는가가 아니다.
+        return one_change("Znope", "value", "1k", "2k")
 
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     # 이터레이션 1은 재시도 MAX_TUNING_RETRIES(3)회로 끝난다 -> seen[0..2].
     # seen[3]은 이터레이션 2의 첫 호출이고, 원래 구현에서는 여기가 "" 였다.
     assert seen[0] == ""
-    assert seen[3].count("area:") == 3
+    assert seen[3].count("refdes:") == 3
 
 
 # AMP와 OTHER 두 블록 - OTHER만 top-level 넷 vother를 구동해서, 아래 spec의
@@ -2052,18 +2078,18 @@ async def test_the_result_says_how_this_run_s_proposals_ended(tmp_path):
     0건이었다는 것이고, 그 사실은 `history.jsonl`을 따로 파야만 나왔다."""
 
     async def tune(structure_view, judge_result, attempts_view, rejection_feedback, netlist_view):
-        return one_change("M6", "W", "40u", "100u")  # 항상 면적 게이트에 막힌다
+        return one_change("Znope", "value", "1k", "2k")  # 항상 refdes 게이트에 막힌다
 
     agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=tune)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": AREA_TEST_NETLIST}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     summary = result["attempt_summary"]
     assert summary["by_outcome"]["kept"] == 0
     assert summary["by_outcome"]["rolled_back"] == 0
     assert summary["by_outcome"]["rejected"] > 0
-    assert summary["rejected_by_reason"]["area"] == summary["by_outcome"]["rejected"]
+    assert summary["rejected_by_reason"]["refdes"] == summary["by_outcome"]["rejected"]
 
 
 @pytest.mark.asyncio
@@ -2172,8 +2198,11 @@ async def test_a_gate_rejection_and_a_verify_pre_rejection_are_both_counted_once
     async def mixed_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
         tune_calls["n"] += 1
         if tune_calls["n"] == 1:
+            # r1 은 **게이트** 거부여야 한다. 예전에는 면적(40u -> 100u, 2.5x)을
+            # 썼는데 2026-08-05 강등으로 그 게이트가 거부하지 않으므로 refdes 로
+            # 옮겼다 - 실측된 `r1:<게이트> r2:verify_pre r3:OK` 모양은 그대로다.
             changes = [
-                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"}
+                {"refdes": "Znope", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"}
             ]
         elif tune_calls["n"] == 2:
             changes = [
@@ -2215,7 +2244,7 @@ async def test_a_gate_rejection_and_a_verify_pre_rejection_are_both_counted_once
     # 에스컬레이션이냐를 가르므로, 여유가 줄고 있는 이터레이션을 읽는 사람이
     # 어느 쪽으로 떨어질지 알아야 한다.
     assert event["verify_pre_rejected"] is True
-    assert event["by_reason"] == {**ALL_REASONS_ZERO, "area": 1, "verify_pre": 1}
+    assert event["by_reason"] == {**ALL_REASONS_ZERO, "refdes": 1, "verify_pre": 1}
     assert sum(event["by_reason"].values()) == event["failures"]
 
 
@@ -2261,20 +2290,23 @@ async def test_exhaustion_by_gate_rejections_alone_is_labelled_escalate_and_the_
     """같은 소진, 다른 갈래. 게이트 거부만으로 소진되면 하드 FAIL이 아니라
     `consecutive_rollbacks` 증가 - 즉 토폴로지 에스컬레이션 쪽이다. 실행이
     "tuning proposal repeatedly rejected"로 끝나지 **않는** 것이 그 증거다."""
-    async def oversized_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+    async def blocked_tune(structure_view, judge_result, history, rejection_feedback, netlist_view):
+        # 변경 **둘**을 한 제안에 담는다 - 사유별 개수가 변경 개수가 아니라
+        # 서로 다른 `(retry, reason)` 쌍의 개수여야 한다는 것이 요점이다.
+        # 면적 게이트를 쓰던 것을 2026-08-05 강등과 함께 refdes 로 옮겼다.
         return {
             "proposed_changes": [
-                {"refdes": "M6", "param": "W", "old_value": "40u", "new_value": "100u", "reasoning": "x"},
-                {"refdes": "M7", "param": "W", "old_value": "20u", "new_value": "80u", "reasoning": "x"},
+                {"refdes": "Znope", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"},
+                {"refdes": "Zalso", "param": "value", "old_value": "1k", "new_value": "2k", "reasoning": "x"},
             ],
             "overall_reasoning": "x",
             "confidence": 90,
         }
 
-    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=oversized_tune)
+    agents = make_agents(judge=lambda m, s: _async(FAIL_JUDGE), tune=blocked_tune)
     state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
 
-    result = await run_orchestration({"ac_loop_gain": TWO_DEVICE_AREA_NETLIST}, FAKE_SPEC, state, agents)
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
 
     assert result["status"] == "FAIL"
     assert result["failure_reason"] == "max iterations reached"
@@ -2288,4 +2320,4 @@ async def test_exhaustion_by_gate_rejections_alone_is_labelled_escalate_and_the_
         assert event["headroom"] == 0
         assert event["verify_pre_rejected"] is False
         # 제안 하나에 변경이 둘인데도 사유별 개수는 재시도 수와 같다.
-        assert event["by_reason"] == {**ALL_REASONS_ZERO, "area": 3}
+        assert event["by_reason"] == {**ALL_REASONS_ZERO, "refdes": 3}
