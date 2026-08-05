@@ -1,0 +1,49 @@
+{
+ "spec": "benchmarks/bandgap/spec_seed_buf0_droop.yaml",
+ "failing_criteria": [
+  "vbg0_droop"
+ ],
+ "knobs_total": 167,
+ "knobs_unreadable": [],
+ "points": 1169,
+ "errors": 0,
+ "passing_knobs": {
+  "BGR_CORE.Xmpout.W": [
+   "7.5"
+  ],
+  "BGR_CORE.Xb1.L": [
+   "0.75"
+  ],
+  "BGR_CORE.Xb1.W": [
+   "6"
+  ],
+  "BGR_CORE.Xb2.W": [
+   "3"
+  ],
+  "BGR_CORE.Xb6.W": [
+   "3"
+  ],
+  "BGR_CORE.Xsu_b.L": [
+   "5"
+  ],
+  "BGR_CORE.Xsu_b.W": [
+   "2.1"
+  ],
+  "BUF_P.X7.L": [
+   "0.5",
+   "0.75"
+  ],
+  "BUF_P.X7.W": [
+   "36",
+   "48",
+   "72"
+  ],
+  "BUF_P.Xcl.L": [
+   "100"
+  ],
+  "BUF_P.Xcl.W": [
+   "100"
+  ]
+ },
+ "verdict": "eligible"
+}
