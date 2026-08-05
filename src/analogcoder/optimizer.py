@@ -416,6 +416,7 @@ def _result(
     final_criteria: list[dict] | None = None,
     unguarded_criteria: list[str] | None = None,
     tightest_slack: dict | None = None,
+    accepted_points: list[dict] | None = None,
 ) -> dict:
     return {
         "status": status,
@@ -425,6 +426,13 @@ def _result(
         "area_after": area_after,
         "steps_accepted": accepted,
         "steps_rejected": rejected,
+        # 이 단계가 **실제로 측정한 점 전부**(기준점 포함). 파레토 공선이
+        # 이것을 읽는다 - 전부 이미 잰 점이라 공선의 추가 시뮬 비용은 0이다.
+        # `steps_accepted`만으로는 공선을 만들 수 없다: 개수는 알려 주지만
+        # 각 점의 (면적, 목적, 기준)을 알려 주지 않는다. 빈 목록으로 항상
+        # 실린다 - 키의 부재와 빈 목록이 같아지면 "수락이 없었다"와 "이
+        # 기록이 사라졌다"가 구별되지 않는다.
+        "accepted_points": list(accepted_points or []),
         # steps_rejected를 사유별로 쪼갠 것. 합은 언제나 steps_rejected와 같고,
         # 걸리지 않은 사유도 0으로 실린다 - 그러지 않으면 "이 사유로는 거절이
         # 없었다"와 "이 사유가 사라졌다"가 같은 부재가 된다. REJECTION_REASONS의
@@ -1924,6 +1932,18 @@ async def _optimize(
             # 최솟값은 "기준선의 것"이 된다 - 태우지 않은 것과 재지
             # 않은 것을 구분하는 지점이다.
             tightest_slack=_tightest_slack(spec.all_criteria, record.get("criteria") or []),
+            # `records`는 버전 인덱스 -> 그 버전에서 잰 값이다. 정렬해서
+            # 실으면 공선의 행 순서가 탐색이 지나온 순서와 같아진다.
+            accepted_points=[
+                {
+                    "version": v,
+                    "area": r.get("area"),
+                    "objective": r.get("objective"),
+                    "criteria": r.get("criteria") or [],
+                    "landed": v == version,
+                }
+                for v, r in sorted(records.items())
+            ],
         )
 
     if not corner_capable:

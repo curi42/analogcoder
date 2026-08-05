@@ -762,15 +762,15 @@ def test_the_prompt_does_not_promise_that_area_blocks():
 `k = 3`, 통계 검정 없음, 이산 사건에 판정을 건다. 상한은 런당 **120분**
 (reduction45 v2의 실측 비용 모형).
 
-- [ ] **Step 1: 하니스를 쓴다** — `scripts/reduction45_ab.py`의 짝 병렬 구조를
+- [x] **Step 1: 하니스를 쓴다** — `scripts/reduction45_ab.py`의 짝 병렬 구조를
       재사용한다(파동마다 old/new 동시 실행, `ANALOGCODER_SIM_WORKERS=5`).
       **런별 `stdout`/`stderr`를 갈라 저장한다** — 그것이 없어서 백엔드 실패를
       귀속시키지 못한 전례가 있다.
-- [ ] **Step 2: "관측"의 정의에 진행 증거를 요구한다** —
+- [x] **Step 2: "관측"의 정의에 진행 증거를 요구한다** —
       `orchestration_attempt.iterations_used >= 1`. v2의 다섯 번째 결함이 이것이다.
-- [ ] **Step 3: 사전 등록 문서를 쓰고 커밋한다** (실행 0회 시점)
-- [ ] **Step 4: 실행하고 집계한다**
-- [ ] **Step 5: 결과 문서 + `CLAUDE.md`**
+- [x] **Step 3: 사전 등록 문서를 쓰고 커밋한다** (실행 0회 시점)
+- [x] **Step 4: 실행하고 집계한다**
+- [x] **Step 5: 결과 문서 + `CLAUDE.md`**
 
 ---
 
@@ -790,7 +790,7 @@ def test_the_prompt_does_not_promise_that_area_blocks():
   - `build_front(entry, area_points, objective_points) -> Front`
   - `Front = (points: list[Point], shipped_index: int, single_axis: bool)`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```python
 def test_the_entry_point_is_always_in_the_front():
@@ -839,8 +839,8 @@ def test_the_tolerance_actually_rejects_something():
     assert dominates(_pt("a", area=1.00, obj=1.0), _pt("b", area=1.01, obj=1.0))
 ```
 
-- [ ] **Step 2~4:** 실패 확인 → 구현 → 통과 확인
-- [ ] **Step 5: 커밋** — `feat: 파레토 공선 조립과 지배 판정`
+- [x] **Step 2~4:** 실패 확인 → 구현 → 통과 확인
+- [x] **Step 5: 커밋** — `feat: 파레토 공선 조립과 지배 판정`
 
 ---
 
@@ -850,7 +850,7 @@ def test_the_tolerance_actually_rejects_something():
 - Modify: `src/analogcoder/cli.py`
 - Test: `tests/unit/test_cli_pareto.py`
 
-- [ ] **Step 1: 테스트**
+- [x] **Step 1: 테스트**
 
 ```python
 def test_the_front_is_written_even_when_no_phase_moved_the_deck():
@@ -867,10 +867,10 @@ def test_the_shipped_point_matches_final_criteria_and_final_netlist_paths():
     assert shipped["criteria"] == result["final_criteria"]
 ```
 
-- [ ] **Step 2~4:** 실패 확인 → 배선 → 통과 확인. **면적 단계와 전류 단계의 수락점은
+- [x] **Step 2~4:** 실패 확인 → 배선 → 통과 확인. **면적 단계와 전류 단계의 수락점은
       이미 `_search`의 `records`에 있다** — 새로 시뮬레이션하지 않는다(스펙: 추가
       비용 0).
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ---
 
@@ -880,7 +880,7 @@ def test_the_shipped_point_matches_final_criteria_and_final_netlist_paths():
 - Modify: `src/analogcoder/report.py`
 - Test: `tests/unit/test_report.py`
 
-- [ ] **Step 1: 테스트**
+- [x] **Step 1: 테스트**
 
 ```python
 def test_each_front_row_says_whether_it_ships_and_whether_corners_were_checked():
@@ -896,8 +896,8 @@ def test_a_single_axis_front_says_it_is_not_a_front():
     assert "축이 하나여서 공선이 아니다" in md
 ```
 
-- [ ] **Step 2~4:** 실패 확인 → 구현 → 통과 확인
-- [ ] **Step 5: 커밋**
+- [x] **Step 2~4:** 실패 확인 → 구현 → 통과 확인
+- [x] **Step 5: 커밋**
 
 ---
 
@@ -906,7 +906,13 @@ def test_a_single_axis_front_says_it_is_not_a_front():
 **Files:**
 - Modify: `tests/unit/test_optimizer_area_phase_ngspice.py` 또는 신규 (`slow`)
 
-- [ ] **Step 1:** bandgap `spec_pvt.yaml`(면적·전류 단계 둘 다 도는 유일한 스펙)에서
+- [x] **Step 1 (부분):** `two_stage_opamp/spec.yaml`에서 `accepted_points`가
+      실제로 나오고 공선이 조립되는 것을 확인했다(status=UNCHANGED, 1행,
+      `single_axis=True`). **그 확인이 가짜 2축 결함을 잡았다.**
+      아직 안 한 것: bandgap `spec_pvt.yaml`(면적·전류 두 단계가 다 도는
+      유일한 스펙)에서 2점 이상 공선을 `slow` 테스트로 핀하는 것 -
+      그 스펙은 코너 고정 실행이라 약 30분이다.
+- [ ] **Step 1 (남음):** bandgap `spec_pvt.yaml`(면적·전류 단계 둘 다 도는 유일한 스펙)에서
       공선이 실제로 2점 이상 나오는지, 출하점이 세 출처 중 어디인지를 실측하고 핀한다.
 - [ ] **Step 2:** `CLAUDE.md`의 테스트 수 실측 줄과 슬로우 테스트 목록을 갱신한다
       (**측정한 값으로만**).

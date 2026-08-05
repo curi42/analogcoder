@@ -620,6 +620,10 @@ async def test_a_run_without_the_flag_adds_exactly_one_result_key(tmp_path):
         # resumed_from 하나뿐이라는 이 테스트의 요지는 바뀌지 않았다.
         "area_optimization",
         "optimization",
+        # 이것도 재개와 무관하다 - 3단계 파레토 공선이 PASS마다 조건 없이
+        # 싣는 자기 결과다. 조건부로 실으면 "축이 하나여서 공선이 아니다"와
+        # "공선 기능이 없다"가 같은 부재가 된다.
+        "pareto_front",
         "corner_reduction",
         "resumed_from",
         "pvt_sweep_error",

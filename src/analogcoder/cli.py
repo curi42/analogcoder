@@ -29,6 +29,7 @@ from analogcoder.judge_tools import evaluate_criteria
 from analogcoder.netlist import resolve_includes
 from analogcoder.optimizer import OptimizerAgents, run_area_optimization, run_optimization
 from analogcoder.orchestrator import OrchestratorAgents, _attempt_summary, run_orchestration
+from analogcoder.pareto import Front, Point, build_front
 from analogcoder.pvt import _simulate_rendered, run_full_pvt_sweep
 from analogcoder.report import write_report_md, write_result_json
 from analogcoder.simulators.cache import CachingSimulator
@@ -210,6 +211,62 @@ def screen_simulate(netlist_texts: dict[str, str], spec_arg, sim_backend) -> dic
         if status == "success" and result.status != "success":
             status = result.status
     return {"status": status, "measurements": merged_measurements, "by_testbench": by_testbench}
+
+
+def _build_pareto_front(result: dict) -> Front:
+    """실행 결과에서 공선을 조립한다.
+
+    착지점(`entry`)은 **튜닝 루프가 남긴 덱**이고, 그 면적·목적은 면적 단계가
+    자기 기준점으로 잰 값이다(`area_optimization`의 `area_before` /
+    `objective_before`). 따로 재지 않는 이유는 그 두 값이 같은 덱의 같은
+    측정이기 때문이다 - 다시 재면 같은 수를 두 번 치른다.
+
+    두 단계가 남긴 `accepted_points`는 자기 기준점까지 포함하므로, 면적 단계의
+    첫 점은 착지점과 같은 덱이다. 그 중복은 `version`으로 걸러 낸다 - 같은
+    덱이 두 행으로 나오면 사람이 두 선택지로 읽는다."""
+    area_phase = result.get("area_optimization") or {}
+    objective_phase = result.get("optimization") or {}
+
+    # **목적 축은 전류 단계에서만 온다.** 면적 단계에서는 `objective`가 곧
+    # 파생 면적이므로(`AREA_OBJECTIVE`, `optimizer._objective_value`), 그것을
+    # 목적 축으로 실으면 **두 축이 같은 값인 가짜 2축 공선**이 된다 - 실제
+    # 데이터로 확인했다(`two_stage_opamp/spec.yaml`에서 area 2.370369e-10,
+    # objective 2.370369e-10). 그러면 `single_axis`가 거짓이 되고, 리포트가
+    # "축이 하나여서 공선이 아니다"를 적어야 할 자리에 표를 그린다.
+    entry = Point(
+        source="entry",
+        area=area_phase.get("area_before"),
+        objective=objective_phase.get("objective_before"),
+        netlist_version="entry",
+        criteria=result.get("final_criteria") or [],
+    )
+
+    seen_versions: set = set()
+
+    def _points(phase: dict, source: str, has_objective_axis: bool) -> list[Point]:
+        out = []
+        for row in phase.get("accepted_points") or []:
+            version = row.get("version")
+            if version in seen_versions:
+                continue
+            seen_versions.add(version)
+            out.append(
+                Point(
+                    source=source,
+                    area=row.get("area"),
+                    # 면적 단계의 `objective`는 면적 그 자체다 - 축이 아니다.
+                    objective=row.get("objective") if has_objective_axis else None,
+                    netlist_version=str(version),
+                    criteria=row.get("criteria") or [],
+                )
+            )
+        return out
+
+    return build_front(
+        entry,
+        _points(area_phase, "area", has_objective_axis=False),
+        _points(objective_phase, "objective", has_objective_axis=True),
+    )
 
 
 def _reduction_off_reason(corner_capable: bool, reduction) -> str:
@@ -995,6 +1052,12 @@ async def _run(args) -> dict:
             # 없는 값으로 덮으면 리포트가 통째로 빈다.
             if optimization.get("final_criteria"):
                 result["final_criteria"] = optimization["final_criteria"]
+
+            # 파레토 공선. **추가 시뮬레이션이 0회**다 - 세 출처가 전부 이미
+            # 잰 점이기 때문이다. 조건 없이 싣는다: `objective` 선언이 없으면
+            # 축이 하나여서 공선이 아니라는 사실을 `single_axis`가 말하고,
+            # 키를 빼면 그 사실과 "공선 기능이 없다"가 구별되지 않는다.
+            result["pareto_front"] = _build_pareto_front(result).as_dict()
 
         if not corner_capable:
             break

@@ -637,6 +637,40 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   Known limits: `checkpoint.py` still serialises a `judge_result` the same way, and
   a genuine string whose value is exactly `"NaN"` would be restored as a float.
 
+- **`result["pareto_front"]` collects every point the two phases already measured,
+  and it costs zero extra simulations** (`pareto.py`, 2026-08-05). Three sources:
+  the tuning loop's landing point (`entry`), the area phase's accepted points
+  (`area`), the objective phase's (`objective`). **Nobody re-simulates** — the
+  phases already store `{version → area, objective, criteria}` in `_search`'s
+  `records`, and `_result` now exposes it as `accepted_points`.
+  - **The entry point is always row one.** Curation's "the incumbent's own point
+    was excluded from the comparison" is one of the 12 silently-inert gates; doing
+    nothing can be the best answer, and a person cannot choose an option that is
+    not in the table.
+  - **Dominated points are kept and labelled, not dropped.** A front is a
+    non-dominated set, but deleting the dominated rows destroys evidence — and the
+    first row it would delete is usually the entry.
+  - **The shipped point is the minimum area across all three sources**, not the
+    area phase's result: the objective phase can shrink a device and lower current
+    *and* area together, so pinning the shipped point to the area phase throws away
+    a smaller point already in hand. When no point has a measurable area, the entry
+    ships and `shipped_reason` says `area_unmeasurable` — "chose the minimum" and
+    "could not choose" are different facts.
+  - **Corner verification is on the shipped point only.** Confirming the whole
+    front is a 45-corner sweep × N. Every other row renders as "코너에서 확인되지
+    않음", which is all this run can say about it.
+  - **The area phase's `objective` is NOT a second axis, and real data caught
+    this.** On that phase `objective` *is* the derived area
+    (`optimizer._objective_value` returns `derived_area` for `AREA_OBJECTIVE`), so
+    feeding it to the objective axis builds a fake two-axis front whose axes carry
+    identical numbers — measured on `two_stage_opamp/spec.yaml`, area and objective
+    both `2.370369e-10`. `single_axis` came out `False` and the report would have
+    drawn a table where it owes the sentence "축이 하나여서 공선이 아니다".
+  - Dominance reuses `curation`'s `_is_better`/`_at_least_as_good` and therefore
+    `COMPARISON_REL_TOLERANCE = 1e-3` — **not a second definition of the same
+    band**. A point with an unmeasurable axis dominates nothing (reading `None` as
+    "equal" would make the unmeasurable point the dominator).
+
 ### Corner reduction and re-entry
 
 `corner_selection.py` / `corner_sim.py` — the tuning loop no longer simulates one
@@ -1852,11 +1886,11 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `OPAMP2STAGE.Rdeg.value`/`Rstart.value` became `OPAMP2STAGE.Rbias.value` (7 → 6).
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1646
-  passed, 2 skipped, 9 deselected, 101.61 s** — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1666
+  passed, 2 skipped, 9 deselected, 101.29 s** — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635 → 1646), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635 → 1646 → 1666), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line

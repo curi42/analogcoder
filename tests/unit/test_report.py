@@ -1236,3 +1236,73 @@ def test_the_optimization_section_also_renders_the_tightest_slack(tmp_path):
     )
     absent_md = open(absent, encoding="utf-8").read()
     assert "알 수 없음" in absent_md
+
+
+# --- 파레토 공선 (3단계 Task 10) ----------------------------------------------
+
+def _front(**overrides):
+    base = {
+        "points": [
+            {"source": "entry", "netlist_version": "entry", "area": 1.0e-8,
+             "objective": 212.99, "dominated": True, "corner_verified": False,
+             "shipped": False, "criteria": []},
+            {"source": "area", "netlist_version": "4", "area": 8.9e-9,
+             "objective": 212.99, "dominated": False, "corner_verified": True,
+             "shipped": True, "criteria": []},
+        ],
+        "shipped_index": 1,
+        "single_axis": False,
+        "shipped_reason": "min_area",
+    }
+    base.update(overrides)
+    return base
+
+
+def _md(tmp_path, extra):
+    """리포트가 요구하는 최소 키를 채우고 `extra`를 덮어쓴다."""
+    result = {
+        "status": "PASS",
+        "iterations_used": 1,
+        "final_criteria": [],
+        "final_netlist_paths": {"ac_loop_gain": "/x/netlist.cir"},
+        "run_dir": str(tmp_path),
+    }
+    result.update(extra)
+    return open(write_report_md(str(tmp_path), result)).read()
+
+
+def test_each_front_row_says_whether_it_ships_and_whether_corners_were_checked(tmp_path):
+    md = _md(tmp_path, {"status": "PASS", "pareto_front": _front()})
+    assert "## 파레토 공선" in md
+    assert "출하" in md and "코너 확인" in md
+    assert "코너에서 확인되지 않음" in md
+
+
+def test_a_single_axis_front_says_it_is_not_a_front(tmp_path):
+    """키를 빼면 "공선 기능이 없다"와 구별되지 않는다 - 그래서 실리되
+    축이 하나라는 것을 문장으로 적는다."""
+    md = _md(tmp_path, {"status": "PASS", "pareto_front": _front(single_axis=True)})
+    assert "축이 하나여서 공선이 아니다" in md
+
+
+def test_an_unmeasurable_area_is_drawn_as_a_fact_not_as_zero(tmp_path):
+    front = _front()
+    front["points"][0]["area"] = None
+    md = _md(tmp_path, {"status": "PASS", "pareto_front": front})
+    assert "재지 못함" in md
+    assert "| 0 |" not in md
+
+
+def test_the_report_says_when_the_shipped_point_could_not_be_chosen_by_area(tmp_path):
+    md = _md(tmp_path, {
+        "status": "PASS",
+        "pareto_front": _front(shipped_reason="area_unmeasurable"),
+    })
+    assert "면적을 재지 못해" in md
+
+
+def test_no_front_section_when_the_key_is_absent(tmp_path):
+    """공선이 없는 결과(예: FAIL로 끝난 실행)에 빈 절을 그리지 않는다 -
+    빈 표는 "무언가 일어났다"로 읽힌다."""
+    md = _md(tmp_path, {"status": "FAIL"})
+    assert "## 파레토 공선" not in md

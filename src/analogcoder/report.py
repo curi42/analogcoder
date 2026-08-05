@@ -68,6 +68,58 @@ def write_result_json(run_dir: str, result: dict) -> str:
     return path
 
 
+def _pareto_lines(front: dict | None) -> list[str]:
+    """파레토 공선 표. **각 행이 출하 여부와 코너 확인 여부를 스스로 말한다** -
+    "결과는 자기가 반환하는 덱을 설명해야 한다"가 다섯 번 재발한 규칙이다.
+
+    `objective` 선언이 없으면 축이 하나뿐이라 공선이 아니고, 그 문장을 표 위에
+    그대로 적는다. 표를 안 그리면 "축이 하나였다"와 "공선 기능이 없다"가
+    구별되지 않는다."""
+    if not front:
+        return []
+    points = front.get("points") or []
+    if not points:
+        return []
+
+    lines = ["## 파레토 공선", ""]
+    if front.get("single_axis"):
+        lines += [
+            "`optimize:` 선언이 없어 **축이 하나여서 공선이 아니다** - 면적 하나만 "
+            "잰 점들이다.",
+            "",
+        ]
+    if front.get("shipped_reason") == "area_unmeasurable":
+        lines += [
+            "**어느 점에서도 면적을 재지 못해** 출하점을 면적으로 고르지 못했다 - "
+            "튜닝 루프의 착지점을 그대로 내보낸다.",
+            "",
+        ]
+
+    lines += [
+        "| 출처 | 넷리스트 | 면적 | 목적 | 지배당함 | 코너 확인 | 출하 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for point in points:
+        # `None`은 값이 아니라 사실이다 - 0으로도 빈칸으로도 그리지 않는다.
+        area = "재지 못함" if point.get("area") is None else f"{point['area']:.6g}"
+        objective = "축 없음" if point.get("objective") is None else f"{point['objective']:.6g}"
+        lines.append(
+            f"| {point.get('source', '?')} | {point.get('netlist_version', '?')} | "
+            f"{area} | {objective} | "
+            f"{'예' if point.get('dominated') else '아니오'} | "
+            f"{'예' if point.get('corner_verified') else '코너에서 확인되지 않음'} | "
+            f"{'**예**' if point.get('shipped') else '아니오'} |"
+        )
+    lines += [
+        "",
+        "코너 확인은 **출하점에만** 한다 - 공선 전체를 확인하면 45코너 스윕 × N이 "
+        "되어 비용이 폭발한다. 나머지 행에 대해 이 실행이 말할 수 있는 것은 명목 "
+        "측정뿐이다.",
+        "",
+    ]
+    return lines
+
+
 def _area_optimization_lines(area: dict | None) -> list[str]:
     """면적 최소화 절. **아무것도 못 줄인 실행에서도, 이 단계 자체가 터져서
     접힌 실행에서도 그린다.**
@@ -636,6 +688,7 @@ def write_report_md(run_dir: str, result: dict) -> str:
     lines += _topology_lines(result.get("topology_swaps"))
     lines += _area_optimization_lines(result.get("area_optimization"))
     lines += _optimization_lines(result.get("optimization"))
+    lines += _pareto_lines(result.get("pareto_front"))
     lines += _corner_reduction_lines(result.get("corner_reduction"))
     if result.get("failure_reason"):
         lines.append("")
