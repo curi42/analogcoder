@@ -1672,6 +1672,28 @@ baseline — a genuine model capability gap, not a pipeline defect.
     body with `folded_cascode_nmos_in_cs`** — that one came from `TRIMAMP` and
     differs in `Xcl` and the `Xcc`/`XRz` sizes, so the numbers above hold only for
     `BUF_N`'s body.
+    - **"Only a topology swap fixes it" is true of the intended design space, and
+      this spec does not enforce that space** — a distinction this entry did not
+      draw until 2026-08-05, when a single-knob sweep found **10 knobs that each
+      pass all 8 criteria alone**. The spec declares one testbench and eight
+      criteria, and all eight are loop gain / phase margin: **`vbgout`, `vbg0`,
+      `vbg1`, TC and Iq are not constrained at all**, because they live in the DC
+      testbench this spec omits. Three of the ten were checked against
+      `spec.yaml`'s DC criteria and all three are degenerate — `BANDGAP.XRl1.l`
+      78.4 → 1568 puts `vbg0` at **0.983 V**, `XRl2.w` 1 → 5 at **0.924 V**, and
+      `BUF_P.Xn2.W` 8 → 40 at **1.8 V, the supply rail**, against a declared window
+      of 0.475–0.525. That last one passes `buf0_loop_gain >= 90` with the buffer
+      output latched to `vdd` — the same "high loop gain on a dead stage" shape as
+      `two_stage_opamp`'s 127° phase margin. `vbgout` is byte-identical across all
+      three, so the core is fine and what breaks is the ladder and the buffer.
+    - **The recorded PASS from this slot is not contaminated, but that is luck.**
+      `buf0_gain_db` 100.158 is what the swap reaches, so that run took the
+      intended path — nothing would have stopped it taking a degenerate one, and
+      no gate exists to stop it, because the constraint is not declared rather
+      than not enforced. Same family as the `Cload` and `Vin`-amplitude cheats,
+      minus the gate. **Do not use this slot for a measurement whose metric counts
+      "passing" candidates.** `2026-08-05-seed-topology-slot-admits-degenerate-solutions.md`
+      records the three fix options and picks none.
   - **Cascode (Ahuja/indirect) compensation was tried here and rejected, with
     data.** Moving the compensation cap to the cascode source node peaked at
     89.4° / 5.45 MHz on `TRIMAMP`, while Miller+`Rz` at the same cap area reaches
