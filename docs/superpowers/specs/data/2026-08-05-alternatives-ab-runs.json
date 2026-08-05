@@ -1,0 +1,372 @@
+{
+ "off_1": {
+  "status": "FAIL",
+  "reason": "tuning proposal repeatedly rejected",
+  "iters": 3,
+  "wall_min": 36.3,
+  "headroom": [
+   1,
+   3,
+   0
+  ],
+  "retry_outcomes": [
+   "approved",
+   "approved",
+   "exhausted_hard_fail"
+  ],
+  "n_alt_events": 0,
+  "rules": {},
+  "offered": [],
+  "surv_gate": [],
+  "surv_vp": [],
+  "passing": [],
+  "winner_src": {},
+  "area_blocking": [
+   null
+  ],
+  "area_approved": {
+   "true": 6,
+   "false": 1
+  },
+  "sha": "5e5e4790d069",
+  "pareto_rows": 0,
+  "single_axis": null,
+  "shipped_reason": null,
+  "attempt": {
+   "changes": 13,
+   "by_outcome": {
+    "kept": 0,
+    "rolled_back": 4,
+    "rejected": 9
+   },
+   "rejected_by_reason": {
+    "area": 3,
+    "refdes": 3,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 3
+   }
+  }
+ },
+ "off_2": {
+  "status": "FAIL",
+  "reason": "tuning proposal repeatedly rejected",
+  "iters": 1,
+  "wall_min": 12.7,
+  "headroom": [
+   0
+  ],
+  "retry_outcomes": [
+   "exhausted_hard_fail"
+  ],
+  "n_alt_events": 0,
+  "rules": {},
+  "offered": [],
+  "surv_gate": [],
+  "surv_vp": [],
+  "passing": [],
+  "winner_src": {},
+  "area_blocking": [
+   null
+  ],
+  "area_approved": {
+   "true": 2,
+   "false": 1
+  },
+  "sha": "5e5e4790d069",
+  "pareto_rows": 0,
+  "single_axis": null,
+  "shipped_reason": null,
+  "attempt": {
+   "changes": 4,
+   "by_outcome": {
+    "kept": 0,
+    "rolled_back": 0,
+    "rejected": 4
+   },
+   "rejected_by_reason": {
+    "area": 1,
+    "refdes": 0,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 3
+   }
+  }
+ },
+ "off_3": {
+  "status": "FAIL",
+  "reason": "agent execution error: agent query failed: subtype=success errors=None",
+  "iters": 1,
+  "wall_min": 25.5,
+  "headroom": [
+   2
+  ],
+  "retry_outcomes": [
+   "approved"
+  ],
+  "n_alt_events": 0,
+  "rules": {},
+  "offered": [],
+  "surv_gate": [],
+  "surv_vp": [],
+  "passing": [],
+  "winner_src": {},
+  "area_blocking": [
+   null
+  ],
+  "area_approved": {
+   "true": 4,
+   "false": 1
+  },
+  "sha": "5e5e4790d069",
+  "pareto_rows": 0,
+  "single_axis": null,
+  "shipped_reason": null,
+  "attempt": {
+   "changes": 5,
+   "by_outcome": {
+    "kept": 0,
+    "rolled_back": 1,
+    "rejected": 4
+   },
+   "rejected_by_reason": {
+    "area": 1,
+    "refdes": 0,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 3
+   }
+  }
+ },
+ "on_1": {
+  "status": "PASS",
+  "reason": null,
+  "iters": 3,
+  "wall_min": 67.3,
+  "headroom": [
+   3,
+   3,
+   3
+  ],
+  "retry_outcomes": [
+   "approved",
+   "approved",
+   "approved"
+  ],
+  "n_alt_events": 3,
+  "rules": {
+   "max_improvement": 2,
+   "min_area_among_passing": 1
+  },
+  "offered": [
+   3,
+   3,
+   3
+  ],
+  "surv_gate": [
+   3,
+   3,
+   3
+  ],
+  "surv_vp": [
+   3,
+   3,
+   3
+  ],
+  "passing": [
+   0,
+   0,
+   2
+  ],
+  "winner_src": {
+   "alternative": 2,
+   "primary": 1
+  },
+  "area_blocking": [
+   false
+  ],
+  "area_approved": {
+   "true": 6,
+   "false": 3
+  },
+  "sha": "052579aa92b8",
+  "pareto_rows": 16,
+  "single_axis": true,
+  "shipped_reason": "min_area",
+  "attempt": {
+   "changes": 3,
+   "by_outcome": {
+    "kept": 3,
+    "rolled_back": 0,
+    "rejected": 0
+   },
+   "rejected_by_reason": {
+    "area": 0,
+    "refdes": 0,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 0
+   }
+  }
+ },
+ "on_2": {
+  "status": "PASS",
+  "reason": null,
+  "iters": 4,
+  "wall_min": 105.5,
+  "headroom": [
+   3,
+   1,
+   1,
+   3
+  ],
+  "retry_outcomes": [
+   "approved",
+   "approved",
+   "approved",
+   "approved"
+  ],
+  "n_alt_events": 8,
+  "rules": {
+   "max_improvement": 2,
+   "null": 5,
+   "min_area_among_passing": 1
+  },
+  "offered": [
+   3,
+   3,
+   2,
+   3,
+   2,
+   1,
+   2,
+   3
+  ],
+  "surv_gate": [
+   3,
+   3,
+   2,
+   3,
+   2,
+   1,
+   2,
+   3
+  ],
+  "surv_vp": [
+   3,
+   0,
+   0,
+   3,
+   0,
+   0,
+   1,
+   3
+  ],
+  "passing": [
+   0,
+   null,
+   null,
+   0,
+   null,
+   null,
+   null,
+   1
+  ],
+  "winner_src": {
+   "alternative": 3,
+   "null": 4,
+   "primary": 1
+  },
+  "area_blocking": [
+   false
+  ],
+  "area_approved": {
+   "true": 11,
+   "false": 8
+  },
+  "sha": "59e6a6b16678",
+  "pareto_rows": 16,
+  "single_axis": true,
+  "shipped_reason": "min_area",
+  "attempt": {
+   "changes": 28,
+   "by_outcome": {
+    "kept": 8,
+    "rolled_back": 0,
+    "rejected": 20
+   },
+   "rejected_by_reason": {
+    "area": 0,
+    "refdes": 0,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 20
+   }
+  }
+ },
+ "on_3": {
+  "status": "PASS",
+  "reason": null,
+  "iters": 2,
+  "wall_min": 25.0,
+  "headroom": [
+   3,
+   3
+  ],
+  "retry_outcomes": [
+   "approved",
+   "approved"
+  ],
+  "n_alt_events": 2,
+  "rules": {
+   "max_improvement": 1,
+   "min_area_among_passing": 1
+  },
+  "offered": [
+   3,
+   3
+  ],
+  "surv_gate": [
+   3,
+   3
+  ],
+  "surv_vp": [
+   3,
+   3
+  ],
+  "passing": [
+   0,
+   1
+  ],
+  "winner_src": {
+   "alternative": 1,
+   "primary": 1
+  },
+  "area_blocking": [
+   false
+  ],
+  "area_approved": {
+   "true": 5,
+   "false": 1
+  },
+  "sha": "5900be778488",
+  "pareto_rows": 2,
+  "single_axis": true,
+  "shipped_reason": "min_area",
+  "attempt": {
+   "changes": 4,
+   "by_outcome": {
+    "kept": 4,
+    "rolled_back": 0,
+    "rejected": 0
+   },
+   "rejected_by_reason": {
+    "area": 0,
+    "refdes": 0,
+    "param": 0,
+    "stimulus": 0,
+    "verify_pre": 0
+   }
+  }
+ }
+}

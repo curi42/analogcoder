@@ -637,6 +637,37 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
   Known limits: `checkpoint.py` still serialises a `judge_result` the same way, and
   a genuine string whose value is exactly `"NaN"` would be restored as a float.
 
+- **The alternatives A/B ran and was REJECTED, but on a clause that could not be
+  evaluated — read it as "could not compare", not "did not help"**
+  (`2026-08-05-alternatives-benefit-results.md`). 6 runs on
+  `benchmarks/bandgap/spec_seed_buf0_droop.yaml`, **none hit the 120-minute cap**.
+  Both preconditions held and the **firing clause held** — `on_1`'s outer
+  iteration 3 offered 3 alternatives, all 3 survived the gates and `verify_pre`,
+  **2 passed**, `min_area_among_passing` chose, and the winner was an
+  *alternative* rather than the primary. Across the ON arm an alternative beat
+  the primary **6 times to 3**. The area clause could not be evaluated at all:
+  the area phase only runs after PASS, and **OFF failed 3/3**, so there is no OFF
+  landing area to compare against. **Nothing was reverted** — the revert trigger
+  is "firing == 0" and firing held.
+  - **That is the seventh pre-registration defect, and it is v1's defect 2 wearing
+    the other arm.** The `void` clauses ask "were there observed runs" and "was
+    there an opportunity", never **"did the control arm reach the state the metric
+    is defined in"**. v2 added P2 to close the treatment-arm side; the control-arm
+    side stayed open. **Hang `void` on each metric separately** — "is this metric
+    defined in ≥1 run of each arm" — so a partially-void result can be said.
+  - **Do not read ON 3/3 PASS vs OFF 3/3 FAIL as the alternatives working.** Two
+    of the OFF failures are `tuning proposal repeatedly rejected`, and the area
+    gate burned retries in all three (`rejected_by_reason.area` 3 / 1 / 1). The ON
+    arm logged `area_check.approved: false` **12 times** with `blocking: false` —
+    without the demotion those 12 would have burned retries too. The
+    pre-registration said up front that the two changes cannot be separated; the
+    data points at the **demotion** as the larger contributor, and settling that
+    needs a third arm and a new pre-registration.
+  - **`off_3` shows the "observed" definition is still incomplete.** Its FAIL is
+    `agent execution error`, yet `iterations_used == 1` satisfies the progress
+    guard that v2's fifth defect prompted — that guard only excludes deaths at
+    **zero** iterations. Non-decisive here, but the next pre-registration must
+    read the *termination reason*, not only how far the run got.
 - **`result["pareto_front"]` collects every point the two phases already measured,
   and it costs zero extra simulations** (`pareto.py`, 2026-08-05). Three sources:
   the tuning loop's landing point (`entry`), the area phase's accepted points
