@@ -27,6 +27,7 @@ from analogcoder.netlist import (
     resolve_includes,
 )
 from analogcoder.optimizer import OptimizerAgents, run_optimization
+from analogcoder.pareto import Point, build_front
 from analogcoder.pvt import run_full_pvt_sweep
 from analogcoder.simulators.ngspice import NgspiceBackend
 from analogcoder.spec import load_spec
@@ -291,6 +292,44 @@ def test_the_optimizer_lowers_iq_while_every_criterion_still_passes(tmp_path):
     ]
     assert objective_criteria  # 목적값에 걸린 기준이 없으면 아래 검사가 무의미하다
     assert all(reported[name]["actual"] == survivor["objective"] for name in objective_criteria)
+
+    # --- 파레토 공선의 **2축 경로** (3단계 Task 11) ---------------------------
+    # 새 30분짜리 테스트를 만들지 않고 여기 붙인다: 이 테스트는 이미
+    # `run_optimization`을 실제 ngspice로 돌리고 있고, 공선의 2축 경로를 밟는
+    # 데 필요한 것이 정확히 그것이다. 단위 테스트는 목적 축을 손으로 채우므로
+    # "면적 단계의 objective가 사실은 면적"이라는 결함을 못 잡았다 - 그것을
+    # 잡은 것은 실제 데이터였다.
+    points = result["accepted_points"]
+    # 항상 실린다(빈 목록이라도) - 키의 부재와 빈 목록이 같아지면 "수락이
+    # 없었다"와 "이 기록이 사라졌다"가 구별되지 않는다.
+    assert isinstance(points, list) and points
+    landed = [p for p in points if p["landed"]]
+    assert len(landed) == 1
+    # 착지 행이 결과가 돌려주는 덱을 설명한다 - 위의 survivor와 같은 덱이다.
+    assert landed[0]["objective"] == result["objective_after"]
+    assert landed[0]["area"] == result["area_after"]
+    assert landed[0]["criteria"] == result["final_criteria"]
+
+    front = build_front(
+        entry=Point(source="entry", area=result["area_before"],
+                    objective=result["objective_before"], netlist_version="entry"),
+        area_points=[],
+        objective_points=[
+            Point(source="objective", area=row["area"], objective=row["objective"],
+                  netlist_version=str(row["version"]), criteria=row["criteria"])
+            for row in points
+        ],
+    )
+    # 목적 선언이 있는 스펙이므로 **두 축이다** - single_axis가 참이면 목적 축이
+    # 어딘가에서 None으로 떨어진 것이다.
+    assert front.single_axis is False
+    assert len(front.points) >= 2
+    # 출하점은 공선 전체의 면적 최소이고, 코너 확인은 그 한 점에만 붙는다.
+    assert sum(p.corner_verified for p in front.points) == 1
+    assert front.points[front.shipped_index].shipped is True
+    assert front.shipped_reason == "min_area"
+    measurable = [p.area for p in front.points if p.area is not None]
+    assert front.points[front.shipped_index].area == min(measurable)
 
     # 수락된 단계마다 목적값이 실제로 내려갔다 - 단조 감소.
     objectives = [s["objective"] for s in accepted]

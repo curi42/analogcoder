@@ -785,3 +785,59 @@ async def test_an_enforceable_area_budget_reports_its_coverage_too(tmp_path):
     events = [json.loads(line) for line in open(state.history_path)]
     baseline = [e for e in events if e["step"] == "optimize_baseline"][0]
     assert baseline["area_counted"] == 1 and baseline["area_budget_enforced"] is True
+
+
+# --- accepted_points (3단계가 읽는 것) ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_phase_reports_every_point_it_measured_not_just_how_many(tmp_path):
+    """파레토 공선이 이것을 읽는다. `steps_accepted`만으로는 공선을 만들 수
+    없다 - 개수는 알려 주지만 각 점의 (면적, 목적, 기준)을 알려 주지 않는다.
+
+    기준점도 들어간다: 아무 단계도 수락되지 않은 실행에서도 공선에는 행이
+    하나 있어야 하고, 그것이 "아무것도 바꾸지 않는 것이 최선일 수 있다"는
+    선택지다."""
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 200.0, 200.0, 200.0, 200.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    points = result["accepted_points"]
+    assert points, "수락 단계가 있는데 측정된 점이 하나도 없다"
+    # 착지 행은 정확히 하나이고 결과가 돌려주는 덱을 설명한다.
+    landed = [p for p in points if p["landed"]]
+    assert len(landed) == 1
+    assert landed[0]["objective"] == result["objective_after"]
+    assert landed[0]["area"] == result["area_after"]
+    assert landed[0]["criteria"] == result["final_criteria"]
+    # 버전은 오름차순이다 - 공선의 행 순서가 탐색이 지나온 순서와 같아야 한다.
+    assert [p["version"] for p in points] == sorted(p["version"] for p in points)
+
+
+@pytest.mark.asyncio
+async def test_accepted_points_is_present_even_when_nothing_was_accepted(tmp_path):
+    """키의 부재와 빈 목록이 같아지면 "수락이 없었다"와 "이 기록이 사라졌다"가
+    구별되지 않는다. `topology_swaps`가 항상 실리는 것과 같은 규칙이다."""
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0, 260.0, 260.0, 260.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(), state, agents)
+
+    assert result["status"] == "UNCHANGED"
+    assert "accepted_points" in result
+    # 기준점 한 행은 남는다 - 그것이 "아무것도 바꾸지 않는다"는 선택지다.
+    assert len(result["accepted_points"]) == 1
+    assert result["accepted_points"][0]["landed"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_phase_still_carries_the_key(tmp_path):
+    state = RunState(run_dir=str(tmp_path), testbench_names=["tb"])
+    state.push_netlist_version({"tb": DECK})
+    agents, _ = _agents([235.0])
+
+    result = await run_optimization({"tb": DECK}, _spec(optimize=None), state, agents)
+
+    assert result["accepted_points"] == []
