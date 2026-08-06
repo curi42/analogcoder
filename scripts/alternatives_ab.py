@@ -83,6 +83,41 @@ def verify_arms(off_root: str, on_root: str) -> dict:
     ).stdout.strip()
     if probe != "True True":
         raise SystemExit(f"ON 팔에 처치가 없다: {probe}")
+
+    # **두 팔이 실제로 시뮬레이션할 수 있는가.** 이 확인이 없어서 2026-08-05 의
+    # A/B 가 무효가 됐다: OFF 팔 워크트리의 PDK 서브모듈이 비어 있어 그 팔은
+    # 45 코너는커녕 **한 점도** 돌지 못했고, 세 런 전부 측정값 `{}` 를 들고
+    # FAIL 했다. 위의 확인들은 전부 통과했다 - 코드가 다르고, 회로가 같고,
+    # 처치가 있다는 것은 맞았기 때문이다. 빠진 것은 **대조 팔이 지표가
+    # 정의되는 상태에 도달하는가** 였고, 그것이 이 저장소가 이미 두 번 적어 둔
+    # 결함이다. 서브모듈 유무를 보지 않고 **한 점을 실제로 돌린다** - 못 도는
+    # 이유는 서브모듈만이 아니다.
+    for arm, root in (("OFF", off_root), ("ON", on_root)):
+        out = subprocess.run(
+            [os.path.join(root, ".venv", "bin", "python"), "-c",
+             "import os; from analogcoder.spec import load_spec;"
+             "from analogcoder.netlist import resolve_includes;"
+             "from analogcoder.simulators.ngspice import NgspiceBackend;"
+             "from analogcoder.pvt import _simulate_rendered;"
+             f"s = load_spec({SPEC!r});"
+             "tb = s.testbenches[0];"
+             # `cli.py`와 **같은 순서로** include를 절대 경로로 바꾼다. 이것을
+             # 빼면 임시 디렉터리에서 상대 include가 깨져 멀쩡한 팔도 거부한다 -
+             # 실제로 그렇게 만들어 봤고, 그 상태의 이 검사는 두 팔을 모두
+             # 거부하는 **항상 실패하는 게이트**다. 실행 전에 정상 팔에서
+             # `success` 가 나오는 것을 확인한 뒤 이 형태로 굳혔다.
+             "text = resolve_includes(open(tb.netlist_path).read(),"
+             " os.path.dirname(tb.netlist_path));"
+             "r = _simulate_rendered(NgspiceBackend(), text, tb.control_block);"
+             "print(r.status, len(r.measurements or {}))"],
+            cwd=root, capture_output=True, text=True,
+        )
+        first, _, count = out.stdout.strip().partition(" ")
+        if out.returncode != 0 or first != "success" or count in ("", "0"):
+            raise SystemExit(
+                f"{arm} 팔이 한 점도 시뮬레이션하지 못한다 - 이 팔의 지표는 "
+                f"정의되지 않는다:\n{out.stdout.strip()}\n{out.stderr.strip()[-800:]}"
+            )
     return {"off_orchestrator": off_file, "on_orchestrator": on_file}
 
 

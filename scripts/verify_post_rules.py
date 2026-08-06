@@ -10,12 +10,12 @@
 "맞추기" 라고 부른 것이고, 사전 등록이 그 금지를 코드로 강제하라고 적었다.
 """
 
-import json
 import math
 import os
 import re
 
 from analogcoder.curation import COMPARISON_REL_TOLERANCE
+from analogcoder.history import read_events
 from analogcoder.judge_tools import violation_sum
 from analogcoder.spec import Criterion
 
@@ -180,8 +180,93 @@ def rule_P3(before: list[dict], after: list[dict]) -> str:
     return "keep" if any(d > 0 and not b for _n, d, b, _a in rows) else "rollback"
 
 
+# --- 널 대조 (판정에 쓰지 않는다) ---------------------------------------------
+#
+# **"이 게이트가 아무 일도 하지 않을 때 로그는 어떤 모양인가"** 를 수치로 만든다.
+# 규칙 하나가 널 대조와 같은 점수를 내면, 그 점수는 규칙의 성질이 아니라 표본의
+# 성질이다. 사전 등록의 판정에는 들어가지 않는다 - 부수 기록이다.
+
+def rule_N0(before: list[dict], after: list[dict]) -> str:
+    """언제나 keep. 아무것도 읽지 않는다."""
+    return "keep"
+
+
+def rule_N1(before: list[dict], after: list[dict]) -> str:
+    """**측정값을 하나도 읽지 않는다.** 재진 기준이 0개면 rollback, 아니면 keep -
+    즉 "시뮬레이션이 돌았는가" 만 본다. 기준별 규칙이 이것을 못 이기면 그 표본은
+    규칙들을 구별하지 못한다."""
+    measured = any(sb is not None and sa is not None
+                   for _n, sb, sa in _deltas(_paired(before, after)))
+    return "keep" if measured else "rollback"
+
+
 LEGACY_RULES = {"D": rule_D, "G": rule_G, "I": rule_I}
 PER_CRITERION_RULES = {"P1": rule_P1, "P2": rule_P2, "P3": rule_P3}
+NULL_CONTROLS = {"N0": rule_N0, "N1": rule_N1}
+
+
+# --- 선행 조건 C: 세 모양이 표본에 있는가 --------------------------------------
+
+def shapes(before: list[dict], after: list[dict]) -> dict:
+    """사전 등록 §C 의 세 모양이 이 결정에 있는가.
+
+    **P 규칙이 D/G/I 를 이길 수 있는 것은 이 모양에서뿐이다.** 0건인 모양이
+    있으면 그 모양에 대해서는 `void` 이고, 그것이 이 함수의 존재 이유다 -
+    서 있는 질문 2 를 결과가 나온 뒤가 아니라 채점하면서 묻는다."""
+    rows = _classified(before, after)
+    return {
+        # S1: 적용 전 **실패하던** 기준 중 의미있게 나빠진 것
+        "s1": any(d < 0 and not b for _n, d, b, _a in rows),
+        # S2: 적용 전 **통과하던** 기준이 뒤집히지 않은 채 의미있게 나빠진 것
+        "s2": any(d < 0 and b and a for _n, d, b, a in rows),
+        # S3: 의미있게 좋아졌으나 **여전히 실패하는** 기준
+        "s3": any(d > 0 and not a for _n, d, _b, a in rows),
+    }
+
+
+def delta_vector(before: list[dict], after: list[dict]) -> list[dict]:
+    """기준별 `(이름, 여유 전, 여유 후, Δ, 방향, 통과 전, 통과 후)`.
+
+    부수 기록이고 판정에 쓰지 않는다 - 사전 등록이 그렇게 적었다."""
+    out = []
+    for pb, pa in _paired(before, after):
+        sb, sa = _slack(pb), _slack(pa)
+        row = {"name": pb["name"], "slack_before": sb, "slack_after": sa,
+               "pass_before": bool(pb.get("pass")), "pass_after": bool(pa.get("pass"))}
+        # `None` 은 "재지 못했다" 이고 0 이 아니다. 그 구별을 여기서도 지킨다.
+        row["delta"] = None if (sb is None or sa is None) else sa - sb
+        row["direction"] = None if (sb is None or sa is None) else _meaningful(sb, sa)
+        out.append(row)
+    return out
+
+
+def classify(before: list[dict], after: list[dict]) -> str:
+    """불일치를 2차와 같은 셋으로 나눈다. 판정에 쓰는 것은 (c) 뿐이다.
+
+    - (a) 결정론적으로 불가능: 기준별 `(연산자, 임계값, actual)` 벡터가 적용
+      전후로 동일하다. 입력이 같으면 어떤 결정론 함수도 다른 답을 못 낸다.
+    - (b) 잡음 바닥 이하: 모든 방향이 0.
+    - (c) 나머지 - 진짜 판단 차이."""
+    pairs = _paired(before, after)
+    same = all(
+        (pb.get("target"), _fingerprint(pb.get("actual")))
+        == (pa.get("target"), _fingerprint(pa.get("actual")))
+        for pb, pa in pairs
+    )
+    if pairs and same:
+        return "a"
+    rows = _classified(before, after)
+    if all(d == 0 for _n, d, _b, _a in rows):
+        return "b"
+    return "c"
+
+
+def _fingerprint(value):
+    """NaN 은 자기 자신과 같지 않으므로 그대로 비교하면 '동일' 이 영원히
+    거짓이 된다 - `CornerPoint` 에 NaN 을 넣지 말라는 규칙과 같은 함정이다."""
+    if isinstance(value, float) and math.isnan(value):
+        return "NaN"
+    return value
 
 
 # --- 표본 읽기 ----------------------------------------------------------------
@@ -200,12 +285,14 @@ def decisions(history_path: str) -> list[dict]:
     모두에서 같은 인과 순서다.
 
     앞에 judge 가 둘 미만이면 그 결정은 **버리고 센다** - 지어내지 않는다."""
-    events = []
-    with open(history_path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                events.append(json.loads(line))
+    # **`history.read_events` 를 쓴다. 원시 `json.loads` 가 아니다.**
+    # `json_io.json_safe` 가 NaN/Infinity 를 **문자열 표지**로 싣기 때문이다 -
+    # 표지는 전송 형식이지 값이 아니고, 원시로 읽으면 `math.isnan(str)` 이
+    # `TypeError` 로 죽는다(새 표본에서 실제로 겪었다). 옛 47건은 그 표지가
+    # 도입되기 전이라 원시로도 읽혔고, 그래서 이 결함은 새 표본에서만 났다.
+    # `read_events` 는 재개로 버려진 범위도 함께 걸러 준다 - 한 결정이 두 번
+    # 세어지는 것을 막는 쪽이고, 그것이 D1 을 무효로 만든 부류의 결함이다.
+    events = read_events(history_path)
     out = []
     judges: list[dict] = []
     for e in events:
@@ -242,6 +329,9 @@ def score(run_dirs: list[str], rules: dict, *, allow_design_sample: bool) -> dic
                 "그 표본은 재현 확인(선행 조건 R)에만 쓴다."
             )
     agree = {name: 0 for name in rules}
+    # 불일치를 (a)/(b)/(c) 로 나눠 센다. **판정은 (c) 만 본다.**
+    classes = {name: {"a": 0, "b": 0, "c": 0} for name in rules}
+    shape_counts = {"s1": 0, "s2": 0, "s3": 0}
     total = unpaired = 0
     rows = []
     for run_dir in run_dirs:
@@ -253,12 +343,51 @@ def score(run_dirs: list[str], rules: dict, *, allow_design_sample: bool) -> dic
                 unpaired += 1
                 continue
             total += 1
+            found = shapes(d["before"], d["after"])
+            for key, present in found.items():
+                shape_counts[key] += int(present)
+            klass = classify(d["before"], d["after"])
             row = {"run": os.path.basename(run_dir.rstrip("/")),
-                   "outer_iter": d["outer_iter"], "llm": d["recommendation"]}
+                   "outer_iter": d["outer_iter"], "llm": d["recommendation"],
+                   "shapes": found, "class_if_disagree": klass,
+                   "deltas": delta_vector(d["before"], d["after"])}
             for name, fn in rules.items():
                 verdict = fn(d["before"], d["after"])
                 row[name] = verdict
                 if verdict == d["recommendation"]:
                     agree[name] += 1
+                else:
+                    classes[name][klass] += 1
             rows.append(row)
-    return {"total": total, "unpaired": unpaired, "agree": agree, "rows": rows}
+    return {"total": total, "unpaired": unpaired, "agree": agree,
+            "disagreement_classes": classes, "shape_counts": shape_counts,
+            "rows": rows}
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("run_dirs", nargs="+")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--legacy-only", action="store_true",
+                    help="선행 조건 R(재현 확인)용. 옛 47건에는 이것만 허용된다.")
+    args = ap.parse_args(argv)
+
+    rules = dict(LEGACY_RULES)
+    if not args.legacy_only:
+        rules.update(PER_CRITERION_RULES)
+        rules.update(NULL_CONTROLS)
+    result = score(args.run_dirs, rules, allow_design_sample=args.legacy_only)
+    with open(args.out, "w") as f:
+        json.dump(result, f, indent=1, ensure_ascii=False)
+    print(json.dumps({"total": result["total"], "agree": result["agree"],
+                      "shape_counts": result["shape_counts"],
+                      "disagreement_classes": result["disagreement_classes"]},
+                     ensure_ascii=False, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

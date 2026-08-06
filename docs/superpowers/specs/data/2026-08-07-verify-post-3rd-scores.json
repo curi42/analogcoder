@@ -1,0 +1,2691 @@
+{
+ "total": 12,
+ "unpaired": 0,
+ "agree": {
+  "D": 9,
+  "G": 9,
+  "I": 9,
+  "P1": 5,
+  "P2": 12,
+  "P3": 5,
+  "N0": 9,
+  "N1": 12
+ },
+ "disagreement_classes": {
+  "D": {
+   "a": 3,
+   "b": 0,
+   "c": 0
+  },
+  "G": {
+   "a": 3,
+   "b": 0,
+   "c": 0
+  },
+  "I": {
+   "a": 3,
+   "b": 0,
+   "c": 0
+  },
+  "P1": {
+   "a": 0,
+   "b": 0,
+   "c": 7
+  },
+  "P2": {
+   "a": 0,
+   "b": 0,
+   "c": 0
+  },
+  "P3": {
+   "a": 0,
+   "b": 0,
+   "c": 7
+  },
+  "N0": {
+   "a": 3,
+   "b": 0,
+   "c": 0
+  },
+  "N1": {
+   "a": 0,
+   "b": 0,
+   "c": 0
+  }
+ },
+ "shape_counts": {
+  "s1": 0,
+  "s2": 7,
+  "s3": 6
+ },
+ "rows": [
+  {
+   "run": "off_1",
+   "outer_iter": 1,
+   "llm": "rollback",
+   "shapes": {
+    "s1": false,
+    "s2": false,
+    "s3": false
+   },
+   "class_if_disagree": "a",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "startup_time",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "rollback",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "rollback"
+  },
+  {
+   "run": "off_1",
+   "outer_iter": 2,
+   "llm": "rollback",
+   "shapes": {
+    "s1": false,
+    "s2": false,
+    "s3": false
+   },
+   "class_if_disagree": "a",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "startup_time",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "rollback",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "rollback"
+  },
+  {
+   "run": "off_3",
+   "outer_iter": 1,
+   "llm": "rollback",
+   "shapes": {
+    "s1": false,
+    "s2": false,
+    "s3": false
+   },
+   "class_if_disagree": "a",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "startup_time",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": null,
+     "slack_after": null,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": null,
+     "direction": null
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "rollback",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "rollback"
+  },
+  {
+   "run": "on_1",
+   "outer_iter": 1,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": false,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04971073194680467,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00010322162530482237,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.047908952380952406,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00010342857142858763,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.2900616666666666,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.199999999996649e-05,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951990580000001,
+     "slack_after": 0.9951990795000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.1500000002561137e-08,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.2474564026409264,
+     "slack_after": -0.150488186122375,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.09696821651855139,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51764,
+     "slack_after": 0.51778,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.000140000000000029,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9974999999999999,
+     "slack_after": 0.9990399999999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0015399999999999858,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24334941972466992,
+     "slack_after": 0.24334941972466992,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13727442807456905,
+     "slack_after": 0.13740412863029638,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00012970055572733563,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21227278993284632,
+     "slack_after": 0.21227278993284632,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.40375633508893966,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.002809830566085747,
+     "direction": 1
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.23364306925950762,
+     "slack_after": 0.246392102189231,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.012749032929723375,
+     "direction": 1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "keep",
+   "P2": "keep",
+   "P3": "keep",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_1",
+   "outer_iter": 2,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04971073194680467,
+     "slack_after": 0.04971073194680467,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.047908952380952406,
+     "slack_after": 0.047908952380952406,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.2900616666666666,
+     "slack_after": 0.2900616666666666,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951990795000001,
+     "slack_after": 0.9951994055000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 3.2599999999494145e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.150488186122375,
+     "slack_after": -0.051833122629582826,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.09865506349279217,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51778,
+     "slack_after": 0.51912,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0013400000000000079,
+     "direction": 1
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9990399999999999,
+     "slack_after": 0.9992800000000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.000240000000000129,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24334941972466992,
+     "slack_after": 0.24334941972466992,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13740412863029638,
+     "slack_after": 0.13717553177720887,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00022859685308751487,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21227278993284632,
+     "slack_after": 0.21226503342950265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -7.756503343669952e-06,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.40375633508893966,
+     "slack_after": 0.40375633508893966,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.246392102189231,
+     "slack_after": 0.2007912166954715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.045600885493759485,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_1",
+   "outer_iter": 3,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": false
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04971073194680467,
+     "slack_after": 0.04971073194680467,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.047908952380952406,
+     "slack_after": 0.047908952380952406,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.2900616666666666,
+     "slack_after": 0.2900616666666666,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951994055000001,
+     "slack_after": 0.9951996944999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.889999998201276e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.051833122629582826,
+     "slack_after": 0.030646666666666652,
+     "pass_before": false,
+     "pass_after": true,
+     "delta": 0.08247978929624948,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51912,
+     "slack_after": 0.51988,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0007599999999999829,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9992800000000001,
+     "slack_after": 0.9995799999999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00029999999999985594,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24334941972466992,
+     "slack_after": 0.24334941972466992,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13717553177720887,
+     "slack_after": 0.13686487126339553,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00031066051381334336,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21226503342950265,
+     "slack_after": 0.21225727677340578,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -7.75665609686893e-06,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.40375633508893966,
+     "slack_after": 0.40375633508893966,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.2007912166954715,
+     "slack_after": 0.1433964971341259,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.05739471956134562,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_2",
+   "outer_iter": 1,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04981395357210949,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.04780552380952382,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.29003966666666664,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951990580000001,
+     "slack_after": 0.995199371,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 3.1299999991851735e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.2474564026409264,
+     "slack_after": -0.1751398138015606,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.07231658883936579,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51764,
+     "slack_after": 0.51902,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0013800000000000479,
+     "direction": 1
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9974999999999999,
+     "slack_after": 0.9980600000000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.000560000000000116,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24334941972466992,
+     "slack_after": 0.24335056476313843,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 1.1450384685141035e-06,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13727442807456905,
+     "slack_after": 0.13701597383432434,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.0002584542402447043,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21227278993284632,
+     "slack_after": 0.21226503342950265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -7.756503343669952e-06,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.4009465045228539,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.23364306925950762,
+     "slack_after": 0.18981680745287519,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.04382626180663243,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_2",
+   "outer_iter": 2,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04981395357210949,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.04780552380952382,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.29003966666666664,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.995199371,
+     "slack_after": 0.995199623,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.5199999997838063e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.1751398138015606,
+     "slack_after": -0.1150129208113562,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.060126892990204406,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51902,
+     "slack_after": 0.5196999999999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0006799999999999029,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9980600000000001,
+     "slack_after": 0.9986,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0005399999999999849,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24335056476313843,
+     "slack_after": 0.24335056476313843,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13701597383432434,
+     "slack_after": 0.13674565443928544,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00027031939503890934,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21226503342950265,
+     "slack_after": 0.21225727677340578,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -7.75665609686893e-06,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.4009465045228539,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.18981680745287519,
+     "slack_after": 0.14527357655998258,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.04454323089289261,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_2",
+   "outer_iter": 3,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": false,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04977251554022037,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -4.1438031889121096e-05,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.04784704761904766,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 4.1523809523838495e-05,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.29004833333333335,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 8.666666666712342e-06,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.995199623,
+     "slack_after": 0.9951996259999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.9999999151542056e-09,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.1150129208113562,
+     "slack_after": -0.0599265489276896,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.05508637188366659,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.5196999999999999,
+     "slack_after": 0.51972,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.0000000000020002e-05,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9986,
+     "slack_after": 0.99902,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00041999999999997595,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24335056476313843,
+     "slack_after": 0.24335056476313843,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13674565443928544,
+     "slack_after": 0.1368393275731745,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 9.367313388905507e-05,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21225727677340578,
+     "slack_after": 0.21225727677340578,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.4025094602668791,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0015629557440252073,
+     "direction": 1
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.14527357655998258,
+     "slack_after": 0.15370155073612102,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.008427974176138442,
+     "direction": 1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "keep",
+   "P2": "keep",
+   "P3": "keep",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_2",
+   "outer_iter": 4,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": false
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04977251554022037,
+     "slack_after": 0.049751224870671205,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -2.1290669549166308e-05,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04784704761904766,
+     "slack_after": 0.047868380952380975,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 2.133333333331766e-05,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29004833333333335,
+     "slack_after": 0.29005299999999995,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 4.666666666597319e-06,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951996259999999,
+     "slack_after": 0.9951997604999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 1.3450000002634965e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.0599265489276896,
+     "slack_after": 0.018233333333333355,
+     "pass_before": false,
+     "pass_after": true,
+     "delta": 0.07815988226102295,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51972,
+     "slack_after": 0.52004,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00031999999999998696,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.99902,
+     "slack_after": 0.9994400000000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.00042000000000008697,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24335056476313843,
+     "slack_after": 0.24335056476313843,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.1368393275731745,
+     "slack_after": 0.13667858050225573,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00016074707091875973,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21225727677340578,
+     "slack_after": 0.21225727677340578,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4025094602668791,
+     "slack_after": 0.40309792178593107,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0005884615190519527,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.15370155073612102,
+     "slack_after": 0.12184412733260148,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.03185742340351953,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_3",
+   "outer_iter": 1,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": true
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04981395357210949,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.04780552380952382,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.29003966666666664,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.9951990580000001,
+     "slack_after": 0.995199459,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 4.0099999987219803e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.2474564026409264,
+     "slack_after": -0.1567206552842695,
+     "pass_before": false,
+     "pass_after": false,
+     "delta": 0.09073574735665688,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51764,
+     "slack_after": 0.51928,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0016399999999999748,
+     "direction": 1
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9974999999999999,
+     "slack_after": 0.9982200000000001,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.000720000000000165,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24334941972466992,
+     "slack_after": 0.24335056476313843,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 1.1450384685141035e-06,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13727442807456905,
+     "slack_after": 0.13693298038002072,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.00034144769454833024,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21227278993284632,
+     "slack_after": 0.21226503342950265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -7.756503343669952e-06,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.4009465045228539,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.23364306925950762,
+     "slack_after": 0.17607486183805335,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.05756820742145427,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  },
+  {
+   "run": "on_3",
+   "outer_iter": 2,
+   "llm": "keep",
+   "shapes": {
+    "s1": false,
+    "s2": true,
+    "s3": false
+   },
+   "class_if_disagree": "c",
+   "deltas": [
+    {
+     "name": "vbgout_min",
+     "slack_before": 0.031378493696695604,
+     "slack_after": 0.031378493696695604,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbgout_max",
+     "slack_before": 0.0321296875,
+     "slack_after": 0.0321296875,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_min",
+     "slack_before": 0.04981395357210949,
+     "slack_after": 0.04981395357210949,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_max",
+     "slack_before": 0.04780552380952382,
+     "slack_after": 0.04780552380952382,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_min",
+     "slack_before": 0.049943788340810265,
+     "slack_after": 0.049943788340810265,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg1_max",
+     "slack_before": 0.047675396825396815,
+     "slack_after": 0.047675396825396815,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "temperature_coefficient",
+     "slack_before": 0.48403085714285715,
+     "slack_after": 0.48403085714285715,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "quiescent_current",
+     "slack_before": 0.29003966666666664,
+     "slack_after": 0.29003966666666664,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "startup_time",
+     "slack_before": 0.995199459,
+     "slack_after": 0.9951999305,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 4.7150000004325676e-07,
+     "direction": 0
+    },
+    {
+     "name": "psrr_dc",
+     "slack_before": 0.42655157939164007,
+     "slack_after": 0.42655157939164007,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "vbg0_droop",
+     "slack_before": -0.1567206552842695,
+     "slack_after": 0.07419999999999997,
+     "pass_before": false,
+     "pass_after": true,
+     "delta": 0.23092065528426947,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_droop",
+     "slack_before": 0.51928,
+     "slack_after": 0.52044,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0011600000000000499,
+     "direction": 1
+    },
+    {
+     "name": "vbg0_residual",
+     "slack_before": 0.9982200000000001,
+     "slack_after": 0.9997999999999999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0015799999999998038,
+     "direction": 1
+    },
+    {
+     "name": "vbg1_residual",
+     "slack_before": 0.999,
+     "slack_after": 0.999,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_loop_gain",
+     "slack_before": 0.3082899717609381,
+     "slack_after": 0.3082899717609381,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "core_phase_margin",
+     "slack_before": 0.24335056476313843,
+     "slack_after": 0.24335170979814136,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 1.1450350029251766e-06,
+     "direction": 0
+    },
+    {
+     "name": "trim_loop_gain",
+     "slack_before": 0.31463740320681155,
+     "slack_after": 0.31463740320681155,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "trim_phase_margin",
+     "slack_before": 0.13693298038002072,
+     "slack_after": 0.13613734922511525,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.0007956311549054684,
+     "direction": 0
+    },
+    {
+     "name": "buf1_loop_gain",
+     "slack_before": 0.28559910679476896,
+     "slack_after": 0.28559910679476896,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf1_phase_margin",
+     "slack_before": 0.21226503342950265,
+     "slack_after": 0.21224951996455127,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -1.551346495137773e-05,
+     "direction": 0
+    },
+    {
+     "name": "buf0_loop_gain",
+     "slack_before": 0.4009465045228539,
+     "slack_after": 0.4009465045228539,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": 0.0,
+     "direction": 0
+    },
+    {
+     "name": "buf0_phase_margin",
+     "slack_before": 0.17607486183805335,
+     "slack_after": 0.040074490219558924,
+     "pass_before": true,
+     "pass_after": true,
+     "delta": -0.13600037161849443,
+     "direction": -1
+    }
+   ],
+   "D": "keep",
+   "G": "keep",
+   "I": "keep",
+   "P1": "rollback",
+   "P2": "keep",
+   "P3": "rollback",
+   "N0": "keep",
+   "N1": "keep"
+  }
+ ]
+}

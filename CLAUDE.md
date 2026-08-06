@@ -655,19 +655,77 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
     is defined in"**. v2 added P2 to close the treatment-arm side; the control-arm
     side stayed open. **Hang `void` on each metric separately** — "is this metric
     defined in ≥1 run of each arm" — so a partially-void result can be said.
-  - **Do not read ON 3/3 PASS vs OFF 3/3 FAIL as the alternatives working.** Two
-    of the OFF failures are `tuning proposal repeatedly rejected`, and the area
-    gate burned retries in all three (`rejected_by_reason.area` 3 / 1 / 1). The ON
-    arm logged `area_check.approved: false` **12 times** with `blocking: false` —
-    without the demotion those 12 would have burned retries too. The
-    pre-registration said up front that the two changes cannot be separated; the
-    data points at the **demotion** as the larger contributor, and settling that
-    needs a third arm and a new pre-registration.
+  - **The OFF arm never simulated a single point, so it is `void`, not "lost"
+    (found 2026-08-07, two days after the first write-up).** Its worktree's PDK
+    submodule was empty (`git submodule status` there reads `-f62031a1…`, leading
+    `-` = uninitialised), so every simulation died on a missing `lod.spice` and
+    every judge saw `{}`: **0 successes out of 5 / 1 / 3 simulation events**,
+    against 6 / 8 / 4 all-success on ON. **Everything ON-only survives** (the
+    firing clause, 6–3, the Pareto rows, `blocking: false`); what is withdrawn is
+    any reading of ON 3/3 PASS vs OFF 3/3 FAIL — including the first write-up's
+    own counter-reading that the **area-gate demotion** was the larger
+    contributor. The `rejected_by_reason.area` counts (3 / 1 / 1) are real and
+    explain nothing: they happened on a deck with no measurements, and OFF's
+    failure has a sufficient prior cause. Separating demotion from alternatives
+    still needs a third arm — and now, first, two arms that can simulate.
+  - **That is the eighth defect, and it is the seventh's mechanism.** The seventh
+    says the rule cannot *say* "the control arm never reached the metric's
+    domain"; the eighth is that **nothing checked whether it could**.
+    `verify_arms()` confirmed four things — different code, each arm importing
+    inside its own worktree, the treatment present, identical benchmark diff —
+    and all four were right. It now also **runs one real simulation per arm** and
+    requires `success` plus ≥1 measurement. Verified against "what does this look
+    like when it does nothing": main root `success 6`, that worktree `error 0`.
+    Drop the `resolve_includes` call and it rejects *both* arms — an
+    always-failing gate — which is why it mirrors `cli.py`'s order.
+  - **A run whose simulator never succeeds reports the tuner's failure reason, and
+    nothing distinguishes the two.** `off_1` ended `tuning proposal repeatedly
+    rejected` after tuning three times against `{}`; grep confirms **no code in
+    `orchestrator.py` or `cli.py` reads `status == "error"`**, so the loop spends
+    its whole budget and `result.json`'s `reason` misdescribes the run. This is
+    the repo's own `null`/`NaN` rule inside the product rather than inside a
+    measurement. Not fixed here — the non-arbitrary form is a *precondition* on
+    the entry simulation, not a consecutive-failure threshold.
   - **`off_3` shows the "observed" definition is still incomplete.** Its FAIL is
     `agent execution error`, yet `iterations_used == 1` satisfies the progress
     guard that v2's fifth defect prompted — that guard only excludes deaths at
-    **zero** iterations. Non-decisive here, but the next pre-registration must
-    read the *termination reason*, not only how far the run got.
+    **zero** iterations. Non-decisive here (and secondary to the void above), but
+    the next pre-registration must read the *termination reason*, not only how far
+    the run got.
+- **`verify_post`'s 3rd measurement returned "adopt P2" and P2 was NOT adopted,
+  because the score it earned is byte-identical to a rule that reads no
+  measurement at all** (`2026-08-07-verify-post-per-criterion-rules-results.md`,
+  replay code `scripts/verify_post_rules.py` — committed this time, since the 2nd
+  measurement's replay code was a scratchpad file and vanished). Precondition R
+  held exactly (**D 33 / G 41 / I 39 of 47**). On the new 12 decisions:
+  **P2 12/12 with zero disagreements**, D/G/I 9/12 (all three disagreements class
+  **(a)**), P1/P3 5/12 (7 class-(c) each).
+  - **The sample is perfectly confounded: arm = measured-ness = recommendation.**
+    All 3 `rollback` decisions are OFF-arm decisions with **0 of 22 criteria
+    measured** (the void arm above); all 9 `keep` decisions are ON-arm with 22/22.
+    So **no rule's `rollback` branch was ever exercised on a measured decision**,
+    and two null controls reproduce the entire scoreboard: "always keep" scores
+    9/12 (= D/G/I) and **"rollback iff nothing was measured" scores 12/12 (= P2)**.
+    The null controls were computed *after* results and are recorded, never used
+    in the verdict — which is exactly why they could not rescue it.
+  - **The adoption stands on a `void` axis.** Precondition C counted the three
+    shapes and **S1 = 0** (S2 = 7, S3 = 6), and S1 is precisely where P2's
+    distinguishing clause fires. The locked rule pre-declared `void` for a
+    zero-count shape, so the clause that makes P2 *P2* was never evaluated.
+  - **Ninth defect: precondition S asked whether `rollback` recommendations
+    existed, not whether any of them reached the rule as input.** Next
+    pre-registration: require ≥n rollbacks on decisions with ≥1 measured
+    criterion, and **put the null control in the pre-registration** so a rule has
+    to beat it.
+  - **Tenth defect: the adoption clause ranges over "any rule" while its
+    tie-break only orders P1 → P2 → P3.** D, G and I also hit (c) = 0, so under
+    the literal reading four rules qualify and nothing orders them; under the
+    "P family are the candidates" reading P2 wins alone. **Both readings are on
+    the record and neither is picked** — choosing the candidate set after seeing
+    results is the move D1 paid for.
+  - Side fact, not used: the old 47-decision sample has **S1 = 11**, so S1 is a
+    shape this repo's runs do produce — it is absent from *this* sample, not from
+    the world.
 - **`result["pareto_front"]` collects every point the two phases already measured,
   and it costs zero extra simulations** (`pareto.py`, 2026-08-05). Three sources:
   the tuning loop's landing point (`entry`), the area phase's accepted points
