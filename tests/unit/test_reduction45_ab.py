@@ -522,6 +522,87 @@ def test_build_row_labels_killed_by_cap_even_if_result_json_exists(tmp_path):
     assert row["drop_reason"] == "killed_by_cap"
 
 
+def test_build_row_labels_an_entry_simulation_gate_fail_as_dropped(tmp_path):
+    """**새 값싼 실패 모양.** 진입 시뮬레이션 게이트(2026-08-07)는 환경이
+    깨진 실행을 몇 초 만에 끝내면서 `result.json`과 `history.jsonl`을 둘 다
+    남긴다 - 상한에도 안 걸렸고 산출물도 있으므로 옛 정의로는 `row_status="ok"`,
+    `iterations_used=1`인 **빠르고 깨끗한 런**으로 읽힌다. 이 변경 전에는
+    똑같은 환경 실패가 3반복 75분을 태워 눈에 띄었다.
+
+    이 저장소가 이미 두 번 기록한 "관측의 정의가 불완전하다" 결함이고
+    (v1 결함 2, v2 결함 5), 판별자인 `failure_reason`은 이번에 생겼는데
+    아무도 읽지 않았다. 세지 않는 것이 옳다: 이 실행은 축소가 있든 없든
+    아무것도 재지 못했으므로 두 팔 어느 쪽에 대해서도 증거가 아니다."""
+    run_dir = tmp_path / "off_1"
+    run_dir.mkdir()
+    result = {
+        "status": "FAIL",
+        "iterations_used": 1,
+        "failure_reason": (
+            "the entry simulation produced no measurements in any testbench: "
+            "dc_tc: ngspice fatal error, exit(1): could not find include file "
+            "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/"
+            "lod.spice referenced from benchmarks/bandgap/pdk_corner.inc"
+        ),
+    }
+    (run_dir / "result.json").write_text(json.dumps(result))
+    with open(run_dir / "history.jsonl", "w") as f:
+        f.write(json.dumps({"step": "entry_simulation_empty", "outer_iter": 1, "attempt": 0}) + "\n")
+
+    invocation = {
+        "arm": "off", "index": 1, "spec": "x.yaml", "exit": 0,
+        "killed_by_cap": False, "elapsed_s": 8.4, "run_dir": str(run_dir),
+    }
+    row = build_row(invocation)
+
+    assert row["row_status"] == "dropped"
+    assert row["drop_reason"] == "entry_simulation_empty"
+    # 라벨이 붙어도 읽힌 사실은 남는다 - `dropped`는 "값이 없다"가 아니라
+    # "판정에 못 쓴다"이고, 두 사실을 뭉개면 왜 떨어졌는지 알 수 없다.
+    assert row["result_status"] == "FAIL"
+    assert "lod.spice" in row["result_reason"]
+    # 지어내지 않는다: 이 실행은 사건이 일어났는지 확인할 수 없다.
+    assert row["mid_pass_sweep_fail"] is None
+    assert row["total_outer_iterations"] is None
+
+
+def test_build_row_keeps_an_ordinary_fail_observed(tmp_path):
+    """진입 게이트 라벨이 **모든** FAIL을 떨어뜨리면 안 된다 - 그러면 v1의
+    `off_3`(중간 PASS 뒤 최종 스윕 실패)처럼 선행 조건이 걸려 있는 관측까지
+    사라져 판정이 거짓 `void`가 된다. 판별자는 `failure_reason` 문자열
+    하나뿐이고, 그 문자열이 `orchestrator`가 쓰는 것과 같아야 한다."""
+    run_dir = tmp_path / "off_2"
+    run_dir.mkdir()
+    (run_dir / "result.json").write_text(json.dumps({
+        "status": "FAIL", "iterations_used": 5,
+        "failure_reason": "final PVT sweep failed: vbg0_droop 22.9376 > 15",
+    }))
+    with open(run_dir / "history.jsonl", "w") as f:
+        f.write(json.dumps({"step": "orchestration_attempt", "attempt": 0,
+                            "status": "PASS", "iterations_used": 5}) + "\n")
+        f.write(json.dumps({"step": "pvt_final_sweep", "overall_pass": False, "summary": "x"}) + "\n")
+
+    row = build_row({
+        "arm": "off", "index": 2, "spec": "x.yaml", "exit": 1,
+        "killed_by_cap": False, "elapsed_s": 3600.0, "run_dir": str(run_dir),
+    })
+
+    assert row["row_status"] == "ok"
+    assert row["drop_reason"] is None
+    assert row["mid_pass_sweep_fail"] is True
+
+
+def test_the_entry_gate_reason_the_aggregator_matches_is_the_one_orchestrator_writes(tmp_path):
+    """**두 번째 사본을 만들지 않는다.** 집계기가 자기 문자열을 손으로 적으면
+    `orchestrator.py`가 사유 문장을 한 글자 고치는 순간 이 라벨이 조용히
+    영영 안 붙는다 - 그리고 그 침묵은 "진입 게이트 실패가 없었다"와 구별되지
+    않는다. 그래서 집계기는 `orchestrator`가 쓰는 접두사를 **import**한다."""
+    from analogcoder.orchestrator import ENTRY_SIMULATION_EMPTY_REASON
+    from reduction45_aggregate import ENTRY_SIMULATION_EMPTY_REASON as aggregated
+
+    assert aggregated is ENTRY_SIMULATION_EMPTY_REASON
+
+
 def test_build_row_reads_a_real_result_and_history(tmp_path):
     run_dir = tmp_path / "off_1"
     run_dir.mkdir()

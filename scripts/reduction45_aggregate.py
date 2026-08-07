@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from analogcoder.history import read_events  # noqa: E402
 from analogcoder.json_io import restore_non_finite  # noqa: E402
+from analogcoder.orchestrator import ENTRY_SIMULATION_EMPTY_REASON  # noqa: E402
 
 RUN_ROOT = "runs/reduction45"
 INVOCATIONS_PATH = os.path.join(RUN_ROOT, "invocations.jsonl")
@@ -310,6 +311,18 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
       - `"dropped"`, `drop_reason="no_history_jsonl"`: `result.json`은 있는데
         `history.jsonl`이 없다 - `mid_pass_sweep_fail`/`loop_sims`를 뽑을 수
         없다.
+      - `"dropped"`, `drop_reason="entry_simulation_empty"`: 진입 시뮬레이션
+        게이트(2026-08-07)가 끝낸 실행이다. **이 실패 모양은 값이 싸다** -
+        상한에 안 걸리고, 두 산출물을 다 남기고, 몇 초 만에 끝난다. 그래서
+        위 세 라벨 어느 것에도 안 걸리고 `iterations_used=1`인 "빠르고 깨끗한
+        런"으로 읽힌다(이 게이트가 생기기 전에는 같은 환경 실패가 3반복
+        75분을 태워 눈에 띄었다). 세지 않는 것이 옳다: 이 실행은 아무것도
+        재지 못했으므로 축소를 켰든 껐든 어느 팔에 대해서도 증거가 아니다.
+        판별자는 `failure_reason`뿐이고, 그 접두사는 `orchestrator`에서
+        **import**한다 - 사본을 만들면 문장이 바뀌는 순간 조용히 안 맞게
+        되고, 그 침묵은 "진입 게이트 실패가 없었다"와 구별되지 않는다.
+        이 저장소가 이미 두 번 기록한 "관측의 정의가 불완전하다" 결함
+        (v1 결함 2, v2 결함 5)이 **새로운 값싼 실패 모양**을 만난 것이다.
 
     **`row_status`(행의 탈락 상태)와 `result_status`(`result.json`의
     `"status"`, PASS/FAIL)는 이름이 다른 키다.** 하나로 합치면 두 사실 중
@@ -360,6 +373,15 @@ def build_row(invocation: dict, *, run_root: str = RUN_ROOT) -> dict:
     row["result_status"] = result.get("status")
     row["result_reason"] = result.get("failure_reason")
     row["iterations_used"] = result.get("iterations_used")
+
+    # 진입 시뮬레이션 게이트가 끝낸 실행은 여기서 라벨을 단다 - `result.json`은
+    # 읽고 나서(그래야 왜 떨어졌는지가 행에 남는다), 판정 값을 채우기 전에.
+    # **접두사로 본다**: `cli.py`가 뒤에 최종 스윕 사유를 덧붙일 수 있어
+    # 완전 일치로는 못 잡는다.
+    if (row["result_reason"] or "").startswith(ENTRY_SIMULATION_EMPTY_REASON):
+        row["row_status"] = "dropped"
+        row["drop_reason"] = "entry_simulation_empty"
+        return row
     area = area_optimization_summary(result)
     row["corner_confirmed"] = area["corner_confirmed"]
     row["landed_netlist_paths"] = area["landed_netlist_paths"]

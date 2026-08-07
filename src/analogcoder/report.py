@@ -581,7 +581,22 @@ def _final_criteria_provenance(result: dict) -> str:
       기준을 재고 왔으면 전류 단계가 착지한 버전이 이긴다 - 나중에 착지한
       덱이 결과가 돌려주는 덱이다. 어느 쪽도 기준을 재지 못했으면 튜닝
       루프가 돌려준 덱이다.
+
+    **표가 비었으면 두 축 다 없다.** `final_criteria == []`는 판정이 한 번도
+    일어나지 않았다는 뜻이고(진입 시뮬레이션 게이트, 진입 스윕 실패, 코너
+    씨앗 실패가 전부 `judge_result=None`으로 끝난다), 그때 조건과 판정자를
+    이름 붙이면 **일어나지 않은 판정을 주장하는 것**이 된다 - 아무것도 재지
+    못했고 `evaluate_criteria`는 불린 적도 없다. 행이 0개인 표는 "무언가
+    일어났다"로 읽히므로, `attempt_log.py`가 빈 목록에 빈 문자열을 돌려주는
+    것과 같은 판단을 여기서도 한다.
     """
+    if not result.get("final_criteria"):
+        return (
+            "Nothing was measured: no criterion was judged in this run, and this "
+            "table is empty rather than describing a deck. The failure reason "
+            "below says where the run stopped."
+        )
+
     reduction = result.get("corner_reduction") or {}
     if reduction.get("active"):
         final_set = reduction.get("final_set") or []

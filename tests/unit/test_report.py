@@ -810,6 +810,39 @@ def test_final_criteria_says_when_it_came_from_the_optimization_phases_landing(t
     assert "evaluate_criteria" in content
 
 
+def test_an_empty_final_criteria_says_nothing_was_judged_rather_than_naming_a_deck(tmp_path):
+    """**행이 0개인 표는 "무언가 일어났다"로 읽힌다.** `attempt_log.py`가
+    빈 목록에 빈 문자열을 돌려주는 것과 같은 이유다.
+
+    `final_criteria == []`인 결과는 실제로 나온다 - 진입 시뮬레이션 게이트,
+    진입 스윕 실패, 코너 씨앗 실패는 전부 `judge_result=None`으로 끝나므로
+    `_final_result`가 `[]`를 싣는다. 그때 이 자리에 "…judged by
+    `evaluate_criteria`, on the deck the tuning loop returned."를 찍으면
+    **일어나지 않은 판정을 주장하는 것**이다: 아무것도 재지 못했고
+    `evaluate_criteria`는 불린 적도 없다."""
+    result = {
+        "status": "FAIL",
+        "iterations_used": 1,
+        "final_netlist_paths": {"ac_loop_gain": "runs/x/netlist_v0.cir"},
+        "final_criteria": [],
+        "failure_reason": (
+            "the entry simulation produced no measurements in any testbench: "
+            "dc_tc: could not find include file lod.spice"
+        ),
+    }
+    path = write_report_md(str(tmp_path), result)
+    with open(path) as f:
+        content = f.read()
+
+    block = content.split("## Final criteria", 1)[1].split("\n## ", 1)[0]
+    assert "no criterion was judged" in block
+    # 판정자도 덱도 이름 붙이지 않는다 - 둘 다 일어나지 않았다.
+    assert "evaluate_criteria" not in block
+    assert "the deck the tuning loop returned" not in block
+    # 사유는 그대로 남는다 - 이 문장이 사유를 대신하지 않는다.
+    assert "lod.spice" in content
+
+
 def test_final_criteria_points_at_the_pvt_sweep_when_one_decided_the_verdict(tmp_path):
     """이 결함의 핵심 증상 - 사람이 "기준은 다 통과했는데 왜 FAIL이지"가 되는
     것 - 을 막는 한 줄. 스윕이 없으면 이 줄도 없어야 한다(없는 섹션을
@@ -1141,18 +1174,25 @@ def test_the_provenance_names_the_area_phase_when_only_it_moved_the_deck(tmp_pat
     """전류 단계가 없는 스펙에서도 표는 면적 단계의 덱을 설명해야 한다.
 
     `evaluate_criteria`라는 낱말은 네 출처 전부에 들어 있으므로 그것을 검사하는
-    것은 아무것도 고정하지 못한다. 고정할 것은 **어느 단계를 지목하는가**다."""
-    base = _result(status="PASS")
+    것은 아무것도 고정하지 못한다. 고정할 것은 **어느 단계를 지목하는가**다.
+
+    최상위 `final_criteria`도 함께 채운다 - `cli.py`는 한 단계가 기준을 재고
+    왔으면 그 판정으로 최상위 키를 **덮는다**(`cli.py:910-911`,
+    `cli.py:945-946`). 이것을 `[]`로 둔 픽스처는 프로덕션에 없는 모양이고,
+    그 상태에서 이 표는 행이 0개다 - 그때 출처를 이름 붙이는 것은 일어나지
+    않은 판정을 주장하는 것이므로 출처 문장 자체가 침묵한다."""
+    judged = [{"name": "x", "target": ">=1", "actual": 2.0, "pass": True, "margin": 1.0}]
+    base = _result(status="PASS", final_criteria=judged)
     only_area = write_report_md(
         _dir(tmp_path, "provenance_area_only"),
-        {**base, "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]}},
+        {**base, "area_optimization": {"status": "ACCEPTED", "final_criteria": judged}},
     )
     both = write_report_md(
         _dir(tmp_path, "provenance_both"),
         {
             **base,
-            "area_optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
-            "optimization": {"status": "ACCEPTED", "final_criteria": [{"name": "x"}]},
+            "area_optimization": {"status": "ACCEPTED", "final_criteria": judged},
+            "optimization": {"status": "ACCEPTED", "final_criteria": judged},
         },
     )
     assert "area phase landed on" in open(only_area, encoding="utf-8").read()

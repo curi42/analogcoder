@@ -80,10 +80,12 @@ def orchestration(result, *, checkpoint_at=None, crash=False, captured=None):
     """run_orchestration 대역. 진짜와 같은 자리에서 버전을 밀고, 시키면 루프
     머리에서 save_checkpoint 를 부른 뒤 죽는다."""
 
-    async def fake(initial_netlist_texts, spec, state, agents, resume=None, save_checkpoint=None):
+    async def fake(
+        initial_netlist_texts, spec, state, agents, resume=None, save_checkpoint=None, **kwargs
+    ):
         if captured is not None:
             captured.setdefault("calls", []).append(
-                {"resume": resume, "initial": dict(initial_netlist_texts)}
+                {"resume": resume, "initial": dict(initial_netlist_texts), **kwargs}
             )
         if resume is None:
             state.push_netlist_version(initial_netlist_texts)

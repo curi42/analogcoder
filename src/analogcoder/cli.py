@@ -938,6 +938,12 @@ async def _run(args) -> dict:
                 save_checkpoint=lambda progress: _save(
                     BOUNDARY_OUTER_ITERATION, progress=progress
                 ),
+                # 시도 번호는 **여기서만** 알 수 있다 - 재진입 루프가 여기
+                # 있고 run_orchestration은 그 안에서 매번 새로 불린다.
+                # 진입 시뮬레이션 게이트는 이 호출마다 새로 걸리므로
+                # (재진입의 덱은 튜닝이 옮겨 놓은 덱이다) 시도 2에서도
+                # 발화할 수 있고, 그 발화가 시도 1의 것과 구별돼야 한다.
+                attempt=attempt,
             )
             # 재개 상태는 **한 번만** 쓴다. 남겨 두면 다음 attempt가 지난
             # 시도의 이터레이션 번호에서 시작한다.

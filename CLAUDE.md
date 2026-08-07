@@ -680,30 +680,70 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
     always-failing gate — which is why it mirrors `cli.py`'s order.
   - **A run whose simulator never succeeds reports the tuner's failure reason, and
     nothing distinguishes the two.** `off_1` ended `tuning proposal repeatedly
-    rejected` after tuning three times against `{}`; grep confirmed **no code in
-    `orchestrator.py` or `cli.py` reads `status == "error"`**, so the loop spent
-    its whole budget and `result.json`'s `reason` misdescribed the run. This was
-    the repo's own `null`/`NaN` rule inside the product rather than inside a
-    measurement. **Fixed 2026-08-07**: `orchestrator.py` now gates on the entry
-    simulation, and the condition is **whether `measurements` came back empty,
-    never the `status` string** — the same "never recognise meaning by name" rule
-    this file already states for a supply rail or a device class, applied to a
-    simulator's own report about itself. The gate fires **only on this run's
-    first simulation**; an empty measurement after tuning is the existing
-    rollback's job, not this one's — `first_simulation` is cleared right after
-    the check and never re-armed. Verified against the recorded `off_1` failure:
-    replaying that run's actual first `simulation` event (read via
-    `analogcoder.history.read_events`, not raw `json.loads`, per this file's own
-    rule) through a fake `simulate` ends the run in **1 iteration** with **0**
-    `tuning_proposal` events and `failure_reason` naming both "no measurements"
-    and `lod.spice` — against the old run's **3** tuning attempts (one per outer
-    iteration) before it exhausted its budget.
-    `test_a_recorded_lod_spice_failure_ends_with_its_own_reason_not_the_tuners`
-    pins it, and the two "what does this gate do when it does nothing" tests
-    (`test_a_run_whose_first_simulation_measures_something_is_untouched`,
-    `test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate`) pin
-    the boundary — a partial-testbench failure and a post-tuning empty
-    measurement must both pass through unblocked.
+    rejected` after tuning **7** times against `{}` — **3 + 1 + 3 across its three
+    outer iterations, not one per iteration**: the loop retries *inside* an
+    iteration too, so counting one iteration's proposals and reading it as the
+    whole is an error this entry itself made and had to correct (`attempt_log` 7,
+    `area_check` 7, `tuning_proposal` 7; `iterations_used` **is** 3). Grep
+    confirmed **no code in `orchestrator.py` or `cli.py` reads
+    `status == "error"`**, so the loop spent its whole budget and
+    `result.json`'s `reason` misdescribed the run. This was the repo's own
+    `null`/`NaN` rule inside the product rather than inside a measurement.
+    **Fixed 2026-08-07**: `orchestrator.py` now gates on the entry simulation, and
+    the condition is **whether `measurements` came back empty, never the `status`
+    string** — the same "never recognise meaning by name" rule this file already
+    states for a supply rail or a device class, applied to a simulator's own
+    report about itself.
+    - **Scope is one `run_orchestration` call, not one run**, and the difference
+      is reachable: `cli.py:929` calls it again on every corner-reduction
+      re-entry (`while True`, up to `retry_budget + 1` times), on a deck **tuning
+      has moved**. So `first_simulation` is re-armed per attempt and the gate can
+      fire on attempt 2+. That is the intended behaviour — a re-entry is a fresh
+      orchestration's starting point, and measuring nothing *there* leaves the
+      verdict undefined just as it does at attempt 0; it is a different fact from
+      tuning breaking the deck mid-loop, which rollback already owns. Which
+      attempt fired is therefore not derivable from `outer_iter` (it restarts at 1
+      per attempt), so `entry_simulation_empty` carries **`attempt`**, passed in
+      by `cli.py` for the same reason `all_topology_swaps` stamps it.
+    - Verified against the recorded `off_1` failure: replaying that run's actual
+      first `simulation` event (read via `analogcoder.history.read_events`, not
+      raw `json.loads`, per this file's own rule) through a fake `simulate` ends
+      the run in **1 iteration** with **0** `tuning_proposal` events and
+      `failure_reason` naming both "no measurements" and `lod.spice`.
+      **`runs/` is gitignored, so the test's literal is the repo's only copy of
+      that event** — it is byte-exact, and the only fields dropped are
+      `control_block` and `control_block_check`. Keeping `dc_tc`'s **three**
+      warnings is what makes the "first warning per testbench" contract testable:
+      `warnings[0]` names `lod.spice` and `warnings[-1]` does not, so the
+      `[0] → [-1]` mutation now fails. A literal carrying one warning per
+      testbench pinned nothing, and did not.
+    - The gate's own event is what proves it fired — `_final_result` writes
+      nothing to `history.jsonl`, so deleting the `log_event` line used to leave
+      the whole suite green. Three tests now assert its presence and contents
+      (`outer_iter`, `attempt`, `status`, `detail`), and the two "what does this
+      gate do when it does nothing" tests
+      (`test_a_run_whose_first_simulation_measures_something_is_untouched`,
+      `test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate`) pin
+      the boundary — a partial-testbench failure and a post-tuning empty
+      measurement must both pass through unblocked.
+    - **The reason string is a constant (`ENTRY_SIMULATION_EMPTY_REASON`) because
+      it is the only discriminator this failure has.** The gate exits in seconds
+      having written both artifacts, so measurement harnesses see a *fast, clean*
+      run: `scripts/reduction45_aggregate.py`'s `build_row` scored it
+      `row_status="ok"`, `iterations_used=1`, where the same environment failure
+      used to burn 3 iterations and 75 minutes and look wrong. That is this
+      repo's twice-recorded "the definition of *observed* is incomplete" defect
+      meeting **a new cheap failure shape**; the aggregator now labels it
+      `dropped` / `entry_simulation_empty` and **imports** the prefix rather than
+      copying it (a copy goes silently stale, and that silence is
+      indistinguishable from "no entry-gate failure happened").
+    - **Resume does not re-check the environment.** A user who reads the reason,
+      initialises the PDK submodule and re-runs with `--resume` from the
+      optimization boundary gets `cli.py:917` skipping `run_orchestration`
+      entirely and the same FAIL back. This is existing behaviour for every FAIL,
+      recorded here because this is the first one a user will actually fix and
+      retry. Changing the resume policy is separate scope — do not "fix" it as
+      part of this gate.
   - **`off_3` shows the "observed" definition is still incomplete.** Its FAIL is
     `agent execution error`, yet `iterations_used == 1` satisfies the progress
     guard that v2's fifth defect prompted — that guard only excludes deaths at
@@ -2015,12 +2055,13 @@ baseline — a genuine model capability gap, not a pipeline defect.
   `OPAMP2STAGE.Rdeg.value`/`Rstart.value` became `OPAMP2STAGE.Rbias.value` (7 → 6).
   `test_curation_ngspice.py` (~18 s) stays unmarked because the `slow` marker here
   means minutes, not seconds.
-- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-05: 1669
-  passed, 2 skipped, 9 deselected, 124.09 s** (that run shared the machine with a
-  background sweep — the 98-124 s spread on this suite is load, not growth) — and on 2026-07-30 at 1468 tests, two
+- **`pytest -m "not slow"` is the normal TDD cycle. Measured 2026-08-07: 1683
+  passed, 2 skipped, 9 deselected, 100.99 s** (an earlier 2026-08-05 measurement
+  read 124.09 s while the machine was shared with a background sweep — the
+  98-124 s spread on this suite is load, not growth) — and on 2026-07-30 at 1468 tests, two
   runs on the same commit came out 98.5 s and 120.6 s, so read the budget as ~2 min.
   **The spread between two identical runs is wider than a year of count growth**
-  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635 → 1646 → 1666 → 1669), so do not treat a single timing as a
+  (1273 → 1473 → 1499 → 1529 → 1546 → 1548 → 1573 → 1605 → 1613 → 1636 → 1635 → 1646 → 1666 → 1669 → 1683), so do not treat a single timing as a
   regression signal. A
   plain `pytest -q` is ~3 min and ~33 min with everything. All three slow files
   carry the `slow` marker, registered in `pyproject.toml`. **Re-measure this line

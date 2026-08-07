@@ -2687,66 +2687,106 @@ async def test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate(t
     assert not any(e["step"] == "entry_simulation_empty" for e in events)
 
 
-# `runs/alternatives_ab/off_1/history.jsonl`의 첫 `simulation` 이벤트에서
-# `analogcoder.history.read_events`로 읽어 온 실제 값이다(2026-08-05 A/B 측정,
-# `docs/superpowers/specs/2026-08-05-alternatives-benefit-results.md`의
-# 2026-08-07 정정 절). OFF 팔 워크트리의 PDK 서브모듈이 비어 있어 다섯
+# `runs/alternatives_ab/off_1/history.jsonl`의 첫 `simulation` 이벤트를
+# `analogcoder.history.read_events`로 읽어 **그대로** 옮긴 것이다(2026-08-05
+# A/B 측정, `docs/superpowers/specs/2026-08-05-alternatives-benefit-results.md`
+# 의 2026-08-07 정정 절). OFF 팔 워크트리의 PDK 서브모듈이 비어 있어 다섯
 # 테스트벤치 전부가 `lod.spice`를 찾지 못하고 죽었다 - 이 게이트가 생기기
-# 전에는 이 사유를 알아채지 못한 채 튜너가 세 번(반복마다 한 번) `{}`를
-# 붙들고 제안을 냈다. 각 테스트벤치의 `warnings[0]`만 남기고 나머지 필드
-# (`control_block`, `control_block_check` 등)는 이 경로가 읽지 않으므로
-# 뺐다.
+# 전에는 이 사유를 알아채지 못한 채 튜너가 **일곱 번**(반복별 3+1+3) `{}`를
+# 붙들고 제안을 냈다.
+#
+# **`runs/`는 gitignore되어 있어(`.gitignore:5`) 이 리터럴이 저장소 안의
+# 유일한 사본이다.** 그래서 경고 문자열을 줄이거나 다듬지 않는다 - 원본에서
+# 뺀 것은 이 경로가 읽지 않는 필드 **둘**뿐이고, 각 테스트벤치마다
+# `control_block`(수렴된 제어 블록 텍스트)과 `control_block_check`
+# (`control_block_gate`의 판정 딕셔너리)이다. `status`/`measurements`/
+# `warnings`는 원본 그대로이고 경고 개수도 원본 그대로다(`dc_tc` 3개,
+# 나머지 넷 각 1개). **`dc_tc`의 경고가 3개라는 것이 이 리터럴의 핵심**이다:
+# `warnings[0]`에는 `lod.spice`가 있고 `warnings[-1]`에는 없으므로,
+# `_entry_simulation_detail`이 "첫 경고를 쓴다"는 규약을 어기면 이 리터럴이
+# 그것을 잡는다. 테스트벤치마다 경고를 하나만 담은 리터럴은 잡지 못했다.
 RECORDED_OFF_1_FIRST_SIMULATION = {
-    "status": "error",
+    "status": 'error',
     "measurements": {},
     "by_testbench": {
-        "dc_tc": {
-            "status": "error",
+        'dc_tc': {
+            "status": 'error',
             "measurements": {},
             "warnings": [
-                "ngspice fatal error, exit(1): could not find include file "
-                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice "
-                "referenced from benchmarks/bandgap/pdk_corner.inc"
+                'ngspice fatal error, exit(1): could not find include file '
+                '../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice'
+                ' referenced from benchmarks/bandgap/pdk_corner.inc',
+                'This is a missing-PDK-file environment problem, not a '
+                'convergence issue -- adjusting .options (gmin stepping, '
+                'method=gear, etc.) cannot fix a missing include file, so '
+                'no retry was attempted',
+                '.options changes are the only edits permitted to the '
+                'control block and none could address this failure; the '
+                'control block was left unmodified',
             ],
         },
-        "startup": {
-            "status": "error",
+        'startup': {
+            "status": 'error',
             "measurements": {},
             "warnings": [
-                "Simulation failed with a fatal ngspice error unrelated to convergence: "
-                "'Could not find include file "
-                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
-                "while reading benchmarks/bandgap/pdk_corner.inc (included by the netlist)."
+                'Simulation failed with a fatal ngspice error unrelated to '
+                "convergence: 'Could not find include file "
+                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice'"
+                ' while reading benchmarks/bandgap/pdk_corner.inc (included'
+                ' by the netlist). This is a missing PDK model file / '
+                'environment path problem, not a transient solver '
+                'convergence issue, so no .options adjustment (gmin '
+                'stepping, method=gear, etc.) can address it. Retries were '
+                'not attempted because the failure_kind is a missing '
+                'include file (nonzero_exit at netlist load time, before '
+                'any transient analysis begins), not a convergence_failure.'
+                ' The control block was not modified from the original.',
             ],
         },
-        "psrr": {
-            "status": "error",
+        'psrr': {
+            "status": 'error',
             "measurements": {},
             "warnings": [
-                "ngspice fatal error (exit 1), not a convergence failure: missing include "
-                "file '../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
-                "referenced from benchmarks/bandgap/pdk_corner.inc."
+                'ngspice fatal error (exit 1), not a convergence failure: '
+                'missing include file '
+                "'../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice'"
+                ' referenced from benchmarks/bandgap/pdk_corner.inc. This '
+                'is a netlist/environment path problem, not something '
+                'fixable via .options — retrying with gmin stepping or '
+                'method=gear would not address a missing PDK file. No '
+                'measurement was produced.',
             ],
         },
-        "settling": {
-            "status": "error",
+        'settling': {
+            "status": 'error',
             "measurements": {},
             "warnings": [
-                "Simulation failed with a fatal ngspice error unrelated to convergence: "
-                "missing include file "
-                "'../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
-                "referenced from benchmarks/bandgap/pdk_corner.inc (path resolution/environment "
-                "issue, not a solver convergence failure)."
+                'Simulation failed with a fatal ngspice error unrelated to '
+                'convergence: missing include file '
+                "'../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice'"
+                ' referenced from benchmarks/bandgap/pdk_corner.inc (path '
+                'resolution/environment issue, not a solver convergence '
+                'failure). No .options adjustment can fix a missing PDK '
+                'include file, and .include/.temp lines are outside the '
+                'allowed edit boundary for control blocks, so no retry was '
+                'attempted. This needs to be fixed at the environment/repo '
+                'level (missing sky130 PDK third_party submodule/symlink) '
+                'before this netlist can be simulated.',
             ],
         },
-        "amp_loops": {
-            "status": "error",
+        'amp_loops': {
+            "status": 'error',
             "measurements": {},
             "warnings": [
-                "Simulation failed with fatal error (nonzero_exit), not a convergence failure: "
-                "ngspice could not find include file "
-                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice "
-                "referenced from benchmarks/bandgap/pdk_corner.inc."
+                'Simulation failed with fatal error (nonzero_exit), not a '
+                'convergence failure: ngspice could not find include file '
+                "'../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice'"
+                ' referenced from benchmarks/bandgap/pdk_corner.inc. This '
+                'is a missing PDK model file / include-path problem in the '
+                'simulation environment, not something fixable by adjusting'
+                ' .options (gmin stepping, method=gear, etc.), so no retry '
+                'was attempted per the rules restricting retries to '
+                'convergence_failure cases.',
             ],
         },
     },
@@ -2757,7 +2797,7 @@ RECORDED_OFF_1_FIRST_SIMULATION = {
 async def test_a_recorded_lod_spice_failure_ends_with_its_own_reason_not_the_tuners(tmp_path):
     """2026-08-05 A/B의 OFF 팔이 실제로 낸 첫 `simulation` 이벤트를 그대로
     돌려준다. 이 게이트가 없던 당시 `off_1`은 이 조건을 알아채지 못하고
-    바깥 반복마다 튜너를 불러 세 번 제안하고 예산을 다 태운 뒤
+    튜너를 일곱 번(반복별 3+1+3) 불러 예산을 다 태운 뒤
     `tuning proposal repeatedly rejected`로 끝났다 - 튜너의 실패 사유가 실제
     원인(PDK 서브모듈 미초기화, `lod.spice` 못 찾음)을 가렸다. 이제는
     1 iteration만에 자기 사유로 끝나야 한다."""
@@ -2780,3 +2820,128 @@ async def test_a_recorded_lod_spice_failure_ends_with_its_own_reason_not_the_tun
 
     events = [json.loads(line) for line in open(state.history_path)]
     assert not any(e["step"] == "tuning_proposal" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_the_entry_gate_writes_an_entry_simulation_empty_event(tmp_path):
+    """**`_final_result`는 history.jsonl에 아무것도 쓰지 않는다.** 그래서 이
+    이벤트가 "게이트가 발화했다"의 유일한 흔적이고, 그 흔적이 없으면 실행
+    사후에 `result.json`의 문자열 하나 말고는 대조할 것이 남지 않는다.
+    이 단언이 없던 동안 `state.log_event(...)` 줄을 통째로 지워도 전체
+    스위트가 그대로 통과했다(리뷰가 실제로 해 봤다) - 그 부정 단언
+    (`assert not any(...)`)은 이벤트가 아예 없어도 만족되기 때문이다.
+
+    싣는 값 넷은 각각 다른 사실이다: `outer_iter`(재개된 실행은 1이 아니다),
+    `status`(게이트가 **읽지 않은** 문자열 - 판단은 `measurements`가 했고
+    이것은 기록이다), `detail`(원인), `attempt`(코너 축소 재진입 번호)."""
+
+    async def simulate(netlist_texts, spec):
+        return RECORDED_OFF_1_FIRST_SIMULATION
+
+    agents = make_agents(simulate=simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    fired = [e for e in events if e["step"] == "entry_simulation_empty"]
+    assert len(fired) == 1
+    assert fired[0]["outer_iter"] == 1
+    assert fired[0]["status"] == "error"
+    assert fired[0]["attempt"] == 0
+    assert "lod.spice" in fired[0]["detail"]
+    # 다섯 테스트벤치 전부가 사유에 이름을 남긴다 - 하나만 남기면 읽는
+    # 사람이 "나머지 넷은 멀쩡했나"를 history에서 다시 파야 한다.
+    for name in ("dc_tc", "startup", "psrr", "settling", "amp_loops"):
+        assert f"{name}: " in fired[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_the_entry_gate_detail_quotes_each_testbenchs_first_warning(tmp_path):
+    """`_entry_simulation_detail`은 테스트벤치별 **첫** 경고를 쓴다. 그 규약을
+    고정하려면 경고가 **둘 이상**이고 첫째와 마지막이 구별되는 테스트벤치가
+    있어야 한다 - 기록된 `dc_tc`가 정확히 그렇다(경고 3개, `[0]`에는
+    `lod.spice`가 있고 `[-1]`에는 없다).
+
+    `warnings[0]`을 `warnings[-1]`로 바꾸면 이 테스트가 FAIL한다."""
+
+    async def simulate(netlist_texts, spec):
+        return RECORDED_OFF_1_FIRST_SIMULATION
+
+    agents = make_agents(simulate=simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    dc_tc_warnings = RECORDED_OFF_1_FIRST_SIMULATION["by_testbench"]["dc_tc"]["warnings"]
+    assert len(dc_tc_warnings) == 3  # 리터럴이 잘리면 이 테스트는 아무것도 못 고정한다
+    detail = result["failure_reason"]
+    assert f"dc_tc: {dc_tc_warnings[0]}" in detail
+    # 마지막 경고는 통제 블록을 안 고쳤다는 서술이지 원인이 아니다.
+    assert dc_tc_warnings[-1] not in detail
+    assert dc_tc_warnings[1] not in detail
+
+
+@pytest.mark.asyncio
+async def test_the_entry_gate_carries_the_reentry_attempt_number(tmp_path):
+    """`cli.py`는 코너 축소 재진입마다 `run_orchestration`을 **다시** 부르고,
+    그 덱은 이전 시도의 튜닝이 옮겨 놓은 덱이다. 그래서 게이트는 시도 2 이상
+    에서도 발화할 수 있고, 시도 3의 발화와 시도 1의 발화는 `history.jsonl`
+    에서 구별돼야 한다 - `all_topology_swaps`가 `attempt`를 싣는 것과 같은
+    이유다(`outer_iter`는 시도마다 1부터 다시 센다)."""
+
+    async def simulate(netlist_texts, spec):
+        return RECORDED_OFF_1_FIRST_SIMULATION
+
+    agents = make_agents(simulate=simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    await run_orchestration(
+        {"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents, attempt=2
+    )
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    fired = [e for e in events if e["step"] == "entry_simulation_empty"]
+    assert len(fired) == 1
+    assert fired[0]["attempt"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_still_checks_its_own_first_simulation(tmp_path):
+    """게이트의 조건은 `outer_iter == 1`이 아니라 **"이 실행에서 첫
+    시뮬레이션인가"**다. 두 조건이 갈리는 자리는 재개된 실행 하나뿐이다:
+    `resume.outer_iter > 1`이면 첫 시뮬레이션의 `outer_iter`가 1이 아니다.
+
+    재개는 새 프로세스이고 새 환경이다 - PDK가 사라진 채로 이어 돌면 그
+    실행도 아무것도 못 재고, 그때도 튜너를 부르지 않고 자기 사유로 끝나야
+    한다. `first_simulation`을 `outer_iter == 1`로 바꾸면 이 테스트가
+    FAIL한다."""
+    from analogcoder.checkpoint import LoopProgress
+
+    async def simulate(netlist_texts, spec):
+        return RECORDED_OFF_1_FIRST_SIMULATION
+
+    async def tune(*args, **kwargs):
+        raise AssertionError("측정값이 없는데 튜너가 불렸다")
+
+    agents = make_agents(simulate=simulate, tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+    entry_paths = state.push_netlist_version({"ac_loop_gain": BASE_NETLIST})
+
+    result = await run_orchestration(
+        {"ac_loop_gain": BASE_NETLIST},
+        FAKE_SPEC,
+        state,
+        agents,
+        resume=LoopProgress(outer_iter=4, entry_netlist_paths=entry_paths),
+    )
+
+    assert result["status"] == "FAIL"
+    assert "no measurements" in result["failure_reason"]
+    # 재개 지점의 반복 번호 그대로다 - 1로 되돌려 적지 않는다.
+    assert result["iterations_used"] == 4
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    fired = [e for e in events if e["step"] == "entry_simulation_empty"]
+    assert len(fired) == 1
+    assert fired[0]["outer_iter"] == 4

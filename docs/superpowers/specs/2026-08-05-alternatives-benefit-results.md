@@ -33,8 +33,15 @@ ngspice fatal error, exit(1): could not find include file
 메인에서 ` f62031a1…` 이다. 새 워크트리는 서브모듈을 체크아웃하지 않는다.
 
 **그러므로 OFF 팔의 세 FAIL 은 처치의 부재가 낸 결과가 아니다.** 그 팔의 튜너는
-측정값 `{}` 를 들고 세 번 제안했고, 판정은 매번 22개 기준 전부 실패였다.
-`void` 다 — "측정하지 못했다" 이지 "졌다" 가 아니다.
+측정값 `{}` 를 들고 **일곱 번**(`off_1` 기준, 바깥 반복별 3 + 1 + 3) 제안했고,
+판정은 매번 22개 기준 전부 실패였다. `void` 다 — "측정하지 못했다" 이지 "졌다"
+가 아니다.
+
+> **2026-08-07 정정.** 이 문단은 원래 "세 번"이라고 적었다. 그것은
+> `iterations_used == 3`(이 값은 맞다)을 제안 수로 잘못 옮긴 것이고, 실제로는
+> 반복 **안에서도** 재시도가 돌아 `tuning_proposal` 이벤트가 7건이다
+> (`attempt_log` 7, `area_check` 7 로 교차 확인). 반복 하나만 덤프해 본 수를
+> 전체로 읽은 오류다 — 이벤트 수를 인용할 때는 `outer_iter` 별로 세라.
 
 ### 무엇이 남고 무엇이 철회되는가
 
@@ -80,15 +87,23 @@ ngspice fatal error, exit(1): could not find include file
 같은 순서로 `resolve_includes` 를 먼저 부른다.
 
 **이 결함은 측정 하니스뿐 아니라 제품 쪽에서도 닫혔다(2026-08-07,
-`b9e31a6` + `5a08554`).** `orchestrator.py`가 이 실행의 첫 시뮬레이션이
+`b9e31a6` + `5a08554`).** `orchestrator.py`가 이 호출의 첫 시뮬레이션이
 `measurements`를 하나도 내지 못하면 튜너를 부르지 않고 그 사유로 즉시 FAIL한다
 — `off_1`이 겪은 것과 정확히 같은 상황(`measurements: {}`을 붙들고 튜너가
-반복마다 제안, `tuning proposal repeatedly rejected`로 예산을 다 태우고 끝남)을
+제안을 반복, `tuning proposal repeatedly rejected`로 예산을 다 태우고 끝남)을
 `off_1`의 실제 첫 `simulation` 이벤트를 재생해 확인했다:
 `failure_reason`이 이제 "no measurements"와 `lod.spice`를 함께 실어 원인을
 history를 파지 않고도 보여주고, `tuning_proposal` 이벤트는 **0건**(옛 실행은
-**3건**), `iterations_used == 1`(옛 실행은 3). 자세한 규칙과 검증은
-`CLAUDE.md`의 "대안 정렬 A/B" 항목을 볼 것.
+**7건** — 위 정정 참조), `iterations_used == 1`(옛 실행은 3). 자세한 규칙과
+검증은 `CLAUDE.md`의 "대안 정렬 A/B" 항목을 볼 것.
+
+**그리고 이 게이트는 스스로 새 관측 결함을 만든다.** 진입 실패가 이제 몇 초
+만에 두 산출물을 정상적으로 남기므로, `result.json`만 보는 집계기에는 `ok`
+이면서 `iterations_used=1`인 **빠르고 깨끗한 런**으로 보인다 — 옛 동작에서는
+같은 실패가 3반복 75분을 태워 눈에 띄었다. `scripts/reduction45_aggregate.py`
+가 `failure_reason`의 접두사(`orchestrator`에서 import한다)를 읽어 그 행을
+`dropped` / `entry_simulation_empty`로 라벨한다. **`void`·`dropped`·`ok`는
+서로 다른 사실이므로 뭉개지 않는다.**
 
 ---
 

@@ -1386,6 +1386,38 @@ async def test_the_retry_is_seeded_from_the_converged_deck_not_the_original(tmp_
 
 
 @pytest.mark.asyncio
+async def test_each_reentry_tells_run_orchestration_its_attempt_number(tmp_path):
+    """`run_orchestration`은 자기가 몇 번째 시도인지 알 수 없다 - 재진입
+    루프가 `cli.py`에 있고 그 함수는 루프 안에서 매번 새로 불린다. 그래서
+    시도 번호는 호출부가 넘긴다. 이것을 읽는 곳은 오늘 `entry_simulation_empty`
+    하나이고, 그 게이트는 재진입마다 새로 걸리므로(재진입의 덱은 튜닝이
+    옮겨 놓은 덱이다) 시도 2의 발화와 시도 0의 발화가 이력에서 구별돼야
+    한다."""
+    run_dir = str(tmp_path / "runs" / "c_attempt")
+    entry = _sweep({"gain": _wc("fs", 41.0)})
+    fails = [_sweep({"gain": _wc(p, 12.0)}, failing=["gain"]) for p in ("ff", "ss", "sf")]
+
+    seen_attempts: list = []
+
+    async def fake(initial_netlist_texts, spec, state, agents, **kwargs):
+        seen_attempts.append(kwargs.get("attempt"))
+        state.push_netlist_version(initial_netlist_texts)
+        state.push_netlist_version({n: TUNED_TEXT for n in initial_netlist_texts})
+        return dict(_pass_result(run_dir))
+
+    sweep_calls: list = []
+    with (
+        patch("analogcoder.cli.run_full_pvt_sweep",
+              new=_sweep_sequence([entry, *fails], sweep_calls)),
+        patch("analogcoder.cli.run_orchestration", new=fake),
+    ):
+        await _run(_corner_args(tmp_path, CORNER_REDUCTION_SPEC_YAML, run_dir))
+
+    # retry_budget=2 -> 최초 1회 + 재진입 2회. 번호가 시도마다 올라가야 한다.
+    assert seen_attempts == [0, 1, 2]
+
+
+@pytest.mark.asyncio
 async def test_the_retry_budget_is_respected(tmp_path):
     # 예산을 무시하는 변형은 스윕이 계속 실패하는 시나리오에서 끝나지 않는다.
     # 매번 다른 코너가 실패해야 집합이 계속 자라고 경로 불일치로 빠지지 않는다.

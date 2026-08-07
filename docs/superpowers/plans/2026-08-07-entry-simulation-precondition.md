@@ -213,3 +213,49 @@ Run: `.venv/bin/python -m pytest -q -m "not slow"`
 git add -A
 git commit -m "docs: 진입 시뮬레이션 선행 조건 — 기록된 실패로 확인"
 ```
+
+---
+
+## 최종 리뷰 후속 (2026-08-07)
+
+구현 자체는 옳다고 확인됐다. 이 절은 **테스트가 고정하지 못한 것**, **틀린 문서
+수치**, **새 게이트가 만든 다운스트림 사각지대**를 닫은 라운드의 기록이다.
+각 항목은 고친 뒤 **돌연변이를 실제로 다시 넣어** 테스트가 FAIL 하는 것을
+확인했다 — 아래 표의 "돌연변이" 열이 그 확인이다.
+
+| # | 무엇이 고정되지 않았나 | 돌연변이 | 잡은 테스트 |
+|---|---|---|---|
+| I-1 | `entry_simulation_empty` 이벤트를 아무도 단언하지 않았다(부정 단언 하나뿐) | `state.log_event(...)` 줄 삭제 | `..._writes_an_entry_simulation_empty_event` 외 2건 |
+| I-2/3 | 리터럴이 원본과 달라 "첫 경고" 규약이 고정되지 않았다 | `warnings[0]` → `warnings[-1]` | `..._detail_quotes_each_testbenchs_first_warning` |
+| I-5 | 이벤트에 `attempt` 가 없어 재진입 발화가 구별되지 않았다 | `cli.py` 의 `attempt=attempt` 삭제 | `test_each_reentry_tells_run_orchestration_its_attempt_number` |
+| M-3 | 재개된 실행에서 게이트가 걸리는 테스트가 없었다 | `first_simulation` → `outer_iter == 1` | `test_a_resumed_run_still_checks_its_own_first_simulation` |
+| M-1 | `final_criteria == []` 에 출처 문장을 찍어 없던 판정을 주장했다 | 빈 목록 가드 삭제 | `..._says_nothing_was_judged_rather_than_naming_a_deck` |
+| I-6 | 집계기가 진입 게이트 FAIL 을 "관측된 런"으로 셌다 | 라벨 분기 삭제 | `test_build_row_labels_an_entry_simulation_gate_fail_as_dropped` |
+
+### 판단으로 정한 것
+
+- **`attempt` 는 호출부에서 넘긴다.** `run_orchestration` 은 자기가 몇 번째
+  시도인지 알 수 없다 — 재진입 루프가 `cli.py` 에 있고 그 함수는 루프 안에서
+  매번 새로 불린다. 안에서 세면 항상 0 이다. `run_orchestration(..., attempt=0)`
+  기본값으로 두어 기존 호출부(테스트 60여 곳)는 그대로 둔다.
+- **재진입에서 게이트가 다시 걸리는 동작은 바꾸지 않았다.** 재진입은 새
+  오케스트레이션의 출발점이고, 거기서 한 점도 못 재면 판정이 정의되지 않는다 —
+  루프 *안*에서 튜닝이 덱을 깨뜨리는 것과는 다른 사실이다(그건 롤백이 맡는다).
+  고친 것은 **문서의 "never re-armed" 문장**과 **이벤트에 실리는 `attempt`** 다.
+- **집계기는 사유 문자열을 복사하지 않고 import 한다**
+  (`orchestrator.ENTRY_SIMULATION_EMPTY_REASON`). 손으로 옮긴 사본은 사유
+  문장이 한 글자 바뀌는 순간 조용히 안 맞게 되고, 그 침묵은 "진입 게이트 실패가
+  없었다" 와 구별되지 않는다. 접두사로 비교한다 — `cli.py` 가 뒤에 최종 스윕
+  사유를 덧붙일 수 있어 완전 일치로는 못 잡는다.
+- **`dropped` 지 `void` 가 아니다.** 이 실행은 축소를 켰든 껐든 아무것도 재지
+  못했으므로 어느 팔에 대해서도 증거가 아니고, `build_row` 가 이미 가진 라벨
+  체계(`ok`/`dropped`)에 새 `drop_reason` 을 더하는 것이 이 저장소의 기존
+  구분을 지키는 방식이다. 판정이 `void` 로 나가는 것은 `check_measurability`
+  가 관측 0 건을 보고 정할 일이지 행 하나가 정할 일이 아니다.
+- **M-2(재개가 환경을 다시 확인하지 않는다)는 기록만 했다.** `CLAUDE.md` 에
+  한 문장. 재개 정책을 바꾸는 것은 별도 범위다.
+- **기존 테스트 픽스처 하나를 고쳤다**:
+  `test_the_provenance_names_the_area_phase_when_only_it_moved_the_deck` 이
+  최상위 `final_criteria` 를 `[]` 로 둔 채 단계별 `final_criteria` 만 채우고
+  있었는데, `cli.py:910-911` / `cli.py:945-946` 이 최상위 키를 **덮으므로**
+  프로덕션에 없는 모양이다. 실제 도달 가능한 상태로 픽스처를 고쳤다.

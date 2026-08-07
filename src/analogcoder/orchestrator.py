@@ -149,6 +149,16 @@ def _final_result(
     return result
 
 
+# 진입 시뮬레이션 게이트가 쓰는 `failure_reason`의 **접두사**. 상수로 두는
+# 이유는 이것이 이 실패 모양의 유일한 판별자이기 때문이다: 게이트는
+# `result.json`과 `history.jsonl`을 정상적으로 남기고 몇 초 만에 끝나므로,
+# 산출물의 존재나 소요 시간으로는 "빠르고 깨끗한 런"과 구별되지 않는다.
+# `scripts/reduction45_aggregate.py`가 이것을 import한다 - 손으로 옮겨 적은
+# 사본은 이 문장을 한 글자 고치는 순간 조용히 안 맞게 되고, 그 침묵은
+# "진입 게이트 실패가 없었다"와 구별되지 않는다.
+ENTRY_SIMULATION_EMPTY_REASON = "the entry simulation produced no measurements in any testbench"
+
+
 def _entry_simulation_detail(sim_result: dict) -> str:
     """테스트벤치별 첫 `warnings` 항목을 `"<tb>: <warning>"`으로 이어 붙인다.
 
@@ -332,6 +342,7 @@ async def run_orchestration(
     agents: OrchestratorAgents,
     resume: LoopProgress | None = None,
     save_checkpoint: Callable[[LoopProgress], None] | None = None,
+    attempt: int = 0,
 ) -> dict:
     """`resume`이 있으면 그 outer iteration **시작**부터 이어 돈다.
 
@@ -344,6 +355,13 @@ async def run_orchestration(
     `resume` 경로에서는 `push_netlist_version`을 **다시 하지 않는다** - v0가
     중복 push되어 버전 번호가 어긋나고, 그러면 중단 없이 돈 실행과 같은 덱을
     돌려주더라도 경로가 달라진다.
+
+    `attempt`는 **호출부가 주는 코너 축소 재진입 번호**다. 이 함수는 자기가
+    몇 번째 시도인지 알 수 없다 - 재진입 루프는 `cli.py`에 있고 이 함수는 그
+    루프 안에서 매번 새로 불린다. 여기서 세면 항상 0이 되므로 넘겨받는다.
+    쓰는 곳은 `entry_simulation_empty` 하나이고, 이유는 `all_topology_swaps`
+    가 `attempt`를 싣는 것과 같다: `outer_iter`는 시도마다 1부터 다시 세므로
+    시도 3의 발화와 시도 1의 발화가 이력에서 구별되지 않는다.
     """
     canonical_name = spec.canonical.name
     if resume is None:
@@ -401,7 +419,14 @@ async def run_orchestration(
 
         # 재개된 실행도 outer_iter가 1이 아닐 뿐, 자기 환경에서 측정이
         # 나오는지는 처음부터 다시 확인해야 한다 - 그래서 판단 기준은
-        # outer_iter가 아니라 "이 실행에서 첫 시뮬레이션인가"다.
+        # outer_iter가 아니라 "이 호출에서 첫 시뮬레이션인가"다.
+        #
+        # **범위는 이 호출 하나다.** `cli.py`가 코너 축소 재진입마다 이 함수를
+        # 다시 부르므로 플래그도 시도마다 새로 걸린다 - 그리고 그것이 맞다:
+        # 재진입은 새 오케스트레이션의 출발점이고, 거기서 한 점도 못 재면
+        # 판정이 정의되지 않는다. 루프 **안**에서 튜닝이 덱을 깨뜨린 것과는
+        # 다른 사실이고(그건 롤백이 맡는다), 어느 시도에서 발화했는지는
+        # 이벤트의 `attempt`가 말한다.
         first_simulation = True
         start_iter = resume.outer_iter if resume else 1
         for outer_iter in range(start_iter, MAX_OUTER_ITERATIONS + 1):
@@ -445,17 +470,17 @@ async def run_orchestration(
             # 덱을 깨뜨린 것이고 이미 롤백이 옳은 답이므로 여기 오지 않는다.
             if first_simulation and not sim_result.get("measurements"):
                 detail = _entry_simulation_detail(sim_result)
+                # `_final_result`는 이력에 아무것도 쓰지 않는다 - 이 이벤트가
+                # "게이트가 발화했다"의 유일한 흔적이다.
                 state.log_event("entry_simulation_empty", {
                     "outer_iter": outer_iter,
+                    "attempt": attempt,
                     "status": sim_result.get("status"),
                     "detail": detail,
                 })
                 return _final_result(
                     "FAIL", state, outer_iter, None,
-                    failure_reason=(
-                        "the entry simulation produced no measurements in any "
-                        f"testbench: {detail}"
-                    ),
+                    failure_reason=f"{ENTRY_SIMULATION_EMPTY_REASON}: {detail}",
                     topology_swaps=topology_swaps,
                     tuning_history=tuning_history,
                 )
