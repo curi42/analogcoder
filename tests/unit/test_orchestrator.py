@@ -2605,3 +2605,83 @@ async def test_a_run_whose_first_simulation_measures_something_is_untouched(tmp_
 
     assert result["status"] == "PASS"
     assert "no measurements" not in result.get("failure_reason", "")
+
+
+@pytest.mark.asyncio
+async def test_the_entry_gate_names_the_fallback_when_no_warning_was_reported(tmp_path):
+    """`_entry_simulation_detail`이 `by_testbench`에 warning이 하나도 없을 때
+    빈 문자열을 돌려주면 "원인이 없다"와 "원인이 기록되지 않았다"가 같은
+    빈 문자열로 뭉개진다 - 그래서 폴백 문자열 자체가 실려야 한다."""
+
+    async def simulate(netlist_texts, spec):
+        return {
+            "status": "error",
+            "measurements": {},
+            "by_testbench": {
+                "ac_loop_gain": {"status": "error", "measurements": {}, "warnings": []}
+            },
+        }
+
+    agents = make_agents(simulate=simulate)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert "no warning was reported" in result["failure_reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate(tmp_path):
+    """첫 시뮬레이션은 측정값을 낸다. 튜닝 이후의 시뮬레이션(그리고 롤백 뒤
+    다음 iteration이 다시 재는 진입 시뮬레이션)은 전부 빈 측정값을 낸다 -
+    그건 튜닝이 덱을 깨뜨린 것이고 롤백이 이미 옳은 답이므로, 이 게이트가
+    가로채서 "no measurements"로 끝내면 안 된다. `first_simulation and`를
+    조건에서 빼거나 플래그 갱신 위치를 옮기면 이 테스트가 잡아야 한다."""
+    sim_calls = {"n": 0}
+
+    async def simulate(netlist_texts, spec):
+        sim_calls["n"] += 1
+        if sim_calls["n"] == 1:
+            return {
+                "status": "success",
+                "measurements": {"gain_db": 18.0},
+                "by_testbench": {
+                    "ac_loop_gain": {
+                        "status": "success",
+                        "measurements": {"gain_db": 18.0},
+                        "warnings": [],
+                    }
+                },
+            }
+        return {
+            "status": "error",
+            "measurements": {},
+            "by_testbench": {
+                "ac_loop_gain": {
+                    "status": "error",
+                    "measurements": {},
+                    "warnings": ["sim crashed"],
+                }
+            },
+        }
+
+    async def verify_post_always_rollback(prev_judge, new_judge, applied_changes):
+        return {"improved": False, "regressed_criteria": ["gain"], "recommendation": "rollback", "feedback": "no"}
+
+    agents = make_agents(
+        simulate=simulate,
+        judge=lambda m, s: _async(FAIL_JUDGE),
+        verify_post=verify_post_always_rollback,
+    )
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": SUBCKT_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert result["failure_reason"] == "max iterations reached"
+    assert "no measurements" not in result["failure_reason"]
+    assert sim_calls["n"] > 1  # 튜닝 이후 시뮬레이션도 실제로 일어났다
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    assert not any(e["step"] == "entry_simulation_empty" for e in events)
