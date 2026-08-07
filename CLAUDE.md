@@ -680,12 +680,30 @@ section each (Korean `## 면적 최소화` / English `## Optimization`).
     always-failing gate — which is why it mirrors `cli.py`'s order.
   - **A run whose simulator never succeeds reports the tuner's failure reason, and
     nothing distinguishes the two.** `off_1` ended `tuning proposal repeatedly
-    rejected` after tuning three times against `{}`; grep confirms **no code in
-    `orchestrator.py` or `cli.py` reads `status == "error"`**, so the loop spends
-    its whole budget and `result.json`'s `reason` misdescribes the run. This is
+    rejected` after tuning three times against `{}`; grep confirmed **no code in
+    `orchestrator.py` or `cli.py` reads `status == "error"`**, so the loop spent
+    its whole budget and `result.json`'s `reason` misdescribed the run. This was
     the repo's own `null`/`NaN` rule inside the product rather than inside a
-    measurement. Not fixed here — the non-arbitrary form is a *precondition* on
-    the entry simulation, not a consecutive-failure threshold.
+    measurement. **Fixed 2026-08-07**: `orchestrator.py` now gates on the entry
+    simulation, and the condition is **whether `measurements` came back empty,
+    never the `status` string** — the same "never recognise meaning by name" rule
+    this file already states for a supply rail or a device class, applied to a
+    simulator's own report about itself. The gate fires **only on this run's
+    first simulation**; an empty measurement after tuning is the existing
+    rollback's job, not this one's — `first_simulation` is cleared right after
+    the check and never re-armed. Verified against the recorded `off_1` failure:
+    replaying that run's actual first `simulation` event (read via
+    `analogcoder.history.read_events`, not raw `json.loads`, per this file's own
+    rule) through a fake `simulate` ends the run in **1 iteration** with **0**
+    `tuning_proposal` events and `failure_reason` naming both "no measurements"
+    and `lod.spice` — against the old run's **3** tuning attempts (one per outer
+    iteration) before it exhausted its budget.
+    `test_a_recorded_lod_spice_failure_ends_with_its_own_reason_not_the_tuners`
+    pins it, and the two "what does this gate do when it does nothing" tests
+    (`test_a_run_whose_first_simulation_measures_something_is_untouched`,
+    `test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate`) pin
+    the boundary — a partial-testbench failure and a post-tuning empty
+    measurement must both pass through unblocked.
   - **`off_3` shows the "observed" definition is still incomplete.** Its FAIL is
     `agent execution error`, yet `iterations_used == 1` satisfies the progress
     guard that v2's fifth defect prompted — that guard only excludes deaths at

@@ -79,6 +79,17 @@ ngspice fatal error, exit(1): could not find include file
 모두 거부되는 항상-실패 게이트가 된다**(그렇게 만들어 봤다) — 그래서 `cli.py` 와
 같은 순서로 `resolve_includes` 를 먼저 부른다.
 
+**이 결함은 측정 하니스뿐 아니라 제품 쪽에서도 닫혔다(2026-08-07,
+`b9e31a6` + `5a08554`).** `orchestrator.py`가 이 실행의 첫 시뮬레이션이
+`measurements`를 하나도 내지 못하면 튜너를 부르지 않고 그 사유로 즉시 FAIL한다
+— `off_1`이 겪은 것과 정확히 같은 상황(`measurements: {}`을 붙들고 튜너가
+반복마다 제안, `tuning proposal repeatedly rejected`로 예산을 다 태우고 끝남)을
+`off_1`의 실제 첫 `simulation` 이벤트를 재생해 확인했다:
+`failure_reason`이 이제 "no measurements"와 `lod.spice`를 함께 실어 원인을
+history를 파지 않고도 보여주고, `tuning_proposal` 이벤트는 **0건**(옛 실행은
+**3건**), `iterations_used == 1`(옛 실행은 3). 자세한 규칙과 검증은
+`CLAUDE.md`의 "대안 정렬 A/B" 항목을 볼 것.
+
 ---
 
 ## 판정: **기각.** 단 "면적을 못 줄였다"가 아니라 **"비교하지 못했다"**

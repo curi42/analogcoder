@@ -2685,3 +2685,98 @@ async def test_a_post_tuning_empty_measurement_does_not_trigger_the_entry_gate(t
 
     events = [json.loads(line) for line in open(state.history_path)]
     assert not any(e["step"] == "entry_simulation_empty" for e in events)
+
+
+# `runs/alternatives_ab/off_1/history.jsonl`의 첫 `simulation` 이벤트에서
+# `analogcoder.history.read_events`로 읽어 온 실제 값이다(2026-08-05 A/B 측정,
+# `docs/superpowers/specs/2026-08-05-alternatives-benefit-results.md`의
+# 2026-08-07 정정 절). OFF 팔 워크트리의 PDK 서브모듈이 비어 있어 다섯
+# 테스트벤치 전부가 `lod.spice`를 찾지 못하고 죽었다 - 이 게이트가 생기기
+# 전에는 이 사유를 알아채지 못한 채 튜너가 세 번(반복마다 한 번) `{}`를
+# 붙들고 제안을 냈다. 각 테스트벤치의 `warnings[0]`만 남기고 나머지 필드
+# (`control_block`, `control_block_check` 등)는 이 경로가 읽지 않으므로
+# 뺐다.
+RECORDED_OFF_1_FIRST_SIMULATION = {
+    "status": "error",
+    "measurements": {},
+    "by_testbench": {
+        "dc_tc": {
+            "status": "error",
+            "measurements": {},
+            "warnings": [
+                "ngspice fatal error, exit(1): could not find include file "
+                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice "
+                "referenced from benchmarks/bandgap/pdk_corner.inc"
+            ],
+        },
+        "startup": {
+            "status": "error",
+            "measurements": {},
+            "warnings": [
+                "Simulation failed with a fatal ngspice error unrelated to convergence: "
+                "'Could not find include file "
+                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
+                "while reading benchmarks/bandgap/pdk_corner.inc (included by the netlist)."
+            ],
+        },
+        "psrr": {
+            "status": "error",
+            "measurements": {},
+            "warnings": [
+                "ngspice fatal error (exit 1), not a convergence failure: missing include "
+                "file '../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
+                "referenced from benchmarks/bandgap/pdk_corner.inc."
+            ],
+        },
+        "settling": {
+            "status": "error",
+            "measurements": {},
+            "warnings": [
+                "Simulation failed with a fatal ngspice error unrelated to convergence: "
+                "missing include file "
+                "'../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice' "
+                "referenced from benchmarks/bandgap/pdk_corner.inc (path resolution/environment "
+                "issue, not a solver convergence failure)."
+            ],
+        },
+        "amp_loops": {
+            "status": "error",
+            "measurements": {},
+            "warnings": [
+                "Simulation failed with fatal error (nonzero_exit), not a convergence failure: "
+                "ngspice could not find include file "
+                "../../third_party/skywater-pdk-libs-sky130_fd_pr/models/parameters/lod.spice "
+                "referenced from benchmarks/bandgap/pdk_corner.inc."
+            ],
+        },
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_lod_spice_failure_ends_with_its_own_reason_not_the_tuners(tmp_path):
+    """2026-08-05 A/B의 OFF 팔이 실제로 낸 첫 `simulation` 이벤트를 그대로
+    돌려준다. 이 게이트가 없던 당시 `off_1`은 이 조건을 알아채지 못하고
+    바깥 반복마다 튜너를 불러 세 번 제안하고 예산을 다 태운 뒤
+    `tuning proposal repeatedly rejected`로 끝났다 - 튜너의 실패 사유가 실제
+    원인(PDK 서브모듈 미초기화, `lod.spice` 못 찾음)을 가렸다. 이제는
+    1 iteration만에 자기 사유로 끝나야 한다."""
+
+    async def simulate(netlist_texts, spec):
+        return RECORDED_OFF_1_FIRST_SIMULATION
+
+    async def tune(*args, **kwargs):
+        raise AssertionError("측정값이 없는데 튜너가 불렸다")
+
+    agents = make_agents(simulate=simulate, tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert "no measurements" in result["failure_reason"]
+    assert "lod.spice" in result["failure_reason"]
+    assert result["iterations_used"] == 1
+
+    events = [json.loads(line) for line in open(state.history_path)]
+    assert not any(e["step"] == "tuning_proposal" for e in events)
