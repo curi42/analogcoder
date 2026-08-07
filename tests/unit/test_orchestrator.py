@@ -2529,3 +2529,79 @@ async def test_verify_post_runs_once_on_the_winner_only(tmp_path):
     await run_orchestration({"ac_loop_gain": TWO_KNOB_NETLIST}, FAKE_SPEC, state, agents)
 
     assert calls["n"] == 1
+
+
+# ------------------- 진입 시뮬레이션이 아무것도 재지 못하면
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_first_simulation_measures_nothing_ends_immediately(tmp_path):
+    """측정값이 하나도 없으면 판정은 받을 입력이 없다. 그 런은 튜너의
+    실패 사유가 아니라 **자기 사유**로 끝나야 한다 - 2026-08-05 A/B 의 OFF 팔
+    세 런이 `{}` 를 상대로 75분을 쓰고 `tuning proposal repeatedly rejected`
+    로 끝난 것이 이 테스트가 막는 것이다."""
+    calls = {"simulate": 0, "tune": 0}
+
+    async def simulate(netlist_texts, spec):
+        calls["simulate"] += 1
+        return {
+            "status": "error",
+            "measurements": {},
+            "by_testbench": {
+                "ac_loop_gain": {
+                    "status": "error",
+                    "measurements": {},
+                    "warnings": ["could not find include file foo.inc"],
+                }
+            },
+        }
+
+    async def tune(*args, **kwargs):
+        calls["tune"] += 1
+        raise AssertionError("측정값이 없는데 튜너가 불렸다")
+
+    agents = make_agents(simulate=simulate, tune=tune)
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain"])
+
+    result = await run_orchestration({"ac_loop_gain": BASE_NETLIST}, FAKE_SPEC, state, agents)
+
+    assert result["status"] == "FAIL"
+    assert "no measurements" in result["failure_reason"]
+    # 원인이 사유에 실려야 한다. 이것이 없으면 읽는 사람이 history 를 파야 한다.
+    assert "foo.inc" in result["failure_reason"]
+    assert calls["simulate"] == 1  # 예산을 태우지 않는다
+    assert calls["tune"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_first_simulation_measures_something_is_untouched(tmp_path):
+    """측정값이 하나라도 있으면 이 검사는 아무것도 하지 않는다. 부분 실패
+    (테스트벤치 하나만 error)는 **다른 사실**이고 기존 NaN 처리가 맡는다."""
+
+    async def simulate(netlist_texts, spec):
+        return {
+            "status": "error",
+            "measurements": {"gain_db": 20.0},
+            "by_testbench": {
+                "ac_loop_gain": {
+                    "status": "success",
+                    "measurements": {"gain_db": 20.0},
+                    "warnings": [],
+                },
+                "psr_plus": {
+                    "status": "error",
+                    "measurements": {},
+                    "warnings": ["could not find include file bar.inc"],
+                },
+            },
+        }
+
+    agents = make_agents(simulate=simulate, judge=lambda m, s: _async(PASS_JUDGE))
+    state = RunState(run_dir=str(tmp_path), testbench_names=["ac_loop_gain", "psr_plus"])
+
+    result = await run_orchestration(
+        {"ac_loop_gain": BASE_NETLIST, "psr_plus": BASE_NETLIST}, MULTI_SPEC, state, agents
+    )
+
+    assert result["status"] == "PASS"
+    assert "no measurements" not in result.get("failure_reason", "")

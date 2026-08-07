@@ -149,6 +149,20 @@ def _final_result(
     return result
 
 
+def _entry_simulation_detail(sim_result: dict) -> str:
+    """테스트벤치별 첫 `warnings` 항목을 `"<tb>: <warning>"`으로 이어 붙인다.
+
+    빈 문자열을 돌려주지 않는다 - "원인이 없다"와 "원인이 기록되지 않았다"는
+    다른 사실이고, `failure_reason`을 읽는 사람은 후자를 전자로 오독하면 안
+    된다."""
+    parts = [
+        f"{name}: {tb['warnings'][0]}"
+        for name, tb in sim_result.get("by_testbench", {}).items()
+        if tb.get("warnings")
+    ]
+    return "; ".join(parts) if parts else "no warning was reported"
+
+
 def _apply_to_all(netlist_texts: dict[str, str], changes: list[dict]) -> dict[str, str]:
     return {name: apply_changes(text, changes) for name, text in netlist_texts.items()}
 
@@ -385,6 +399,10 @@ async def run_orchestration(
             for name, nets in measurement_nets(tb.control_block).items():
                 nets_by_measurement.setdefault(name, set()).update(nets)
 
+        # 재개된 실행도 outer_iter가 1이 아닐 뿐, 자기 환경에서 측정이
+        # 나오는지는 처음부터 다시 확인해야 한다 - 그래서 판단 기준은
+        # outer_iter가 아니라 "이 실행에서 첫 시뮬레이션인가"다.
+        first_simulation = True
         start_iter = resume.outer_iter if resume else 1
         for outer_iter in range(start_iter, MAX_OUTER_ITERATIONS + 1):
             # **경계는 여기 하나다.** 이 지점에서 이 이터레이션은 아직 아무
@@ -417,6 +435,31 @@ async def run_orchestration(
 
             sim_result = await agents.simulate(netlist_texts, spec)
             state.log_event("simulation", {"outer_iter": outer_iter, **sim_result})
+
+            # **이 실행의 첫 시뮬레이션이 아무것도 재지 못했으면 여기서 끝낸다.**
+            # 조건은 `status` 문자열이 아니라 **판정이 받을 입력이 비었는가**다 -
+            # 이름으로 의미를 알아보지 않는다는 규칙 그대로이고, 묻고 싶은 것
+            # 자체가 "판정이 정의되는가"이기 때문이다.
+            #
+            # 임계값이 아니라 선행 조건이다. 튜닝 **이후**의 빈 측정은 튜닝이
+            # 덱을 깨뜨린 것이고 이미 롤백이 옳은 답이므로 여기 오지 않는다.
+            if first_simulation and not sim_result.get("measurements"):
+                detail = _entry_simulation_detail(sim_result)
+                state.log_event("entry_simulation_empty", {
+                    "outer_iter": outer_iter,
+                    "status": sim_result.get("status"),
+                    "detail": detail,
+                })
+                return _final_result(
+                    "FAIL", state, outer_iter, None,
+                    failure_reason=(
+                        "the entry simulation produced no measurements in any "
+                        f"testbench: {detail}"
+                    ),
+                    topology_swaps=topology_swaps,
+                    tuning_history=tuning_history,
+                )
+            first_simulation = False
 
             judge_result = await agents.judge(sim_result["measurements"], spec)
             state.log_event("judge", {"outer_iter": outer_iter, **judge_result})
